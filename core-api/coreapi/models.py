@@ -27,6 +27,10 @@ class LoginResponse(BaseModel):
     api_key: str = Field("", example="admin-key")
 
 
+class FlowableActionIn(BaseModel):
+    reason: str = Field("", example="Manual operational action from Flowable Ops")
+
+
 class TrackerEventIn(BaseModel):
     request_id: str = Field(..., example="REQ-2026-0001")
     stage: str = Field(..., example="connector")

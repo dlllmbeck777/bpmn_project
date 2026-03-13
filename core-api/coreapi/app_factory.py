@@ -7,8 +7,8 @@ import psycopg2
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from coreapi.models import HealthResponse, ListResponse, LoginIn, LoginResponse, PipelineStepIn, RequestIn, RequestResponse, RuleIn, ServiceIn, ServiceOut, StatusResponse, StopFactorIn, TrackerEventIn
-from coreapi.services import ROLE_ADMIN, ROLE_ANALYST, ROLE_SENIOR_ANALYST, apply_rate_limit, authenticate_ui_login, authorize_request_view, finalize_request, get_connector_urls, require_gateway_auth, require_internal_auth, require_internal_or_min_role, require_min_role, resolve_mode, run_stop_factor_check
+from coreapi.models import FlowableActionIn, HealthResponse, ListResponse, LoginIn, LoginResponse, PipelineStepIn, RequestIn, RequestResponse, RuleIn, ServiceIn, ServiceOut, StatusResponse, StopFactorIn, TrackerEventIn
+from coreapi.services import ROLE_ADMIN, ROLE_ANALYST, ROLE_SENIOR_ANALYST, apply_rate_limit, authenticate_ui_login, authorize_request_view, finalize_request, get_connector_urls, get_flowable_instance_detail, list_flowable_instances, reconcile_flowable_request, require_gateway_auth, require_internal_auth, require_internal_or_min_role, require_min_role, resolve_mode, retry_flowable_failed_jobs, run_stop_factor_check, set_flowable_instance_state
 from coreapi.storage import audit, execute, execute_returning, query, to_json_ready, track_request_event
 from migrations import run_migrations, seed_defaults
 from shared import all_breaker_states, close_pool, config_cache, encrypt_field, get_correlation_id, get_conn, get_logger, init_pool, mask_field, metrics, new_correlation_id, put_conn, resilient_post
@@ -38,6 +38,7 @@ stop-factor evaluation, and external service notification.
         {"name": "SNP", "description": "External SNP notifications"},
         {"name": "Auth", "description": "Admin UI login"},
         {"name": "Process Tracker", "description": "Request step timeline and in/out payloads"},
+        {"name": "Flowable Ops", "description": "Operational visibility and controlled actions for Flowable instances"},
     ],
 )
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
@@ -338,6 +339,53 @@ def list_tracker_events(
     sql += " ORDER BY id DESC LIMIT %s"
     params.append(limit)
     return {"items": [to_json_ready(row) for row in query(sql, params)]}
+
+
+@app.get("/api/v1/flowable/instances", response_model=ListResponse, tags=["Flowable Ops"])
+async def flowable_instances(
+    request_id: Optional[str] = Query(None),
+    status: str = Query("all"),
+    limit: int = Query(50, le=100),
+    x_api_key: str = Header(default=""),
+    x_user_role: str = Header(default=""),
+):
+    require_min_role(x_api_key, x_user_role, ROLE_ANALYST)
+    return {"items": await list_flowable_instances(limit=limit, request_id=request_id, status=status)}
+
+
+@app.get("/api/v1/flowable/instances/{instance_id}", tags=["Flowable Ops"])
+async def flowable_instance_detail(instance_id: str, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+    require_min_role(x_api_key, x_user_role, ROLE_ANALYST)
+    detail = await get_flowable_instance_detail(instance_id)
+    request_payload = detail.get("request") or {}
+    if request_payload.get("iin_encrypted"):
+        request_payload["iin_masked"] = mask_field(request_payload["iin_encrypted"])
+        detail["request"] = request_payload
+    return detail
+
+
+@app.post("/api/v1/flowable/instances/{instance_id}/suspend", tags=["Flowable Ops"])
+async def suspend_flowable_instance(instance_id: str, body: FlowableActionIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+    role = require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
+    return await set_flowable_instance_state(instance_id, "suspend", role, body.reason)
+
+
+@app.post("/api/v1/flowable/instances/{instance_id}/activate", tags=["Flowable Ops"])
+async def activate_flowable_instance(instance_id: str, body: FlowableActionIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+    role = require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
+    return await set_flowable_instance_state(instance_id, "activate", role, body.reason)
+
+
+@app.post("/api/v1/flowable/instances/{instance_id}/retry-failed-jobs", tags=["Flowable Ops"])
+async def retry_flowable_jobs(instance_id: str, body: FlowableActionIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+    role = require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
+    return await retry_flowable_failed_jobs(instance_id, role, body.reason)
+
+
+@app.post("/api/v1/flowable/requests/{request_id}/reconcile", tags=["Flowable Ops"])
+async def reconcile_flowable(request_id: str, body: FlowableActionIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+    role = require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
+    return await reconcile_flowable_request(request_id, role, body.reason)
 
 
 @app.get("/api/v1/requests/{request_id}/tracker", response_model=ListResponse, tags=["Process Tracker"])

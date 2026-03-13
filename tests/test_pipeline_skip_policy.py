@@ -25,12 +25,9 @@ class _DummyAsyncClient:
         raise RuntimeError("httpx stub should not be used in skip policy tests")
 
 
-sys.modules.setdefault(
-    'httpx',
-    SimpleNamespace(
-        AsyncClient=_DummyAsyncClient,
-        get=lambda *args, **kwargs: SimpleNamespace(status_code=503, json=lambda: {}),
-    ),
+sys.modules['httpx'] = SimpleNamespace(
+    AsyncClient=_DummyAsyncClient,
+    get=lambda *args, **kwargs: SimpleNamespace(status_code=503, json=lambda: {}),
 )
 
 
@@ -72,10 +69,10 @@ def _dummy_field(default=None, **kwargs):
     return default
 
 
-sys.modules.setdefault('fastapi', SimpleNamespace(FastAPI=_DummyFastAPI, Request=object))
-sys.modules.setdefault('fastapi.middleware', SimpleNamespace())
-sys.modules.setdefault('fastapi.middleware.cors', SimpleNamespace(CORSMiddleware=object))
-sys.modules.setdefault('pydantic', SimpleNamespace(BaseModel=_DummyBaseModel, Field=_dummy_field))
+sys.modules['fastapi'] = SimpleNamespace(FastAPI=_DummyFastAPI, Request=object)
+sys.modules['fastapi.middleware'] = SimpleNamespace()
+sys.modules['fastapi.middleware.cors'] = SimpleNamespace(CORSMiddleware=object)
+sys.modules['pydantic'] = SimpleNamespace(BaseModel=_DummyBaseModel, Field=_dummy_field)
 
 import custom_adapter  # noqa: E402
 import flowable_adapter  # noqa: E402

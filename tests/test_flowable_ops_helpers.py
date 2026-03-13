@@ -1,0 +1,86 @@
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+import unittest
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / 'core-api'))
+
+
+class _DummyAsyncClient:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def request(self, *args, **kwargs):
+        raise RuntimeError("httpx stub should not be called in flowable helper tests")
+
+    async def post(self, *args, **kwargs):
+        raise RuntimeError("httpx stub should not be called in flowable helper tests")
+
+
+class _DummyHTTPException(Exception):
+    def __init__(self, status_code, detail):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+sys.modules.setdefault(
+    'httpx',
+    SimpleNamespace(
+        AsyncClient=_DummyAsyncClient,
+    ),
+)
+sys.modules.setdefault('fastapi', SimpleNamespace(HTTPException=_DummyHTTPException))
+
+from coreapi import services  # noqa: E402
+
+
+class FlowableOpsHelperTests(unittest.TestCase):
+    def test_extract_flowable_instance_id_from_normalized_result(self):
+        result = {"engine": {"instance_id": "proc-123"}}
+        self.assertEqual(services.extract_flowable_instance_id(result), "proc-123")
+
+    def test_normalize_flowable_variables_parses_json_values(self):
+        variables = [
+            {"name": "request_id", "value": "REQ-42"},
+            {"name": "isoRawBody", "value": '{"status":"OK","score":712}'},
+        ]
+        normalized = services.normalize_flowable_variables(variables)
+        self.assertEqual(normalized["request_id"], "REQ-42")
+        self.assertEqual(normalized["isoRawBody"]["score"], 712)
+
+    def test_build_flowable_steps_includes_skip_reason(self):
+        variables = {
+            "iso_status": "SKIPPED",
+            "skip_reason_isoftpull": "pipeline step bypassed for flowable mode",
+        }
+        steps = services.build_flowable_steps(variables)
+        self.assertEqual(steps["isoftpull"]["status"], "SKIPPED")
+        self.assertEqual(steps["isoftpull"]["reason"], "pipeline step bypassed for flowable mode")
+
+    def test_build_flowable_result_from_variables_adds_engine_and_steps(self):
+        variables = {
+            "request_id": "REQ-55",
+            "route_mode": "FLOWABLE",
+            "isoRawBody": {"status": "OK", "bureau": "isoftpull"},
+            "iso_status": "OK",
+            "creditsafe_status": "SKIPPED",
+            "skip_reason_creditsafe": "pipeline step bypassed for flowable mode",
+        }
+        result = services.build_flowable_result_from_variables("REQ-55", "instance-55", variables)
+        self.assertEqual(result["engine"]["instance_id"], "instance-55")
+        self.assertEqual(result["steps"]["isoftpull"]["bureau"], "isoftpull")
+        self.assertEqual(result["steps"]["creditsafe"]["status"], "SKIPPED")
+        self.assertEqual(result["summary"]["request_id"], "REQ-55")
+
+
+if __name__ == '__main__':
+    unittest.main()

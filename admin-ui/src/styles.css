@@ -269,6 +269,11 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   margin-top: 0;
 }
 
+.flowable-filter {
+  min-width: 180px;
+  margin-bottom: 0;
+}
+
 .tracker-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -315,6 +320,33 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.flowable-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.flowable-meta-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.flowable-meta-label {
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.flowable-actions {
+  flex-wrap: wrap;
 }
 
 .login-shell {

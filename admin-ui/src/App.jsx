@@ -6,6 +6,7 @@ import RoutingPage from './pages/RoutingPage'
 import StopFactorsPage from './pages/StopFactorsPage'
 import PipelinePage from './pages/PipelinePage'
 import ProcessTrackerPage from './pages/ProcessTrackerPage'
+import FlowableOpsPage from './pages/FlowableOpsPage'
 import RequestsPage from './pages/RequestsPage'
 import AuditPage from './pages/AuditPage'
 import LoginPage from './pages/LoginPage'
@@ -18,6 +19,7 @@ const icons = {
   routing: '->',
   stopfactors: 'SF',
   pipeline: '||',
+  flowableops: 'FO',
   tracker: 'TR',
   requests: 'RQ',
   audit: 'LG',
@@ -44,6 +46,7 @@ const sections = [
   {
     group: 'Operations',
     items: [
+      { id: 'flowableops', label: 'Flowable Ops', icon: icons.flowableops, minRole: 'analyst' },
       { id: 'tracker', label: 'Process Tracker', icon: icons.tracker, minRole: 'analyst' },
       { id: 'requests', label: 'Requests', icon: icons.requests, minRole: 'analyst' },
       { id: 'audit', label: 'Audit Log', icon: icons.audit, minRole: 'analyst' },
@@ -58,6 +61,7 @@ const pageTitle = {
   routing: ['Routing Rules', 'Control flowable vs custom routing'],
   stopfactors: ['Stop Factors', 'Pre and post checks for request decisions'],
   pipeline: ['Pipeline', 'Order connector execution chain'],
+  flowableops: ['Flowable Ops', 'Inspect Flowable instances, jobs, and controlled recovery actions'],
   tracker: ['Process Tracker', 'Trace request steps, payloads, and skipped chains'],
   requests: ['Requests', 'Inspect submitted credit check requests'],
   audit: ['Audit Log', 'Review configuration changes'],
@@ -112,6 +116,8 @@ export default function App() {
         return <StopFactorsPage canEdit={canManageConfig} />
       case 'pipeline':
         return <PipelinePage canEdit={canManageConfig} />
+      case 'flowableops':
+        return <FlowableOpsPage canManage={canManageConfig} />
       case 'tracker':
         return <ProcessTrackerPage />
       case 'requests':
