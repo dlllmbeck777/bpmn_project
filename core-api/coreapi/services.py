@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 import httpx
 from fastapi import HTTPException
 
-from coreapi.storage import execute, query, to_json_ready
+from coreapi.storage import execute, query, to_json_ready, track_request_event
 from shared import check_rate_limit, config_cache, get_correlation_id, get_logger, metrics, resilient_post
 
 API_KEY = os.getenv("GATEWAY_API_KEY", "")
@@ -56,6 +56,13 @@ def require_internal_auth(key: str):
     if INTERNAL_API_KEY and key != INTERNAL_API_KEY:
         metrics.inc("auth_failures", 'scope="internal"')
         raise HTTPException(401, "invalid internal api key")
+
+
+def require_internal_or_min_role(key: str, requested_role: str, minimum_role: str) -> str:
+    key = (key or "").strip()
+    if INTERNAL_API_KEY and key == INTERNAL_API_KEY:
+        return "internal"
+    return require_min_role(key, requested_role, minimum_role)
 
 
 def authenticate_ui_login(username: str, password: str):
@@ -265,6 +272,15 @@ async def finalize_request(request_id: str, mode: str, result: Dict[str, Any], c
     stop_payload = {**context, "result": normalized_result}
 
     sf_post = await run_stop_factor_check("post", stop_payload, cid)
+    track_request_event(
+        request_id,
+        "stop_factor_post",
+        "STATE",
+        "POST stop factors evaluated",
+        status=sf_post.get("decision"),
+        payload=sf_post,
+        correlation_id=cid,
+    )
     final_status = normalized_result.get("status", "COMPLETED")
     if sf_post.get("decision") == "REJECT":
         final_status = "REJECTED"
@@ -287,6 +303,15 @@ async def finalize_request(request_id: str, mode: str, result: Dict[str, Any], c
     )
     execute("UPDATE requests SET snp_result=%s WHERE request_id=%s", (json.dumps(snp), request_id))
     metrics.inc("requests_completed", f'mode="{mode}",status="{final_status}"')
+    track_request_event(
+        request_id,
+        "request",
+        "STATE",
+        "Request finalized",
+        status=final_status,
+        payload={"mode": mode, "snp_result": snp},
+        correlation_id=cid,
+    )
 
     return {
         "status": final_status,

@@ -205,6 +205,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .form-row input, .form-row select { width: 100%; }
 .form-inline { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.table-wrap { overflow-x: auto; }
 .checkbox-row {
   display: inline-flex;
   gap: 8px;
@@ -248,6 +249,72 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 }
 .settings-card {
   max-width: 720px;
+}
+
+.tracker-toolbar {
+  display: flex;
+  gap: 16px;
+  align-items: end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.tracker-filter {
+  min-width: 280px;
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.tracker-actions {
+  margin-top: 0;
+}
+
+.tracker-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.tracker-list {
+  display: grid;
+  gap: 10px;
+}
+
+.tracker-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.tracker-summary {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+
+.tracker-item-body {
+  padding: 0 14px 14px;
+}
+
+.tracker-meta {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: var(--mono);
+}
+
+.tracker-meta-line {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.tracker-payload-cell {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .login-shell {
@@ -337,4 +404,5 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   .sidebar { display: none; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   .stat-grid { grid-template-columns: 1fr 1fr; }
+  .tracker-toolbar { align-items: stretch; }
 }

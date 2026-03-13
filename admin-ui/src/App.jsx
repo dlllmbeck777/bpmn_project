@@ -5,6 +5,7 @@ import ServicesPage from './pages/ServicesPage'
 import RoutingPage from './pages/RoutingPage'
 import StopFactorsPage from './pages/StopFactorsPage'
 import PipelinePage from './pages/PipelinePage'
+import ProcessTrackerPage from './pages/ProcessTrackerPage'
 import RequestsPage from './pages/RequestsPage'
 import AuditPage from './pages/AuditPage'
 import LoginPage from './pages/LoginPage'
@@ -17,6 +18,7 @@ const icons = {
   routing: '->',
   stopfactors: 'SF',
   pipeline: '||',
+  tracker: 'TR',
   requests: 'RQ',
   audit: 'LG',
   settings: '::',
@@ -42,6 +44,7 @@ const sections = [
   {
     group: 'Operations',
     items: [
+      { id: 'tracker', label: 'Process Tracker', icon: icons.tracker, minRole: 'analyst' },
       { id: 'requests', label: 'Requests', icon: icons.requests, minRole: 'analyst' },
       { id: 'audit', label: 'Audit Log', icon: icons.audit, minRole: 'analyst' },
       { id: 'settings', label: 'Settings', icon: icons.settings, minRole: 'analyst' },
@@ -55,6 +58,7 @@ const pageTitle = {
   routing: ['Routing Rules', 'Control flowable vs custom routing'],
   stopfactors: ['Stop Factors', 'Pre and post checks for request decisions'],
   pipeline: ['Pipeline', 'Order connector execution chain'],
+  tracker: ['Process Tracker', 'Trace request steps, payloads, and skipped chains'],
   requests: ['Requests', 'Inspect submitted credit check requests'],
   audit: ['Audit Log', 'Review configuration changes'],
   settings: ['Settings', 'Configure API base URL, key and role used by this UI'],
@@ -108,6 +112,8 @@ export default function App() {
         return <StopFactorsPage canEdit={canManageConfig} />
       case 'pipeline':
         return <PipelinePage canEdit={canManageConfig} />
+      case 'tracker':
+        return <ProcessTrackerPage />
       case 'requests':
         return <RequestsPage />
       case 'audit':

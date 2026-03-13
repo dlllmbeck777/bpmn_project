@@ -3,9 +3,19 @@ import { useEffect, useState } from 'react'
 import Modal from '../components/Modal'
 import { get } from '../lib/api'
 
+function previewPayload(payload) {
+  try {
+    const text = JSON.stringify(payload)
+    return text.length > 100 ? `${text.slice(0, 100)}...` : text
+  } catch {
+    return String(payload)
+  }
+}
+
 export default function RequestsPage() {
   const [items, setItems] = useState([])
   const [detail, setDetail] = useState(null)
+  const [tracker, setTracker] = useState([])
   const [error, setError] = useState('')
 
   const load = () => get('/api/v1/requests').then((data) => setItems(data.items || [])).catch((err) => setError(err.message))
@@ -14,8 +24,12 @@ export default function RequestsPage() {
 
   const openDetail = async (requestId) => {
     try {
-      const data = await get(`/api/v1/requests/${requestId}`)
-      setDetail(data)
+      const [detailData, trackerData] = await Promise.all([
+        get(`/api/v1/requests/${requestId}`),
+        get(`/api/v1/requests/${requestId}/tracker`),
+      ])
+      setDetail(detailData)
+      setTracker(trackerData.items || [])
       setError('')
     } catch (err) {
       setError(err.message)
@@ -56,12 +70,40 @@ export default function RequestsPage() {
 
       {detail && (
         <Modal title={`Request ${detail.request_id}`} onClose={() => setDetail(null)}>
-          <pre className="json-view">
-            {JSON.stringify(detail, null, 2)}
-          </pre>
+          <div className="tracker-grid">
+            <div className="card">
+              <div className="card-title"><span className="dot dot-blue" /> Request Detail</div>
+              <pre className="json-view">
+                {JSON.stringify(detail, null, 2)}
+              </pre>
+            </div>
+            <div className="card">
+              <div className="card-title"><span className="dot dot-orange" /> Process Tracker</div>
+              {tracker.length === 0 ? (
+                <p className="muted-copy">No tracker events recorded for this request yet.</p>
+              ) : (
+                <div className="tracker-list">
+                  {tracker.map((item) => (
+                    <details key={item.id} className="tracker-item">
+                      <summary className="tracker-summary">
+                        <span className="mono">{item.created_at?.slice(11, 19)}</span>
+                        <span className={`badge ${item.direction === 'OUT' ? 'badge-blue' : item.direction === 'IN' ? 'badge-green' : 'badge-orange'}`}>{item.direction}</span>
+                        <span>{item.title}</span>
+                        <span className="tracker-meta">{item.service_id || item.stage}</span>
+                      </summary>
+                      <div className="tracker-item-body">
+                        <div className="tracker-meta-line">Status: {item.status || '-'}</div>
+                        <div className="tracker-meta-line">Preview: {previewPayload(item.payload)}</div>
+                        <pre className="json-view mt-16">{JSON.stringify(item.payload, null, 2)}</pre>
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </Modal>
       )}
     </>
   )
 }
-

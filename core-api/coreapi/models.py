@@ -27,6 +27,16 @@ class LoginResponse(BaseModel):
     api_key: str = Field("", example="admin-key")
 
 
+class TrackerEventIn(BaseModel):
+    request_id: str = Field(..., example="REQ-2026-0001")
+    stage: str = Field(..., example="connector")
+    direction: str = Field(..., example="OUT")
+    title: str = Field(..., example="Dispatch to isoftpull")
+    service_id: Optional[str] = Field(None, example="isoftpull")
+    status: Optional[str] = Field(None, example="DISPATCHED")
+    payload: Any = Field(default_factory=dict)
+
+
 class ListResponse(BaseModel):
     items: List[Dict[str, Any]]
 

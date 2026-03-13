@@ -57,10 +57,28 @@ export default function PipelinePage({ canEdit = true }) {
     }
   }
 
+  const toggleEnabled = async (step) => {
+    if (!canEdit) return
+    try {
+      await put(`/api/v1/pipeline-steps/${step.id}`, {
+        pipeline_name: step.pipeline_name,
+        step_order: step.step_order,
+        service_id: step.service_id,
+        enabled: !step.enabled,
+        meta: step.meta || {},
+      })
+      setError('')
+      load()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   return (
     <>
       {error && <div className="notice mb-16">{error}</div>}
       {!canEdit && <div className="notice mb-16">This page is read-only for the selected role.</div>}
+      <div className="notice mb-16">Disabled pipeline steps are now recorded as <span className="mono">SKIPPED</span> in both custom and flowable orchestration modes.</div>
 
       <div className="flex-between mb-16">
         <div className="card-title" style={{ margin: 0 }}>Pipeline Steps</div>
@@ -92,6 +110,7 @@ export default function PipelinePage({ canEdit = true }) {
                 {canEdit && (
                   <td>
                     <div className="flex-gap">
+                      <button className="btn btn-ghost btn-sm" onClick={() => toggleEnabled(step)}>{step.enabled ? 'Disable' : 'Enable'}</button>
                       <button className="btn btn-ghost btn-sm" onClick={() => openEdit(step)}>Edit</button>
                       <button className="btn btn-danger btn-sm" onClick={() => remove(step.id)}>Delete</button>
                     </div>

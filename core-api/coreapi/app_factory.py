@@ -7,9 +7,9 @@ import psycopg2
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from coreapi.models import HealthResponse, ListResponse, LoginIn, LoginResponse, PipelineStepIn, RequestIn, RequestResponse, RuleIn, ServiceIn, ServiceOut, StatusResponse, StopFactorIn
-from coreapi.services import ROLE_ADMIN, ROLE_ANALYST, ROLE_SENIOR_ANALYST, apply_rate_limit, authenticate_ui_login, authorize_request_view, finalize_request, get_connector_urls, require_gateway_auth, require_internal_auth, require_min_role, resolve_mode, run_stop_factor_check
-from coreapi.storage import audit, execute, execute_returning, query, to_json_ready
+from coreapi.models import HealthResponse, ListResponse, LoginIn, LoginResponse, PipelineStepIn, RequestIn, RequestResponse, RuleIn, ServiceIn, ServiceOut, StatusResponse, StopFactorIn, TrackerEventIn
+from coreapi.services import ROLE_ADMIN, ROLE_ANALYST, ROLE_SENIOR_ANALYST, apply_rate_limit, authenticate_ui_login, authorize_request_view, finalize_request, get_connector_urls, require_gateway_auth, require_internal_auth, require_internal_or_min_role, require_min_role, resolve_mode, run_stop_factor_check
+from coreapi.storage import audit, execute, execute_returning, query, to_json_ready, track_request_event
 from migrations import run_migrations, seed_defaults
 from shared import all_breaker_states, close_pool, config_cache, encrypt_field, get_correlation_id, get_conn, get_logger, init_pool, mask_field, metrics, new_correlation_id, put_conn, resilient_post
 
@@ -37,6 +37,7 @@ stop-factor evaluation, and external service notification.
         {"name": "Audit", "description": "Configuration change history"},
         {"name": "SNP", "description": "External SNP notifications"},
         {"name": "Auth", "description": "Admin UI login"},
+        {"name": "Process Tracker", "description": "Request step timeline and in/out payloads"},
     ],
 )
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
@@ -101,7 +102,7 @@ def login(body: LoginIn, request: Request):
 
 @app.get("/api/v1/services", response_model=ListResponse, tags=["Services"])
 def list_services(type: Optional[str] = Query(None), enabled: Optional[bool] = Query(None), x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
-    require_min_role(x_api_key, x_user_role, ROLE_ANALYST)
+    require_internal_or_min_role(x_api_key, x_user_role, ROLE_ANALYST)
     cache_key = f"services:{type}:{enabled}"
     cached = config_cache.get(cache_key)
     if cached:
@@ -121,7 +122,7 @@ def list_services(type: Optional[str] = Query(None), enabled: Optional[bool] = Q
 
 @app.get("/api/v1/services/{sid}", response_model=ServiceOut, tags=["Services"])
 def get_service(sid: str, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
-    require_min_role(x_api_key, x_user_role, ROLE_ANALYST)
+    require_internal_or_min_role(x_api_key, x_user_role, ROLE_ANALYST)
     cached = config_cache.get(f"svc:{sid}")
     if cached:
         return cached
@@ -268,7 +269,7 @@ def delete_stop_factor(sfid: int, x_api_key: str = Header(default=""), x_user_ro
 
 @app.get("/api/v1/pipeline-steps", response_model=ListResponse, tags=["Pipeline"])
 def list_pipeline_steps(pipeline_name: str = Query("default"), x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
-    require_min_role(x_api_key, x_user_role, ROLE_ANALYST)
+    require_internal_or_min_role(x_api_key, x_user_role, ROLE_ANALYST)
     cache_key = f"pipeline:{pipeline_name}"
     cached = config_cache.get(cache_key)
     if cached:
@@ -321,6 +322,31 @@ def list_audit(limit: int = Query(50, le=200), x_api_key: str = Header(default="
     return {"items": [to_json_ready(row) for row in query("SELECT * FROM audit_log ORDER BY id DESC LIMIT %s", (limit,))]}
 
 
+@app.get("/api/v1/process-tracker", response_model=ListResponse, tags=["Process Tracker"])
+def list_tracker_events(
+    request_id: Optional[str] = Query(None),
+    limit: int = Query(200, le=500),
+    x_api_key: str = Header(default=""),
+    x_user_role: str = Header(default=""),
+):
+    require_min_role(x_api_key, x_user_role, ROLE_ANALYST)
+    sql = "SELECT * FROM request_tracker_events WHERE TRUE"
+    params = []
+    if request_id:
+        sql += " AND request_id=%s"
+        params.append(request_id)
+    sql += " ORDER BY id DESC LIMIT %s"
+    params.append(limit)
+    return {"items": [to_json_ready(row) for row in query(sql, params)]}
+
+
+@app.get("/api/v1/requests/{request_id}/tracker", response_model=ListResponse, tags=["Process Tracker"])
+def get_request_tracker(request_id: str, limit: int = Query(500, le=1000), x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+    authorize_request_view(x_api_key, x_user_role)
+    rows = query("SELECT * FROM request_tracker_events WHERE request_id=%s ORDER BY id DESC LIMIT %s", (request_id, limit))
+    return {"items": [to_json_ready(row) for row in rows]}
+
+
 @app.get("/api/v1/connector-urls", response_model=Dict[str, str], tags=["Services"])
 def connector_urls():
     return get_connector_urls()
@@ -354,16 +380,53 @@ async def create_request(body: RequestIn, request: Request, x_api_key: str = Hea
     if existing:
         raise HTTPException(409, f"request_id '{body.request_id}' already exists (status: {existing.get('status')})")
 
+    track_request_event(
+        body.request_id,
+        "gateway",
+        "IN",
+        "Request received by gateway",
+        status="RECEIVED",
+        payload=data,
+        correlation_id=cid,
+    )
+
     sf_pre = await run_stop_factor_check("pre", data, cid)
+    track_request_event(
+        body.request_id,
+        "stop_factor_pre",
+        "STATE",
+        "PRE stop factors evaluated",
+        status=sf_pre.get("decision"),
+        payload=sf_pre,
+        correlation_id=cid,
+    )
     if sf_pre["decision"] == "REJECT":
         execute(
             "INSERT INTO requests (request_id,customer_id,iin_encrypted,product_type,orchestration_mode,status,correlation_id,result,post_stop_factor) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (body.request_id, body.customer_id, iin_encrypted, body.product_type, body.orchestration_mode, "REJECTED", cid, json.dumps({"status": "REJECTED", "reason": sf_pre.get("reason")}), json.dumps(sf_pre)),
         )
+        track_request_event(
+            body.request_id,
+            "gateway",
+            "STATE",
+            "Request rejected before orchestration",
+            status="REJECTED",
+            payload={"reason": sf_pre.get("reason")},
+            correlation_id=cid,
+        )
         metrics.inc("requests_rejected")
         return {"request_id": body.request_id, "selected_mode": "none", "result": {"status": "REJECTED", "reason": sf_pre.get("reason")}}
 
     mode = resolve_mode(data)
+    track_request_event(
+        body.request_id,
+        "routing",
+        "STATE",
+        "Routing mode selected",
+        status=mode.upper(),
+        payload={"selected_mode": mode},
+        correlation_id=cid,
+    )
     adapter_id = "flowable-adapter" if mode == "flowable" else "custom-adapter"
     service = to_json_ready(query("SELECT * FROM services WHERE id=%s", (adapter_id,), "one")) or {}
     base_url = service.get("base_url", "")
@@ -374,6 +437,16 @@ async def create_request(body: RequestIn, request: Request, x_api_key: str = Hea
     execute(
         "INSERT INTO requests (request_id,customer_id,iin_encrypted,product_type,orchestration_mode,status,correlation_id) VALUES (%s,%s,%s,%s,%s,%s,%s)",
         (body.request_id, body.customer_id, iin_encrypted, body.product_type, mode, "SUBMITTED", cid),
+    )
+    track_request_event(
+        body.request_id,
+        "orchestrator",
+        "OUT",
+        f"Request dispatched to {adapter_id}",
+        service_id=adapter_id,
+        status="SUBMITTED",
+        payload={"mode": mode, "adapter_id": adapter_id},
+        correlation_id=cid,
     )
 
     result = await resilient_post(
@@ -386,14 +459,43 @@ async def create_request(body: RequestIn, request: Request, x_api_key: str = Hea
     )
     if result.get("status") in ("CIRCUIT_OPEN", "UNAVAILABLE"):
         execute("UPDATE requests SET status=%s,error=%s,updated_at=NOW() WHERE request_id=%s", ("FAILED", json.dumps(result), body.request_id))
+        track_request_event(
+            body.request_id,
+            "orchestrator",
+            "IN",
+            f"{adapter_id} returned failure",
+            service_id=adapter_id,
+            status=result.get("status"),
+            payload=result,
+            correlation_id=cid,
+        )
         raise HTTPException(502, f"orchestrator failed: {result}")
 
     normalized_result = dict(result)
     current_status = normalized_result.get("status", "COMPLETED")
     execute("UPDATE requests SET status=%s,result=%s,updated_at=NOW() WHERE request_id=%s", (current_status, json.dumps(normalized_result), body.request_id))
+    track_request_event(
+        body.request_id,
+        "orchestrator",
+        "IN",
+        f"{adapter_id} returned result",
+        service_id=adapter_id,
+        status=current_status,
+        payload=normalized_result,
+        correlation_id=cid,
+    )
 
     if current_status == "RUNNING":
         metrics.inc("requests_running", f'mode="{mode}"')
+        track_request_event(
+            body.request_id,
+            "request",
+            "STATE",
+            "Request left running for async completion",
+            status="RUNNING",
+            payload={"mode": mode},
+            correlation_id=cid,
+        )
         return {"request_id": body.request_id, "selected_mode": mode, "result": normalized_result}
 
     finalized = await finalize_request(body.request_id, mode, normalized_result, cid, request_data=data)
@@ -438,8 +540,34 @@ async def complete_case(body: Dict[str, Any], x_internal_api_key: str = Header(d
             result = {"raw_result": result}
 
     mode = body.get("mode") or query("SELECT orchestration_mode FROM requests WHERE request_id=%s", (request_id,), "scalar") or "flowable"
+    track_request_event(
+        request_id,
+        "orchestrator",
+        "IN",
+        "Async completion callback received",
+        service_id=f"{mode}-adapter",
+        status="COMPLETED",
+        payload=result,
+        correlation_id=existing.get("correlation_id"),
+    )
     finalized = await finalize_request(request_id, mode, result, existing.get("correlation_id") or get_correlation_id())
     return {"status": "completed-noted", "request_id": request_id, "final_status": finalized["status"]}
+
+
+@app.post("/internal/requests/track", tags=["Process Tracker"])
+def record_tracker_event(body: TrackerEventIn, x_internal_api_key: str = Header(default="")):
+    require_internal_auth(x_internal_api_key)
+    track_request_event(
+        body.request_id,
+        body.stage,
+        body.direction,
+        body.title,
+        service_id=body.service_id,
+        status=body.status,
+        payload=body.payload,
+        correlation_id=get_correlation_id(),
+    )
+    return {"status": "tracked"}
 
 
 if __name__ == "__main__":

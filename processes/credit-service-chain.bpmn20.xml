@@ -26,7 +26,21 @@
         execution.setVariable('product_type', execution.getVariable('product_type') ?: '')
       ]]></script>
     </scriptTask>
-    <sequenceFlow id="flow_init_to_iso" sourceRef="task_init" targetRef="task_isoftpull"/>
+    <exclusiveGateway id="gateway_iso" name="Skip iSoftPull?"/>
+    <sequenceFlow id="flow_init_to_iso" sourceRef="task_init" targetRef="gateway_iso"/>
+    <sequenceFlow id="flow_iso_gate_to_skip" sourceRef="gateway_iso" targetRef="task_iso_skip">
+      <conditionExpression xsi:type="tFormalExpression">${skip_isoftpull}</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flow_iso_gate_to_call" sourceRef="gateway_iso" targetRef="task_isoftpull"/>
+
+    <scriptTask id="task_iso_skip" name="Skip iSoftPull"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        execution.setVariable('isoRawBody', '{"status":"SKIPPED","reason":"pipeline step disabled"}')
+        execution.setVariable('iso_status', 'SKIPPED')
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_iso_skip_to_prep_cs" sourceRef="task_iso_skip" targetRef="task_prepare_creditsafe_body"/>
 
     <serviceTask id="task_isoftpull" name="Call iSoftPull"
                  flowable:async="true" flowable:exclusive="false" flowable:type="http">
@@ -81,7 +95,21 @@ X-Request-Id: ${request_id}</flowable:expression>
         execution.setVariable('creditsafe_request_body', body)
       ]]></script>
     </scriptTask>
-    <sequenceFlow id="flow_prep_cs_to_call" sourceRef="task_prepare_creditsafe_body" targetRef="task_creditsafe"/>
+    <exclusiveGateway id="gateway_cs" name="Skip Creditsafe?"/>
+    <sequenceFlow id="flow_prep_cs_to_call" sourceRef="task_prepare_creditsafe_body" targetRef="gateway_cs"/>
+    <sequenceFlow id="flow_cs_gate_to_skip" sourceRef="gateway_cs" targetRef="task_cs_skip">
+      <conditionExpression xsi:type="tFormalExpression">${skip_creditsafe}</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flow_cs_gate_to_call" sourceRef="gateway_cs" targetRef="task_creditsafe"/>
+
+    <scriptTask id="task_cs_skip" name="Skip Creditsafe"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        execution.setVariable('csRawBody', '{"status":"SKIPPED","reason":"pipeline step disabled"}')
+        execution.setVariable('creditsafe_status', 'SKIPPED')
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_cs_skip_to_prep_plaid" sourceRef="task_cs_skip" targetRef="task_prepare_plaid_body"/>
 
     <serviceTask id="task_creditsafe" name="Call Creditsafe"
                  flowable:async="true" flowable:exclusive="false" flowable:type="http">
@@ -134,7 +162,21 @@ X-Request-Id: ${request_id}</flowable:expression>
         execution.setVariable('plaid_request_body', body)
       ]]></script>
     </scriptTask>
-    <sequenceFlow id="flow_prep_plaid_to_call" sourceRef="task_prepare_plaid_body" targetRef="task_plaid"/>
+    <exclusiveGateway id="gateway_plaid" name="Skip Plaid?"/>
+    <sequenceFlow id="flow_prep_plaid_to_call" sourceRef="task_prepare_plaid_body" targetRef="gateway_plaid"/>
+    <sequenceFlow id="flow_plaid_gate_to_skip" sourceRef="gateway_plaid" targetRef="task_plaid_skip">
+      <conditionExpression xsi:type="tFormalExpression">${skip_plaid}</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flow_plaid_gate_to_call" sourceRef="gateway_plaid" targetRef="task_plaid"/>
+
+    <scriptTask id="task_plaid_skip" name="Skip Plaid"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        execution.setVariable('plaidRawBody', '{"status":"SKIPPED","reason":"pipeline step disabled"}')
+        execution.setVariable('plaid_status', 'SKIPPED')
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_plaid_skip_to_prep_crm" sourceRef="task_plaid_skip" targetRef="task_prepare_crm_body"/>
 
     <serviceTask id="task_plaid" name="Call Plaid"
                  flowable:async="true" flowable:exclusive="false" flowable:type="http">
@@ -187,7 +229,21 @@ X-Request-Id: ${request_id}</flowable:expression>
         execution.setVariable('crm_request_body', body)
       ]]></script>
     </scriptTask>
-    <sequenceFlow id="flow_prep_crm_to_call" sourceRef="task_prepare_crm_body" targetRef="task_crm"/>
+    <exclusiveGateway id="gateway_crm" name="Skip CRM?"/>
+    <sequenceFlow id="flow_prep_crm_to_call" sourceRef="task_prepare_crm_body" targetRef="gateway_crm"/>
+    <sequenceFlow id="flow_crm_gate_to_skip" sourceRef="gateway_crm" targetRef="task_crm_skip">
+      <conditionExpression xsi:type="tFormalExpression">${skip_crm}</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flow_crm_gate_to_call" sourceRef="gateway_crm" targetRef="task_crm"/>
+
+    <scriptTask id="task_crm_skip" name="Skip CRM"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        execution.setVariable('crmRawBody', '{"status":"SKIPPED","reason":"pipeline step disabled"}')
+        execution.setVariable('crm_status', 'SKIPPED')
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_crm_skip_to_finalize" sourceRef="task_crm_skip" targetRef="task_finalize"/>
 
     <serviceTask id="task_crm" name="Call CRM"
                  flowable:async="true" flowable:exclusive="false" flowable:type="http">

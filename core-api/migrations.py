@@ -93,6 +93,22 @@ MIGRATIONS = [
             updated_at TIMESTAMPTZ DEFAULT NOW()
         );
     """),
+    (5, """
+        CREATE TABLE IF NOT EXISTS request_tracker_events (
+            id SERIAL PRIMARY KEY,
+            request_id TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            service_id TEXT,
+            direction TEXT NOT NULL,
+            status TEXT,
+            title TEXT NOT NULL,
+            payload JSONB DEFAULT '{}',
+            correlation_id TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_request_tracker_request_id ON request_tracker_events(request_id, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_request_tracker_created_at ON request_tracker_events(created_at DESC);
+    """),
 ]
 
 

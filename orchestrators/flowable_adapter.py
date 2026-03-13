@@ -25,6 +25,13 @@ FLOWABLE_PASSWORD = os.getenv("FLOWABLE_PASSWORD", "test")
 CORE_CALLBACK_URL = os.getenv("CORE_CALLBACK_URL", f"{CONFIG_URL}/internal/cases/complete")
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 SERVICE_NAME = "flowable-adapter"
+TRACKER_URL = f"{CONFIG_URL}/internal/requests/track"
+FLOWABLE_STEPS = (
+    {"service_id": "isoftpull", "raw_key": "isoRawBody", "status_key": "iso_status", "request_key": None, "skip_key": "skip_isoftpull"},
+    {"service_id": "creditsafe", "raw_key": "csRawBody", "status_key": "creditsafe_status", "request_key": "creditsafe_request_body", "skip_key": "skip_creditsafe"},
+    {"service_id": "plaid", "raw_key": "plaidRawBody", "status_key": "plaid_status", "request_key": "plaid_request_body", "skip_key": "skip_plaid"},
+    {"service_id": "crm", "raw_key": "crmRawBody", "status_key": "crm_status", "request_key": "crm_request_body", "skip_key": "skip_crm"},
+)
 
 
 class JsonFormatter(logging.Formatter):
@@ -48,6 +55,15 @@ def _auth():
     return (FLOWABLE_USER, FLOWABLE_PASSWORD)
 
 
+def _internal_headers(cid: str = ""):
+    headers = {}
+    if INTERNAL_API_KEY:
+        headers["X-Internal-Api-Key"] = INTERNAL_API_KEY
+    if cid:
+        headers["X-Correlation-ID"] = cid
+    return headers
+
+
 def _parse_jsonish(value: Any):
     if isinstance(value, str):
         stripped = value.strip()
@@ -65,7 +81,7 @@ def _cached_cfg(path, ttl=30):
         if time.time() < expires_at:
             return value
     try:
-        response = httpx.get(f"{CONFIG_URL}{path}", timeout=5.0)
+        response = httpx.get(f"{CONFIG_URL}{path}", timeout=5.0, headers=_internal_headers())
         value = response.json() if response.status_code == 200 else {}
     except Exception:
         value = {}
@@ -80,7 +96,7 @@ async def _acfg(path, ttl=30):
             return value
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{CONFIG_URL}{path}")
+            response = await client.get(f"{CONFIG_URL}{path}", headers=_internal_headers())
             value = response.json() if response.status_code == 200 else {}
     except Exception:
         value = {}
@@ -117,6 +133,26 @@ def _extract_summary(process_variables: Dict[str, Any]):
     return result
 
 
+async def _track(request_id: str, stage: str, direction: str, title: str, *, cid: str = "", service_id: Optional[str] = None, status: Optional[str] = None, payload: Any = None):
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(
+                TRACKER_URL,
+                json={
+                    "request_id": request_id,
+                    "stage": stage,
+                    "direction": direction,
+                    "title": title,
+                    "service_id": service_id,
+                    "status": status,
+                    "payload": payload or {},
+                },
+                headers=_internal_headers(cid),
+            )
+    except Exception:
+        pass
+
+
 async def _parsed_report(request_id: str, steps: Dict[str, Any], cid: str):
     parser = await _acfg("/api/v1/services/report-parser")
     base_url = parser.get("base_url", "")
@@ -133,6 +169,17 @@ async def _parsed_report(request_id: str, steps: Dict[str, Any], cid: str):
         return response.json() if response.status_code < 400 else {"status": "PARSER_ERROR", "error": response.text}
     except Exception as exc:
         return {"status": "PARSER_UNAVAILABLE", "error": str(exc)}
+
+
+async def _pipeline_skip_flags():
+    steps = (await _acfg("/api/v1/pipeline-steps?pipeline_name=default")).get("items", [])
+    enabled_map = {
+        step.get("service_id"): bool(step.get("enabled", True))
+        for step in steps
+        if step.get("service_id")
+    }
+    flags = {step["service_id"]: not enabled_map.get(step["service_id"], False) for step in FLOWABLE_STEPS}
+    return steps, flags
 
 
 async def _load_completed_variables(flowable_url: str, instance_id: str) -> Optional[Dict[str, Any]]:
@@ -171,6 +218,64 @@ async def _build_result_payload(body: "RequestIn", instance_id: str, process_var
     }
 
 
+async def _emit_flowable_trace(body: "RequestIn", process_variables: Dict[str, Any], parsed_report: Dict[str, Any], cid: str):
+    for step in FLOWABLE_STEPS:
+        service_id = step["service_id"]
+        status = process_variables.get(step["status_key"], "UNKNOWN")
+        if step["request_key"]:
+            request_payload = _parse_jsonish(process_variables.get(step["request_key"], {}))
+        else:
+            request_payload = {
+                "request_id": body.request_id,
+                "customer_id": body.customer_id,
+                "iin": body.iin,
+                "product_type": body.product_type,
+            }
+        response_payload = _parse_jsonish(process_variables.get(step["raw_key"], {}))
+        if status == "SKIPPED":
+            await _track(
+                body.request_id,
+                "connector",
+                "STATE",
+                "Flowable step skipped",
+                cid=cid,
+                service_id=service_id,
+                status="SKIPPED",
+                payload={"request": request_payload, "response": response_payload},
+            )
+            continue
+        await _track(
+            body.request_id,
+            "connector",
+            "OUT",
+            f"Dispatch to {service_id}",
+            cid=cid,
+            service_id=service_id,
+            status="DISPATCHED",
+            payload=request_payload,
+        )
+        await _track(
+            body.request_id,
+            "connector",
+            "IN",
+            f"Response from {service_id}",
+            cid=cid,
+            service_id=service_id,
+            status=status,
+            payload=response_payload,
+        )
+    await _track(
+        body.request_id,
+        "parser",
+        "IN",
+        "Report parser response",
+        cid=cid,
+        service_id="report-parser",
+        status=parsed_report.get("status", "OK"),
+        payload=parsed_report,
+    )
+
+
 async def _notify_core(request_id: str, result: Dict[str, Any], cid: str):
     headers = {}
     if cid:
@@ -201,6 +306,7 @@ async def _watch_process_completion(flowable_url: str, instance_id: str, body: "
 
         try:
             result = await _build_result_payload(body, instance_id, process_variables, connector_urls, cid)
+            await _emit_flowable_trace(body, process_variables, result.get("parsed_report", {}), cid)
             await _notify_core(body.request_id, result, cid)
             log.info(f"[{cid}] completion pushed for {body.request_id}")
         except Exception as exc:
@@ -262,6 +368,7 @@ async def orchestrate(body: RequestIn, request: Request):
     meta = flowable_cfg.get("meta", {})
     process_key = meta.get("process_key", "creditServiceChainOrchestration") if isinstance(meta, dict) else "creditServiceChainOrchestration"
     connector_urls = await _acfg("/api/v1/connector-urls") or {}
+    pipeline_steps, skip_flags = await _pipeline_skip_flags()
 
     variables = [
         {"name": "request_id", "value": body.request_id},
@@ -272,6 +379,19 @@ async def orchestrate(body: RequestIn, request: Request):
     ]
     for service_id, url in connector_urls.items():
         variables.append({"name": f"{service_id}_url", "value": url})
+    for service_id, skip in skip_flags.items():
+        variables.append({"name": f"skip_{service_id}", "value": skip})
+
+    await _track(
+        body.request_id,
+        "flowable",
+        "OUT",
+        "Flowable process started",
+        cid=cid,
+        service_id="flowable-rest",
+        status="STARTED",
+        payload={"connector_urls": connector_urls, "skip_flags": skip_flags, "pipeline_steps": pipeline_steps},
+    )
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -312,4 +432,6 @@ async def orchestrate(body: RequestIn, request: Request):
             "callback_expected": True,
         }
 
-    return await _build_result_payload(body, instance_id, process_variables, connector_urls, cid)
+    result = await _build_result_payload(body, instance_id, process_variables, connector_urls, cid)
+    await _emit_flowable_trace(body, process_variables, result.get("parsed_report", {}), cid)
+    return result
