@@ -1,0 +1,307 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:flowable="http://flowable.org/bpmn"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+             typeLanguage="http://www.w3.org/2001/XMLSchema"
+             expressionLanguage="http://www.w3.org/1999/XPath"
+             targetNamespace="http://example.com/credit-service-chain">
+
+  <error id="serviceError" errorCode="HTTP_TASK_ERROR"/>
+
+  <process id="creditServiceChainOrchestration" name="Credit Service Chain Orchestration" isExecutable="true">
+
+    <startEvent id="startEvent" name="Request received"/>
+    <sequenceFlow id="flow_start_to_init" sourceRef="startEvent" targetRef="task_init"/>
+
+    <scriptTask id="task_init" name="Initialize context"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        execution.setVariable('route_mode', execution.getVariable('route_mode') ?: 'FLOWABLE')
+        execution.setVariable('request_id', execution.getVariable('request_id') ?: '')
+        execution.setVariable('customer_id', execution.getVariable('customer_id') ?: '')
+        execution.setVariable('iin', execution.getVariable('iin') ?: '')
+        execution.setVariable('product_type', execution.getVariable('product_type') ?: '')
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_init_to_iso" sourceRef="task_init" targetRef="task_isoftpull"/>
+
+    <serviceTask id="task_isoftpull" name="Call iSoftPull"
+                 flowable:async="true" flowable:exclusive="false" flowable:type="http">
+      <extensionElements>
+        <flowable:failedJobRetryTimeCycle>R2/PT5S</flowable:failedJobRetryTimeCycle>
+        <flowable:field name="requestMethod"><flowable:string>POST</flowable:string></flowable:field>
+        <flowable:field name="requestUrl"><flowable:expression>${isoftpull_url}</flowable:expression></flowable:field>
+        <flowable:field name="requestHeaders">
+          <flowable:expression>Content-Type: application/json
+X-Request-Id: ${request_id}</flowable:expression>
+        </flowable:field>
+        <flowable:field name="requestBody">
+          <flowable:expression>{"request_id":"${request_id}","customer_id":"${customer_id}","iin":"${iin}","product_type":"${product_type}"}</flowable:expression>
+        </flowable:field>
+        <flowable:field name="saveResponseParameters"><flowable:string>true</flowable:string></flowable:field>
+        <flowable:field name="resultVariablePrefix"><flowable:string>isoRaw</flowable:string></flowable:field>
+        <flowable:field name="requestTimeout"><flowable:string>10000</flowable:string></flowable:field>
+      </extensionElements>
+    </serviceTask>
+    <boundaryEvent id="err_iso" attachedToRef="task_isoftpull" cancelActivity="true">
+      <errorEventDefinition errorRef="serviceError"/>
+    </boundaryEvent>
+    <scriptTask id="task_iso_degrade" name="iSoftPull degrade"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        execution.setVariable('isoRawBody', '{}')
+        execution.setVariable('iso_status', 'UNAVAILABLE')
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_err_iso" sourceRef="err_iso" targetRef="task_iso_degrade"/>
+    <sequenceFlow id="flow_iso_deg_to_prep_cs" sourceRef="task_iso_degrade" targetRef="task_prepare_creditsafe_body"/>
+
+    <scriptTask id="task_parse_iso" name="Parse iSoftPull"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        def raw = (execution.getVariable('isoRawBody') ?: '{}') as String
+        def mv = raw =~ /"status"\s*:\s*"([^"]+)"/
+        execution.setVariable('iso_status', mv.find() ? mv.group(1) : 'OK')
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_iso_to_parse" sourceRef="task_isoftpull" targetRef="task_parse_iso"/>
+    <sequenceFlow id="flow_parse_iso_to_prep_cs" sourceRef="task_parse_iso" targetRef="task_prepare_creditsafe_body"/>
+
+    <scriptTask id="task_prepare_creditsafe_body" name="Prepare Creditsafe body"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        def isoBody = (execution.getVariable('isoRawBody') ?: '{}') as String
+        def body = '{"request_id":"' + execution.getVariable('request_id') + '",' +
+                   '"customer_id":"' + execution.getVariable('customer_id') + '",' +
+                   '"iin":"' + execution.getVariable('iin') + '",' +
+                   '"isoftpull":' + isoBody + '}'
+        execution.setVariable('creditsafe_request_body', body)
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_prep_cs_to_call" sourceRef="task_prepare_creditsafe_body" targetRef="task_creditsafe"/>
+
+    <serviceTask id="task_creditsafe" name="Call Creditsafe"
+                 flowable:async="true" flowable:exclusive="false" flowable:type="http">
+      <extensionElements>
+        <flowable:failedJobRetryTimeCycle>R2/PT5S</flowable:failedJobRetryTimeCycle>
+        <flowable:field name="requestMethod"><flowable:string>POST</flowable:string></flowable:field>
+        <flowable:field name="requestUrl"><flowable:expression>${creditsafe_url}</flowable:expression></flowable:field>
+        <flowable:field name="requestHeaders">
+          <flowable:expression>Content-Type: application/json
+X-Request-Id: ${request_id}</flowable:expression>
+        </flowable:field>
+        <flowable:field name="requestBody"><flowable:expression>${creditsafe_request_body}</flowable:expression></flowable:field>
+        <flowable:field name="saveResponseParameters"><flowable:string>true</flowable:string></flowable:field>
+        <flowable:field name="resultVariablePrefix"><flowable:string>csRaw</flowable:string></flowable:field>
+        <flowable:field name="requestTimeout"><flowable:string>10000</flowable:string></flowable:field>
+      </extensionElements>
+    </serviceTask>
+    <boundaryEvent id="err_cs" attachedToRef="task_creditsafe" cancelActivity="true">
+      <errorEventDefinition errorRef="serviceError"/>
+    </boundaryEvent>
+    <scriptTask id="task_cs_degrade" name="Creditsafe degrade"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        execution.setVariable('csRawBody', '{}')
+        execution.setVariable('creditsafe_status', 'UNAVAILABLE')
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_err_cs" sourceRef="err_cs" targetRef="task_cs_degrade"/>
+    <sequenceFlow id="flow_cs_deg_to_prep_plaid" sourceRef="task_cs_degrade" targetRef="task_prepare_plaid_body"/>
+
+    <scriptTask id="task_parse_cs" name="Parse Creditsafe"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        def raw = (execution.getVariable('csRawBody') ?: '{}') as String
+        def mv = raw =~ /"status"\s*:\s*"([^"]+)"/
+        execution.setVariable('creditsafe_status', mv.find() ? mv.group(1) : 'OK')
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_cs_to_parse" sourceRef="task_creditsafe" targetRef="task_parse_cs"/>
+    <sequenceFlow id="flow_parse_cs_to_prep_plaid" sourceRef="task_parse_cs" targetRef="task_prepare_plaid_body"/>
+
+    <scriptTask id="task_prepare_plaid_body" name="Prepare Plaid body"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        def csBody = (execution.getVariable('csRawBody') ?: '{}') as String
+        def body = '{"request_id":"' + execution.getVariable('request_id') + '",' +
+                   '"customer_id":"' + execution.getVariable('customer_id') + '",' +
+                   '"iin":"' + execution.getVariable('iin') + '",' +
+                   '"creditsafe":' + csBody + '}'
+        execution.setVariable('plaid_request_body', body)
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_prep_plaid_to_call" sourceRef="task_prepare_plaid_body" targetRef="task_plaid"/>
+
+    <serviceTask id="task_plaid" name="Call Plaid"
+                 flowable:async="true" flowable:exclusive="false" flowable:type="http">
+      <extensionElements>
+        <flowable:failedJobRetryTimeCycle>R2/PT5S</flowable:failedJobRetryTimeCycle>
+        <flowable:field name="requestMethod"><flowable:string>POST</flowable:string></flowable:field>
+        <flowable:field name="requestUrl"><flowable:expression>${plaid_url}</flowable:expression></flowable:field>
+        <flowable:field name="requestHeaders">
+          <flowable:expression>Content-Type: application/json
+X-Request-Id: ${request_id}</flowable:expression>
+        </flowable:field>
+        <flowable:field name="requestBody"><flowable:expression>${plaid_request_body}</flowable:expression></flowable:field>
+        <flowable:field name="saveResponseParameters"><flowable:string>true</flowable:string></flowable:field>
+        <flowable:field name="resultVariablePrefix"><flowable:string>plaidRaw</flowable:string></flowable:field>
+        <flowable:field name="requestTimeout"><flowable:string>10000</flowable:string></flowable:field>
+      </extensionElements>
+    </serviceTask>
+    <boundaryEvent id="err_plaid" attachedToRef="task_plaid" cancelActivity="true">
+      <errorEventDefinition errorRef="serviceError"/>
+    </boundaryEvent>
+    <scriptTask id="task_plaid_degrade" name="Plaid degrade"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        execution.setVariable('plaidRawBody', '{}')
+        execution.setVariable('plaid_status', 'UNAVAILABLE')
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_err_plaid" sourceRef="err_plaid" targetRef="task_plaid_degrade"/>
+    <sequenceFlow id="flow_plaid_deg_to_prep_crm" sourceRef="task_plaid_degrade" targetRef="task_prepare_crm_body"/>
+
+    <scriptTask id="task_parse_plaid" name="Parse Plaid"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        def raw = (execution.getVariable('plaidRawBody') ?: '{}') as String
+        def mv = raw =~ /"status"\s*:\s*"([^"]+)"/
+        execution.setVariable('plaid_status', mv.find() ? mv.group(1) : 'OK')
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_plaid_to_parse" sourceRef="task_plaid" targetRef="task_parse_plaid"/>
+    <sequenceFlow id="flow_parse_plaid_to_prep_crm" sourceRef="task_parse_plaid" targetRef="task_prepare_crm_body"/>
+
+    <scriptTask id="task_prepare_crm_body" name="Prepare CRM body"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        def plaidBody = (execution.getVariable('plaidRawBody') ?: '{}') as String
+        def body = '{"request_id":"' + execution.getVariable('request_id') + '",' +
+                   '"customer_id":"' + execution.getVariable('customer_id') + '",' +
+                   '"iin":"' + execution.getVariable('iin') + '",' +
+                   '"plaid":' + plaidBody + '}'
+        execution.setVariable('crm_request_body', body)
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_prep_crm_to_call" sourceRef="task_prepare_crm_body" targetRef="task_crm"/>
+
+    <serviceTask id="task_crm" name="Call CRM"
+                 flowable:async="true" flowable:exclusive="false" flowable:type="http">
+      <extensionElements>
+        <flowable:failedJobRetryTimeCycle>R2/PT5S</flowable:failedJobRetryTimeCycle>
+        <flowable:field name="requestMethod"><flowable:string>POST</flowable:string></flowable:field>
+        <flowable:field name="requestUrl"><flowable:expression>${crm_url}</flowable:expression></flowable:field>
+        <flowable:field name="requestHeaders">
+          <flowable:expression>Content-Type: application/json
+X-Request-Id: ${request_id}</flowable:expression>
+        </flowable:field>
+        <flowable:field name="requestBody"><flowable:expression>${crm_request_body}</flowable:expression></flowable:field>
+        <flowable:field name="saveResponseParameters"><flowable:string>true</flowable:string></flowable:field>
+        <flowable:field name="resultVariablePrefix"><flowable:string>crmRaw</flowable:string></flowable:field>
+        <flowable:field name="requestTimeout"><flowable:string>10000</flowable:string></flowable:field>
+      </extensionElements>
+    </serviceTask>
+    <boundaryEvent id="err_crm" attachedToRef="task_crm" cancelActivity="true">
+      <errorEventDefinition errorRef="serviceError"/>
+    </boundaryEvent>
+    <scriptTask id="task_crm_degrade" name="CRM degrade"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        execution.setVariable('crmRawBody', '{}')
+        execution.setVariable('crm_status', 'UNAVAILABLE')
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_err_crm" sourceRef="err_crm" targetRef="task_crm_degrade"/>
+    <sequenceFlow id="flow_crm_deg_to_finalize" sourceRef="task_crm_degrade" targetRef="task_finalize"/>
+
+    <scriptTask id="task_parse_crm" name="Parse CRM"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        def raw = (execution.getVariable('crmRawBody') ?: '{}') as String
+        def mv = raw =~ /"status"\s*:\s*"([^"]+)"/
+        execution.setVariable('crm_status', mv.find() ? mv.group(1) : 'OK')
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_crm_to_parse" sourceRef="task_crm" targetRef="task_parse_crm"/>
+    <sequenceFlow id="flow_parse_crm_to_finalize" sourceRef="task_parse_crm" targetRef="task_finalize"/>
+
+    <scriptTask id="task_finalize" name="Finalize result"
+                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        def summary = '{"request_id":"' + execution.getVariable('request_id') + '",' +
+                      '"route_mode":"' + execution.getVariable('route_mode') + '",' +
+                      '"iso_status":"' + (execution.getVariable('iso_status') ?: 'UNKNOWN') + '",' +
+                      '"creditsafe_status":"' + (execution.getVariable('creditsafe_status') ?: 'UNKNOWN') + '",' +
+                      '"plaid_status":"' + (execution.getVariable('plaid_status') ?: 'UNKNOWN') + '",' +
+                      '"crm_status":"' + (execution.getVariable('crm_status') ?: 'UNKNOWN') + '"}'
+        def flowableResult = '{"status":"COMPLETED","adapter":"flowable","request_id":"' + execution.getVariable('request_id') + '",' +
+                             '"steps":{' +
+                               '"isoftpull":' + ((execution.getVariable('isoRawBody') ?: '{}') as String) + ',' +
+                               '"creditsafe":' + ((execution.getVariable('csRawBody') ?: '{}') as String) + ',' +
+                               '"plaid":' + ((execution.getVariable('plaidRawBody') ?: '{}') as String) + ',' +
+                               '"crm":' + ((execution.getVariable('crmRawBody') ?: '{}') as String) + '},' +
+                             '"summary":' + summary + '}'
+        execution.setVariable('orchestration_result', flowableResult)
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_finalize_to_end" sourceRef="task_finalize" targetRef="endEvent"/>
+
+    <endEvent id="endEvent" name="Completed"/>
+  </process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_creditServiceChainOrchestration">
+    <bpmndi:BPMNPlane id="BPMNPlane_creditServiceChainOrchestration" bpmnElement="creditServiceChainOrchestration">
+      <bpmndi:BPMNShape id="shape_start" bpmnElement="startEvent"><omgdc:Bounds x="100" y="180" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_init" bpmnElement="task_init"><omgdc:Bounds x="180" y="158" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_iso" bpmnElement="task_isoftpull"><omgdc:Bounds x="360" y="158" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_err_iso" bpmnElement="err_iso"><omgdc:Bounds x="450" y="210" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_iso_deg" bpmnElement="task_iso_degrade"><omgdc:Bounds x="540" y="280" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_parse_iso" bpmnElement="task_parse_iso"><omgdc:Bounds x="540" y="158" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_prep_cs" bpmnElement="task_prepare_creditsafe_body"><omgdc:Bounds x="720" y="158" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_cs" bpmnElement="task_creditsafe"><omgdc:Bounds x="920" y="158" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_err_cs" bpmnElement="err_cs"><omgdc:Bounds x="1010" y="210" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_cs_deg" bpmnElement="task_cs_degrade"><omgdc:Bounds x="1100" y="280" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_parse_cs" bpmnElement="task_parse_cs"><omgdc:Bounds x="1100" y="158" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_prep_plaid" bpmnElement="task_prepare_plaid_body"><omgdc:Bounds x="1280" y="158" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_plaid" bpmnElement="task_plaid"><omgdc:Bounds x="1480" y="158" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_err_plaid" bpmnElement="err_plaid"><omgdc:Bounds x="1570" y="210" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_plaid_deg" bpmnElement="task_plaid_degrade"><omgdc:Bounds x="1660" y="280" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_parse_plaid" bpmnElement="task_parse_plaid"><omgdc:Bounds x="1660" y="158" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_prep_crm" bpmnElement="task_prepare_crm_body"><omgdc:Bounds x="1840" y="158" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_crm" bpmnElement="task_crm"><omgdc:Bounds x="2040" y="158" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_err_crm" bpmnElement="err_crm"><omgdc:Bounds x="2130" y="210" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_crm_deg" bpmnElement="task_crm_degrade"><omgdc:Bounds x="2220" y="280" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_parse_crm" bpmnElement="task_parse_crm"><omgdc:Bounds x="2220" y="158" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_finalize" bpmnElement="task_finalize"><omgdc:Bounds x="2400" y="158" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_end" bpmnElement="endEvent"><omgdc:Bounds x="2580" y="180" width="36" height="36"/></bpmndi:BPMNShape>
+
+      <bpmndi:BPMNEdge id="edge1" bpmnElement="flow_start_to_init"><omgdi:waypoint x="136" y="198"/><omgdi:waypoint x="180" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge2" bpmnElement="flow_init_to_iso"><omgdi:waypoint x="300" y="198"/><omgdi:waypoint x="360" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge3" bpmnElement="flow_iso_to_parse"><omgdi:waypoint x="480" y="198"/><omgdi:waypoint x="540" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge4" bpmnElement="flow_parse_iso_to_prep_cs"><omgdi:waypoint x="660" y="198"/><omgdi:waypoint x="720" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge5" bpmnElement="flow_prep_cs_to_call"><omgdi:waypoint x="860" y="198"/><omgdi:waypoint x="920" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge6" bpmnElement="flow_cs_to_parse"><omgdi:waypoint x="1040" y="198"/><omgdi:waypoint x="1100" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge7" bpmnElement="flow_parse_cs_to_prep_plaid"><omgdi:waypoint x="1220" y="198"/><omgdi:waypoint x="1280" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge8" bpmnElement="flow_prep_plaid_to_call"><omgdi:waypoint x="1420" y="198"/><omgdi:waypoint x="1480" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge9" bpmnElement="flow_plaid_to_parse"><omgdi:waypoint x="1600" y="198"/><omgdi:waypoint x="1660" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge10" bpmnElement="flow_parse_plaid_to_prep_crm"><omgdi:waypoint x="1780" y="198"/><omgdi:waypoint x="1840" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge11" bpmnElement="flow_prep_crm_to_call"><omgdi:waypoint x="1980" y="198"/><omgdi:waypoint x="2040" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge12" bpmnElement="flow_crm_to_parse"><omgdi:waypoint x="2160" y="198"/><omgdi:waypoint x="2220" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge13" bpmnElement="flow_parse_crm_to_finalize"><omgdi:waypoint x="2340" y="198"/><omgdi:waypoint x="2400" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge14" bpmnElement="flow_finalize_to_end"><omgdi:waypoint x="2520" y="198"/><omgdi:waypoint x="2580" y="198"/></bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="edge15" bpmnElement="flow_err_iso"><omgdi:waypoint x="468" y="246"/><omgdi:waypoint x="600" y="280"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge16" bpmnElement="flow_iso_deg_to_prep_cs"><omgdi:waypoint x="660" y="320"/><omgdi:waypoint x="790" y="320"/><omgdi:waypoint x="790" y="238"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge17" bpmnElement="flow_err_cs"><omgdi:waypoint x="1028" y="246"/><omgdi:waypoint x="1160" y="280"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge18" bpmnElement="flow_cs_deg_to_prep_plaid"><omgdi:waypoint x="1220" y="320"/><omgdi:waypoint x="1350" y="320"/><omgdi:waypoint x="1350" y="238"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge19" bpmnElement="flow_err_plaid"><omgdi:waypoint x="1588" y="246"/><omgdi:waypoint x="1720" y="280"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge20" bpmnElement="flow_plaid_deg_to_prep_crm"><omgdi:waypoint x="1780" y="320"/><omgdi:waypoint x="1910" y="320"/><omgdi:waypoint x="1910" y="238"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge21" bpmnElement="flow_err_crm"><omgdi:waypoint x="2148" y="246"/><omgdi:waypoint x="2280" y="280"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge22" bpmnElement="flow_crm_deg_to_finalize"><omgdi:waypoint x="2340" y="320"/><omgdi:waypoint x="2460" y="320"/><omgdi:waypoint x="2460" y="238"/></bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</definitions>

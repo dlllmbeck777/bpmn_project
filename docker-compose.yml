@@ -1,0 +1,208 @@
+services:
+  # ── Config Database ───────────────────────────────────
+  config-db:
+    image: postgres:15
+    container_name: config-db
+    environment:
+      POSTGRES_DB: config
+      POSTGRES_USER: config
+      POSTGRES_PASSWORD: config
+    ports:
+      - "5433:5432"
+    volumes:
+      - config_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U config"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Core API ──────────────────────────────────────────
+  core-api:
+    build: ./core-api
+    container_name: core-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=config-db
+      - DB_PORT=5432
+      - DB_NAME=config
+      - DB_USER=config
+      - DB_PASSWORD=config
+      - GATEWAY_API_KEY=${GATEWAY_API_KEY:-}
+      - ADMIN_API_KEY=${ADMIN_API_KEY:-${GATEWAY_API_KEY:-}}
+      - SENIOR_ANALYST_API_KEY=${SENIOR_ANALYST_API_KEY:-${ADMIN_API_KEY:-${GATEWAY_API_KEY:-}}}
+      - ANALYST_API_KEY=${ANALYST_API_KEY:-${SENIOR_ANALYST_API_KEY:-${ADMIN_API_KEY:-${GATEWAY_API_KEY:-}}}}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
+      - ADMIN_LOGIN_USERNAME=${ADMIN_LOGIN_USERNAME:-admin}
+      - ADMIN_LOGIN_PASSWORD=${ADMIN_LOGIN_PASSWORD:-admin}
+      - SENIOR_ANALYST_LOGIN_USERNAME=${SENIOR_ANALYST_LOGIN_USERNAME:-senior}
+      - SENIOR_ANALYST_LOGIN_PASSWORD=${SENIOR_ANALYST_LOGIN_PASSWORD:-senior}
+      - ANALYST_LOGIN_USERNAME=${ANALYST_LOGIN_USERNAME:-analyst}
+      - ANALYST_LOGIN_PASSWORD=${ANALYST_LOGIN_PASSWORD:-analyst}
+      - SNP_EXTERNAL_URL=${SNP_EXTERNAL_URL:-}
+      - ENCRYPT_KEY=${ENCRYPT_KEY:-change-me-in-production-32chars!}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - RATE_LIMIT_PER_MIN=120
+      - SERVICE_NAME=core-api
+    depends_on:
+      config-db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── Processors ────────────────────────────────────────
+  processors:
+    build: ./processors
+    container_name: processors
+    ports:
+      - "8105:8105"
+      - "8106:8106"
+    environment:
+      - CONFIG_SERVICE_URL=http://core-api:8000
+    depends_on:
+      core-api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Orchestrators ─────────────────────────────────────
+  orchestrators:
+    build: ./orchestrators
+    container_name: orchestrators
+    ports:
+      - "8011:8011"
+      - "8012:8012"
+    environment:
+      - CONFIG_SERVICE_URL=http://core-api:8000
+      - FLOWABLE_PASSWORD=${FLOWABLE_PASSWORD:-test}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
+    volumes:
+      - ./processes:/processes:ro
+    depends_on:
+      core-api:
+        condition: service_healthy
+      flowable-rest:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── Connectors ────────────────────────────────────────
+  isoftpull:
+    build: ./connectors/isoftpull
+    container_name: isoftpull
+    ports:
+      - "8101:8101"
+    restart: unless-stopped
+
+  creditsafe:
+    build: ./connectors/creditsafe
+    container_name: creditsafe
+    ports:
+      - "8102:8102"
+    restart: unless-stopped
+
+  plaid:
+    build: ./connectors/plaid
+    container_name: plaid
+    ports:
+      - "8103:8103"
+    restart: unless-stopped
+
+  # ── Flowable Engine ───────────────────────────────────
+  flowable-db:
+    image: postgres:15
+    container_name: flowable-db
+    environment:
+      POSTGRES_DB: flowable
+      POSTGRES_USER: flowable
+      POSTGRES_PASSWORD: flowable
+    ports:
+      - "5434:5432"
+    volumes:
+      - flowable_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  flowable-rest:
+    image: flowable/flowable-rest:6.8.0
+    container_name: flowable-rest
+    ports:
+      - "8085:8080"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://flowable-db:5432/flowable
+      - SPRING_DATASOURCE_USERNAME=flowable
+      - SPRING_DATASOURCE_PASSWORD=flowable
+      - SPRING_DATASOURCE_DRIVER-CLASS-NAME=org.postgresql.Driver
+      - FLOWABLE_COMMON_APP_IDM-ADMIN_USER=admin
+      - FLOWABLE_COMMON_APP_IDM-ADMIN_PASSWORD=${FLOWABLE_PASSWORD:-test}
+    depends_on:
+      - flowable-db
+    restart: unless-stopped
+
+  flowable-ui:
+    image: flowable/flowable-ui:6.8.0
+    container_name: flowable-ui
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://flowable-db:5432/flowable
+      - SPRING_DATASOURCE_USERNAME=flowable
+      - SPRING_DATASOURCE_PASSWORD=flowable
+      - SPRING_DATASOURCE_DRIVER-CLASS-NAME=org.postgresql.Driver
+      - FLOWABLE_COMMON_APP_IDM-ADMIN_USER=admin
+      - FLOWABLE_COMMON_APP_IDM-ADMIN_PASSWORD=${FLOWABLE_PASSWORD:-test}
+    depends_on:
+      - flowable-db
+    restart: unless-stopped
+
+  # ── Admin UI ──────────────────────────────────────────
+  admin-ui:
+    build: ./admin-ui
+    container_name: admin-ui
+    ports:
+      - "3000:3000"
+    depends_on:
+      core-api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Observability ─────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - core-api
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+  crm:
+    build: ./connectors/crm
+    container_name: crm
+    ports:
+      - "8104:8104"
+    restart: unless-stopped
+
+volumes:
+  config_db_data:
+  flowable_db_data:
+  grafana_data:
