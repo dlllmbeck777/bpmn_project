@@ -43,6 +43,27 @@ async def _acfg(path: str, ttl: int = 30):
     return value
 
 
+def _step_meta(step: Dict[str, Any]) -> Dict[str, Any]:
+    meta = step.get("meta")
+    return meta if isinstance(meta, dict) else {}
+
+
+def _resolve_skip_policy(step: Dict[str, Any], mode: str) -> Dict[str, Any]:
+    if not step.get("enabled", True):
+        return {"skip": True, "reason": "pipeline step disabled", "source": "enabled"}
+
+    meta = _step_meta(step)
+    policy_key = f"skip_in_{mode}"
+    if meta.get(policy_key):
+        return {
+            "skip": True,
+            "reason": f"pipeline step bypassed for {mode} mode",
+            "source": policy_key,
+        }
+
+    return {"skip": False, "reason": "", "source": None}
+
+
 async def _track(
     request_id: str,
     stage: str,
@@ -97,8 +118,15 @@ async def orchestrate(body: RequestIn, request: Request):
 
     for step in steps:
         service_id = step.get("service_id", "")
-        if not step.get("enabled", True):
-            skipped = {"status": "SKIPPED", "reason": "pipeline step disabled", "step_order": step.get("step_order")}
+        skip_policy = _resolve_skip_policy(step, "custom")
+        if skip_policy["skip"]:
+            skipped = {
+                "status": "SKIPPED",
+                "reason": skip_policy["reason"],
+                "step_order": step.get("step_order"),
+                "mode": "custom",
+                "policy_source": skip_policy["source"],
+            }
             results[service_id] = skipped
             await _track(
                 body.request_id,
@@ -108,7 +136,7 @@ async def orchestrate(body: RequestIn, request: Request):
                 cid=cid,
                 service_id=service_id,
                 status="SKIPPED",
-                payload={"pipeline_step": step},
+                payload={"pipeline_step": step, "skip_policy": skip_policy},
             )
             continue
 

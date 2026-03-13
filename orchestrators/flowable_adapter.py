@@ -27,10 +27,10 @@ INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 SERVICE_NAME = "flowable-adapter"
 TRACKER_URL = f"{CONFIG_URL}/internal/requests/track"
 FLOWABLE_STEPS = (
-    {"service_id": "isoftpull", "raw_key": "isoRawBody", "status_key": "iso_status", "request_key": None, "skip_key": "skip_isoftpull"},
-    {"service_id": "creditsafe", "raw_key": "csRawBody", "status_key": "creditsafe_status", "request_key": "creditsafe_request_body", "skip_key": "skip_creditsafe"},
-    {"service_id": "plaid", "raw_key": "plaidRawBody", "status_key": "plaid_status", "request_key": "plaid_request_body", "skip_key": "skip_plaid"},
-    {"service_id": "crm", "raw_key": "crmRawBody", "status_key": "crm_status", "request_key": "crm_request_body", "skip_key": "skip_crm"},
+    {"service_id": "isoftpull", "raw_key": "isoRawBody", "status_key": "iso_status", "request_key": None, "skip_key": "skip_isoftpull", "reason_key": "skip_reason_isoftpull"},
+    {"service_id": "creditsafe", "raw_key": "csRawBody", "status_key": "creditsafe_status", "request_key": "creditsafe_request_body", "skip_key": "skip_creditsafe", "reason_key": "skip_reason_creditsafe"},
+    {"service_id": "plaid", "raw_key": "plaidRawBody", "status_key": "plaid_status", "request_key": "plaid_request_body", "skip_key": "skip_plaid", "reason_key": "skip_reason_plaid"},
+    {"service_id": "crm", "raw_key": "crmRawBody", "status_key": "crm_status", "request_key": "crm_request_body", "skip_key": "skip_crm", "reason_key": "skip_reason_crm"},
 )
 
 
@@ -73,6 +73,30 @@ def _parse_jsonish(value: Any):
             except json.JSONDecodeError:
                 return value
     return value
+
+
+def _step_meta(step: Dict[str, Any]) -> Dict[str, Any]:
+    meta = step.get("meta")
+    return meta if isinstance(meta, dict) else {}
+
+
+def _resolve_skip_policy(step: Optional[Dict[str, Any]], mode: str) -> Dict[str, Any]:
+    if not step:
+        return {"skip": True, "reason": "pipeline step not configured", "source": "missing"}
+
+    if not step.get("enabled", True):
+        return {"skip": True, "reason": "pipeline step disabled", "source": "enabled"}
+
+    meta = _step_meta(step)
+    policy_key = f"skip_in_{mode}"
+    if meta.get(policy_key):
+        return {
+            "skip": True,
+            "reason": f"pipeline step bypassed for {mode} mode",
+            "source": policy_key,
+        }
+
+    return {"skip": False, "reason": "", "source": None}
 
 
 def _cached_cfg(path, ttl=30):
@@ -173,13 +197,17 @@ async def _parsed_report(request_id: str, steps: Dict[str, Any], cid: str):
 
 async def _pipeline_skip_flags():
     steps = (await _acfg("/api/v1/pipeline-steps?pipeline_name=default")).get("items", [])
-    enabled_map = {
-        step.get("service_id"): bool(step.get("enabled", True))
-        for step in steps
-        if step.get("service_id")
-    }
-    flags = {step["service_id"]: not enabled_map.get(step["service_id"], False) for step in FLOWABLE_STEPS}
-    return steps, flags
+    step_map = {step.get("service_id"): step for step in steps if step.get("service_id")}
+    flags = {}
+    reasons = {}
+    policies = {}
+    for step in FLOWABLE_STEPS:
+        service_id = step["service_id"]
+        policy = _resolve_skip_policy(step_map.get(service_id), "flowable")
+        flags[service_id] = policy["skip"]
+        reasons[service_id] = policy["reason"]
+        policies[service_id] = policy
+    return steps, flags, reasons, policies
 
 
 async def _load_completed_variables(flowable_url: str, instance_id: str) -> Optional[Dict[str, Any]]:
@@ -368,7 +396,7 @@ async def orchestrate(body: RequestIn, request: Request):
     meta = flowable_cfg.get("meta", {})
     process_key = meta.get("process_key", "creditServiceChainOrchestration") if isinstance(meta, dict) else "creditServiceChainOrchestration"
     connector_urls = await _acfg("/api/v1/connector-urls") or {}
-    pipeline_steps, skip_flags = await _pipeline_skip_flags()
+    pipeline_steps, skip_flags, skip_reasons, skip_policies = await _pipeline_skip_flags()
 
     variables = [
         {"name": "request_id", "value": body.request_id},
@@ -381,6 +409,8 @@ async def orchestrate(body: RequestIn, request: Request):
         variables.append({"name": f"{service_id}_url", "value": url})
     for service_id, skip in skip_flags.items():
         variables.append({"name": f"skip_{service_id}", "value": skip})
+    for service_id, reason in skip_reasons.items():
+        variables.append({"name": f"skip_reason_{service_id}", "value": reason})
 
     await _track(
         body.request_id,
@@ -390,7 +420,12 @@ async def orchestrate(body: RequestIn, request: Request):
         cid=cid,
         service_id="flowable-rest",
         status="STARTED",
-        payload={"connector_urls": connector_urls, "skip_flags": skip_flags, "pipeline_steps": pipeline_steps},
+        payload={
+            "connector_urls": connector_urls,
+            "skip_flags": skip_flags,
+            "skip_policies": skip_policies,
+            "pipeline_steps": pipeline_steps,
+        },
     )
 
     try:

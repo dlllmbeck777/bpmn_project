@@ -36,7 +36,8 @@
     <scriptTask id="task_iso_skip" name="Skip iSoftPull"
                 flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
-        execution.setVariable('isoRawBody', '{"status":"SKIPPED","reason":"pipeline step disabled"}')
+        def reason = ((execution.getVariable('skip_reason_isoftpull') ?: 'pipeline step skipped by policy') as String).replace('"', '\\"')
+        execution.setVariable('isoRawBody', '{"status":"SKIPPED","reason":"' + reason + '"}')
         execution.setVariable('iso_status', 'SKIPPED')
       ]]></script>
     </scriptTask>
@@ -105,7 +106,8 @@ X-Request-Id: ${request_id}</flowable:expression>
     <scriptTask id="task_cs_skip" name="Skip Creditsafe"
                 flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
-        execution.setVariable('csRawBody', '{"status":"SKIPPED","reason":"pipeline step disabled"}')
+        def reason = ((execution.getVariable('skip_reason_creditsafe') ?: 'pipeline step skipped by policy') as String).replace('"', '\\"')
+        execution.setVariable('csRawBody', '{"status":"SKIPPED","reason":"' + reason + '"}')
         execution.setVariable('creditsafe_status', 'SKIPPED')
       ]]></script>
     </scriptTask>
@@ -172,7 +174,8 @@ X-Request-Id: ${request_id}</flowable:expression>
     <scriptTask id="task_plaid_skip" name="Skip Plaid"
                 flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
-        execution.setVariable('plaidRawBody', '{"status":"SKIPPED","reason":"pipeline step disabled"}')
+        def reason = ((execution.getVariable('skip_reason_plaid') ?: 'pipeline step skipped by policy') as String).replace('"', '\\"')
+        execution.setVariable('plaidRawBody', '{"status":"SKIPPED","reason":"' + reason + '"}')
         execution.setVariable('plaid_status', 'SKIPPED')
       ]]></script>
     </scriptTask>
@@ -239,7 +242,8 @@ X-Request-Id: ${request_id}</flowable:expression>
     <scriptTask id="task_crm_skip" name="Skip CRM"
                 flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
-        execution.setVariable('crmRawBody', '{"status":"SKIPPED","reason":"pipeline step disabled"}')
+        def reason = ((execution.getVariable('skip_reason_crm') ?: 'pipeline step skipped by policy') as String).replace('"', '\\"')
+        execution.setVariable('crmRawBody', '{"status":"SKIPPED","reason":"' + reason + '"}')
         execution.setVariable('crm_status', 'SKIPPED')
       ]]></script>
     </scriptTask>
