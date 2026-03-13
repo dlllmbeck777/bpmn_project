@@ -1,6 +1,10 @@
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import os
+import secrets
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -49,6 +53,70 @@ FLOWABLE_STEP_MAP = (
     ("plaid", "plaidRawBody", "plaid_status", "skip_reason_plaid"),
     ("crm", "crmRawBody", "crm_status", "skip_reason_crm"),
 )
+PASSWORD_SCHEME = "pbkdf2_sha256"
+PASSWORD_ITERATIONS = 480_000
+
+
+def normalize_username(username: str) -> str:
+    return (username or "").strip().lower()
+
+
+def hash_password(password: str, *, salt: Optional[str] = None, iterations: int = PASSWORD_ITERATIONS) -> str:
+    password = password or ""
+    raw_salt = salt or secrets.token_urlsafe(12)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), raw_salt.encode("utf-8"), iterations)
+    encoded = base64.b64encode(digest).decode("ascii")
+    return f"{PASSWORD_SCHEME}${iterations}${raw_salt}${encoded}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        scheme, iteration_text, salt, expected = (stored_hash or "").split("$", 3)
+        if scheme != PASSWORD_SCHEME:
+            return False
+        candidate = hash_password(password, salt=salt, iterations=int(iteration_text))
+        return hmac.compare_digest(candidate, stored_hash)
+    except Exception:
+        return False
+
+
+def _issue_session_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _admin_user_by_username(username: str, *, enabled_only: bool = False):
+    normalized = normalize_username(username)
+    if not normalized:
+        return None
+    sql = "SELECT * FROM admin_users WHERE username=%s"
+    params: List[Any] = [normalized]
+    if enabled_only:
+        sql += " AND enabled=TRUE"
+    return to_json_ready(query(sql, params, "one"))
+
+
+def _admin_user_by_session_token(token: str):
+    if not (token or "").strip():
+        return None
+    return to_json_ready(query("SELECT * FROM admin_users WHERE session_token=%s AND enabled=TRUE", ((token or "").strip(),), "one"))
+
+
+def ensure_default_ui_users():
+    profiles = [
+        (normalize_username(ADMIN_LOGIN_USERNAME), ADMIN_LOGIN_USERNAME, ROLE_ADMIN, ADMIN_LOGIN_PASSWORD),
+        (normalize_username(SENIOR_ANALYST_LOGIN_USERNAME), SENIOR_ANALYST_LOGIN_USERNAME, ROLE_SENIOR_ANALYST, SENIOR_ANALYST_LOGIN_PASSWORD),
+        (normalize_username(ANALYST_LOGIN_USERNAME), ANALYST_LOGIN_USERNAME, ROLE_ANALYST, ANALYST_LOGIN_PASSWORD),
+    ]
+    for username, display_name, role, password in profiles:
+        if not username or _admin_user_by_username(username):
+            continue
+        execute(
+            """
+            INSERT INTO admin_users (username,display_name,role,password_hash,enabled,source)
+            VALUES (%s,%s,%s,%s,%s,%s)
+            """,
+            (username, display_name, normalize_role(role), hash_password(password), True, "seed"),
+        )
 
 
 def require_gateway_auth(key: str):
@@ -77,12 +145,38 @@ def require_internal_or_min_role(key: str, requested_role: str, minimum_role: st
 
 
 def authenticate_ui_login(username: str, password: str):
-    username = (username or "").strip()
+    username = normalize_username(username)
     password = password or ""
+    db_user = _admin_user_by_username(username)
+    if db_user:
+        if not db_user.get("enabled"):
+            metrics.inc("auth_failures", 'scope="ui-login"')
+            raise HTTPException(403, "user account is disabled")
+        if verify_password(password, db_user.get("password_hash", "")):
+            session_token = _issue_session_token()
+            execute(
+                """
+                UPDATE admin_users
+                SET session_token=%s, session_issued_at=NOW(), last_login_at=NOW(), updated_at=NOW()
+                WHERE username=%s
+                """,
+                (session_token, username),
+            )
+            role = normalize_role(db_user.get("role"))
+            metrics.inc("auth_logins", f'role="{role}"')
+            return {
+                "status": "ok",
+                "username": db_user.get("username") or username,
+                "role": role,
+                "api_key": session_token,
+            }
+        metrics.inc("auth_failures", 'scope="ui-login"')
+        raise HTTPException(401, "invalid username or password")
+
     profiles = [
-        (ROLE_ADMIN, ADMIN_LOGIN_USERNAME, ADMIN_LOGIN_PASSWORD, ADMIN_API_KEY),
-        (ROLE_SENIOR_ANALYST, SENIOR_ANALYST_LOGIN_USERNAME, SENIOR_ANALYST_LOGIN_PASSWORD, SENIOR_ANALYST_API_KEY),
-        (ROLE_ANALYST, ANALYST_LOGIN_USERNAME, ANALYST_LOGIN_PASSWORD, ANALYST_API_KEY),
+        (ROLE_ADMIN, normalize_username(ADMIN_LOGIN_USERNAME), ADMIN_LOGIN_PASSWORD, ADMIN_API_KEY),
+        (ROLE_SENIOR_ANALYST, normalize_username(SENIOR_ANALYST_LOGIN_USERNAME), SENIOR_ANALYST_LOGIN_PASSWORD, SENIOR_ANALYST_API_KEY),
+        (ROLE_ANALYST, normalize_username(ANALYST_LOGIN_USERNAME), ANALYST_LOGIN_PASSWORD, ANALYST_API_KEY),
     ]
     for role, expected_username, expected_password, api_key in profiles:
         if username == expected_username and password == expected_password:
@@ -122,6 +216,13 @@ def _role_key_matches(role: str, key: str, include_fallback: bool = True) -> boo
 def resolve_ui_role(key: str, requested_role: str = "") -> str:
     normalized_role = normalize_role(requested_role)
     key = (key or "").strip()
+    session_user = _admin_user_by_session_token(key)
+    if session_user:
+        actual_role = normalize_role(session_user.get("role"))
+        if normalized_role and normalized_role != actual_role:
+            metrics.inc("auth_failures", f'scope="ui",role="{normalized_role}"')
+            raise HTTPException(401, "invalid user role for current session")
+        return actual_role
     if not _has_any_role_keys():
         return normalized_role or ROLE_ADMIN
     if normalized_role and _role_key_matches(normalized_role, key, include_fallback=True):
@@ -153,6 +254,114 @@ def authorize_request_view(key: str, requested_role: str) -> str:
 def apply_rate_limit(ip: str):
     if not check_rate_limit(f"ip:{ip}", RATE_LIMIT, window_seconds=60):
         raise HTTPException(429, "rate limit exceeded")
+
+
+def _safe_user_view(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not row:
+        return None
+    item = dict(row)
+    item.pop("password_hash", None)
+    item.pop("session_token", None)
+    item["role"] = normalize_role(item.get("role"))
+    item["session_active"] = bool(row.get("session_token"))
+    return item
+
+
+def _admin_count() -> int:
+    return int(query("SELECT COUNT(*) FROM admin_users WHERE role=%s AND enabled=TRUE", (ROLE_ADMIN,), "scalar") or 0)
+
+
+def list_admin_users() -> List[Dict[str, Any]]:
+    rows = query("SELECT * FROM admin_users ORDER BY role DESC, username")
+    return [_safe_user_view(to_json_ready(row)) for row in rows]
+
+
+def create_admin_user(username: str, display_name: str, role: str, password: str, enabled: bool = True) -> Dict[str, Any]:
+    normalized_username = normalize_username(username)
+    if not normalized_username:
+        raise HTTPException(400, "username is required")
+    normalized_role = normalize_role(role)
+    if _admin_user_by_username(normalized_username):
+        raise HTTPException(409, "username already exists")
+    execute(
+        """
+        INSERT INTO admin_users (username,display_name,role,password_hash,enabled,source)
+        VALUES (%s,%s,%s,%s,%s,%s)
+        """,
+        (normalized_username, (display_name or "").strip(), normalized_role, hash_password(password), enabled, "db"),
+    )
+    return _safe_user_view(_admin_user_by_username(normalized_username))
+
+
+def update_admin_user(username: str, *, display_name: str, role: str, password: Optional[str], enabled: bool, actor_username: str = "") -> Dict[str, Any]:
+    normalized_username = normalize_username(username)
+    existing = _admin_user_by_username(normalized_username)
+    if not existing:
+        raise HTTPException(404, "user not found")
+
+    normalized_role = normalize_role(role)
+    actor_username = normalize_username(actor_username)
+    if normalize_role(existing.get("role")) == ROLE_ADMIN and (normalized_role != ROLE_ADMIN or not enabled) and _admin_count() <= 1:
+        raise HTTPException(409, "at least one enabled admin user must remain")
+    if actor_username and actor_username == normalized_username and (normalized_role != ROLE_ADMIN or not enabled):
+        raise HTTPException(409, "you cannot remove your own admin access or disable your current account")
+
+    password_hash = existing.get("password_hash", "")
+    rotate_session = False
+    if password:
+        password_hash = hash_password(password)
+        rotate_session = True
+    if normalize_role(existing.get("role")) != normalized_role or bool(existing.get("enabled")) != bool(enabled):
+        rotate_session = True
+
+    execute(
+        """
+        UPDATE admin_users
+        SET display_name=%s,
+            role=%s,
+            password_hash=%s,
+            enabled=%s,
+            session_token=%s,
+            session_issued_at=%s,
+            updated_at=NOW()
+        WHERE username=%s
+        """,
+        (
+            (display_name or "").strip(),
+            normalized_role,
+            password_hash,
+            enabled,
+            None if rotate_session else existing.get("session_token"),
+            None if rotate_session else existing.get("session_issued_at"),
+            normalized_username,
+        ),
+    )
+    return _safe_user_view(_admin_user_by_username(normalized_username))
+
+
+def delete_admin_user(username: str, actor_username: str = ""):
+    normalized_username = normalize_username(username)
+    existing = _admin_user_by_username(normalized_username)
+    if not existing:
+        raise HTTPException(404, "user not found")
+    actor_username = normalize_username(actor_username)
+    if actor_username and actor_username == normalized_username:
+        raise HTTPException(409, "you cannot delete your current account")
+    if normalize_role(existing.get("role")) == ROLE_ADMIN and _admin_count() <= 1:
+        raise HTTPException(409, "at least one enabled admin user must remain")
+    execute("DELETE FROM admin_users WHERE username=%s", (normalized_username,))
+
+
+def revoke_admin_user_session(username: str) -> Dict[str, Any]:
+    normalized_username = normalize_username(username)
+    existing = _admin_user_by_username(normalized_username)
+    if not existing:
+        raise HTTPException(404, "user not found")
+    execute(
+        "UPDATE admin_users SET session_token=NULL, session_issued_at=NULL, updated_at=NOW() WHERE username=%s",
+        (normalized_username,),
+    )
+    return _safe_user_view(_admin_user_by_username(normalized_username))
 
 
 def resolve_mode(data: Dict[str, Any]) -> str:

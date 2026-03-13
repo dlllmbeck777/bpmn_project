@@ -27,6 +27,21 @@ class LoginResponse(BaseModel):
     api_key: str = Field("", example="admin-key")
 
 
+class AdminUserCreateIn(BaseModel):
+    username: str = Field(..., example="analyst_1")
+    display_name: str = Field("", example="Aigerim")
+    role: str = Field("analyst", example="analyst")
+    password: str = Field(..., min_length=4, example="change-me")
+    enabled: bool = Field(True)
+
+
+class AdminUserUpdateIn(BaseModel):
+    display_name: str = Field("", example="Aigerim")
+    role: str = Field("analyst", example="senior_analyst")
+    password: Optional[str] = Field(None, min_length=4, example="new-password")
+    enabled: bool = Field(True)
+
+
 class FlowableActionIn(BaseModel):
     reason: str = Field("", example="Manual operational action from Flowable Ops")
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import Dashboard from './pages/Dashboard'
 import ServicesPage from './pages/ServicesPage'
+import UsersPage from './pages/UsersPage'
 import RoutingPage from './pages/RoutingPage'
 import StopFactorsPage from './pages/StopFactorsPage'
 import PipelinePage from './pages/PipelinePage'
@@ -16,6 +17,7 @@ import { clearAuth, getApiBase, getApiKey, getCurrentUsername, getRoleLabel, get
 const icons = {
   dashboard: '[]',
   services: '<>',
+  users: 'US',
   routing: '->',
   stopfactors: 'SF',
   pipeline: '||',
@@ -38,6 +40,7 @@ const sections = [
     group: 'Configuration',
     items: [
       { id: 'services', label: 'Services', icon: icons.services, minRole: 'senior_analyst' },
+      { id: 'users', label: 'Users & Access', icon: icons.users, minRole: 'admin' },
       { id: 'routing', label: 'Routing Rules', icon: icons.routing, minRole: 'senior_analyst' },
       { id: 'stopfactors', label: 'Stop Factors', icon: icons.stopfactors, minRole: 'senior_analyst' },
       { id: 'pipeline', label: 'Pipeline', icon: icons.pipeline, minRole: 'senior_analyst' },
@@ -58,6 +61,7 @@ const sections = [
 const pageTitle = {
   dashboard: ['Dashboard', 'Platform overview and health status'],
   services: ['Services', 'Manage service registry, URLs and retries'],
+  users: ['Users & Access', 'Create users, assign roles, disable accounts and revoke sessions'],
   routing: ['Routing Rules', 'Control flowable vs custom routing'],
   stopfactors: ['Stop Factors', 'Pre and post checks for request decisions'],
   pipeline: ['Pipeline', 'Order connector execution chain'],
@@ -110,6 +114,8 @@ export default function App() {
     switch (currentPage) {
       case 'services':
         return <ServicesPage canEdit={canManageServices} />
+      case 'users':
+        return <UsersPage canEdit={canManageServices} />
       case 'routing':
         return <RoutingPage canEdit={canManageConfig} />
       case 'stopfactors':

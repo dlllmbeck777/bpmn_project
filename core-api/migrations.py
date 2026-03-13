@@ -109,6 +109,23 @@ MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_request_tracker_request_id ON request_tracker_events(request_id, id DESC);
         CREATE INDEX IF NOT EXISTS idx_request_tracker_created_at ON request_tracker_events(created_at DESC);
     """),
+    (6, """
+        CREATE TABLE IF NOT EXISTS admin_users (
+            username TEXT PRIMARY KEY,
+            display_name TEXT,
+            role TEXT NOT NULL DEFAULT 'analyst',
+            password_hash TEXT NOT NULL,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            source TEXT NOT NULL DEFAULT 'db',
+            session_token TEXT,
+            session_issued_at TIMESTAMPTZ,
+            last_login_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_admin_users_role ON admin_users(role);
+        CREATE INDEX IF NOT EXISTS idx_admin_users_enabled ON admin_users(enabled);
+    """),
 ]
 
 

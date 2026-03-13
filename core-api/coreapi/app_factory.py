@@ -7,8 +7,8 @@ import psycopg2
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from coreapi.models import FlowableActionIn, HealthResponse, ListResponse, LoginIn, LoginResponse, PipelineStepIn, RequestIn, RequestResponse, RuleIn, ServiceIn, ServiceOut, StatusResponse, StopFactorIn, TrackerEventIn
-from coreapi.services import ROLE_ADMIN, ROLE_ANALYST, ROLE_SENIOR_ANALYST, apply_rate_limit, authenticate_ui_login, authorize_request_view, finalize_request, get_connector_urls, get_flowable_instance_detail, list_flowable_instances, reconcile_flowable_request, require_gateway_auth, require_internal_auth, require_internal_or_min_role, require_min_role, resolve_mode, retry_flowable_failed_jobs, run_stop_factor_check, set_flowable_instance_state
+from coreapi.models import AdminUserCreateIn, AdminUserUpdateIn, FlowableActionIn, HealthResponse, ListResponse, LoginIn, LoginResponse, PipelineStepIn, RequestIn, RequestResponse, RuleIn, ServiceIn, ServiceOut, StatusResponse, StopFactorIn, TrackerEventIn
+from coreapi.services import ROLE_ADMIN, ROLE_ANALYST, ROLE_SENIOR_ANALYST, apply_rate_limit, authenticate_ui_login, authorize_request_view, create_admin_user, delete_admin_user, ensure_default_ui_users, finalize_request, get_connector_urls, get_flowable_instance_detail, list_admin_users, list_flowable_instances, reconcile_flowable_request, require_gateway_auth, require_internal_auth, require_internal_or_min_role, require_min_role, resolve_mode, revoke_admin_user_session, retry_flowable_failed_jobs, run_stop_factor_check, set_flowable_instance_state, update_admin_user
 from coreapi.storage import audit, execute, execute_returning, query, to_json_ready, track_request_event
 from migrations import run_migrations, seed_defaults
 from shared import all_breaker_states, close_pool, config_cache, encrypt_field, get_correlation_id, get_conn, get_logger, init_pool, mask_field, metrics, new_correlation_id, put_conn, resilient_post
@@ -37,6 +37,7 @@ stop-factor evaluation, and external service notification.
         {"name": "Audit", "description": "Configuration change history"},
         {"name": "SNP", "description": "External SNP notifications"},
         {"name": "Auth", "description": "Admin UI login"},
+        {"name": "Users", "description": "Admin user access management"},
         {"name": "Process Tracker", "description": "Request step timeline and in/out payloads"},
         {"name": "Flowable Ops", "description": "Operational visibility and controlled actions for Flowable instances"},
     ],
@@ -67,6 +68,7 @@ def startup():
     run_migrations(conn)
     seed_defaults(conn)
     put_conn(conn)
+    ensure_default_ui_users()
     log.info("core-api started")
 
 
@@ -99,6 +101,62 @@ def prom_metrics():
 def login(body: LoginIn, request: Request):
     apply_rate_limit(request.client.host if request.client else "unknown")
     return authenticate_ui_login(body.username, body.password)
+
+
+@app.get("/api/v1/admin-users", response_model=ListResponse, tags=["Users"])
+def get_admin_users(x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+    require_min_role(x_api_key, x_user_role, ROLE_ADMIN)
+    return {"items": list_admin_users()}
+
+
+@app.post("/api/v1/admin-users", response_model=StatusResponse, status_code=201, tags=["Users"])
+def add_admin_user(body: AdminUserCreateIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+    require_min_role(x_api_key, x_user_role, ROLE_ADMIN)
+    created = create_admin_user(body.username, body.display_name, body.role, body.password, body.enabled)
+    audit("admin_user", created["username"], "created", created)
+    return {"status": "created", "id": created["username"]}
+
+
+@app.put("/api/v1/admin-users/{username}", response_model=StatusResponse, tags=["Users"])
+def edit_admin_user(
+    username: str,
+    body: AdminUserUpdateIn,
+    x_api_key: str = Header(default=""),
+    x_user_role: str = Header(default=""),
+    x_user_name: str = Header(default=""),
+):
+    require_min_role(x_api_key, x_user_role, ROLE_ADMIN)
+    updated = update_admin_user(
+        username,
+        display_name=body.display_name,
+        role=body.role,
+        password=body.password,
+        enabled=body.enabled,
+        actor_username=x_user_name,
+    )
+    audit("admin_user", updated["username"], "updated", updated)
+    return {"status": "updated", "id": updated["username"]}
+
+
+@app.post("/api/v1/admin-users/{username}/revoke-session", response_model=StatusResponse, tags=["Users"])
+def revoke_user_session(username: str, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+    require_min_role(x_api_key, x_user_role, ROLE_ADMIN)
+    updated = revoke_admin_user_session(username)
+    audit("admin_user", updated["username"], "session_revoked", updated)
+    return {"status": "updated", "id": updated["username"]}
+
+
+@app.delete("/api/v1/admin-users/{username}", response_model=StatusResponse, tags=["Users"])
+def remove_admin_user(
+    username: str,
+    x_api_key: str = Header(default=""),
+    x_user_role: str = Header(default=""),
+    x_user_name: str = Header(default=""),
+):
+    require_min_role(x_api_key, x_user_role, ROLE_ADMIN)
+    delete_admin_user(username, actor_username=x_user_name)
+    audit("admin_user", username, "deleted", {"username": username})
+    return {"status": "deleted", "id": username}
 
 
 @app.get("/api/v1/services", response_model=ListResponse, tags=["Services"])

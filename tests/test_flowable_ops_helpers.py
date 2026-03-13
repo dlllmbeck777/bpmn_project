@@ -44,6 +44,53 @@ from coreapi import services  # noqa: E402
 
 
 class FlowableOpsHelperTests(unittest.TestCase):
+    def test_authenticate_ui_login_prefers_db_user_session(self):
+        original_lookup = services._admin_user_by_username
+        original_verify = services.verify_password
+        original_execute = services.execute
+        original_issue = services._issue_session_token
+        try:
+            services._admin_user_by_username = lambda username, enabled_only=False: {
+                "username": "admin",
+                "role": "admin",
+                "enabled": True,
+                "password_hash": "stored",
+            }
+            services.verify_password = lambda password, stored_hash: password == "secret-123"
+            services.execute = lambda *args, **kwargs: None
+            services._issue_session_token = lambda: "session-token-1"
+            result = services.authenticate_ui_login("admin", "secret-123")
+            self.assertEqual(result["api_key"], "session-token-1")
+            self.assertEqual(result["role"], "admin")
+        finally:
+            services._admin_user_by_username = original_lookup
+            services.verify_password = original_verify
+            services.execute = original_execute
+            services._issue_session_token = original_issue
+
+    def test_authenticate_ui_login_blocks_disabled_db_user(self):
+        original_lookup = services._admin_user_by_username
+        try:
+            services._admin_user_by_username = lambda username, enabled_only=False: {
+                "username": "analyst",
+                "role": "analyst",
+                "enabled": False,
+                "password_hash": "stored",
+            }
+            with self.assertRaises(_DummyHTTPException) as ctx:
+                services.authenticate_ui_login("analyst", "anything")
+            self.assertEqual(ctx.exception.status_code, 403)
+        finally:
+            services._admin_user_by_username = original_lookup
+
+    def test_hash_password_roundtrip(self):
+        hashed = services.hash_password("secret-123")
+        self.assertTrue(services.verify_password("secret-123", hashed))
+        self.assertFalse(services.verify_password("wrong", hashed))
+
+    def test_normalize_username_trims_and_lowercases(self):
+        self.assertEqual(services.normalize_username(" Admin.User "), "admin.user")
+
     def test_extract_flowable_instance_id_from_normalized_result(self):
         result = {"engine": {"instance_id": "proc-123"}}
         self.assertEqual(services.extract_flowable_instance_id(result), "proc-123")

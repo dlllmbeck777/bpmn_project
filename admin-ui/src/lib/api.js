@@ -104,6 +104,7 @@ export async function api(path, opts = {}) {
   const headers = new Headers(opts.headers || {})
   const apiKey = getApiKey()
   const userRole = getUserRole()
+  const username = getCurrentUsername()
   if (opts.body !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
@@ -112,6 +113,9 @@ export async function api(path, opts = {}) {
   }
   if (userRole && !headers.has('X-User-Role')) {
     headers.set('X-User-Role', userRole)
+  }
+  if (username && !headers.has('X-User-Name')) {
+    headers.set('X-User-Name', username)
   }
 
   const response = await fetch(`${getApiBase()}${path}`, { ...opts, headers })
