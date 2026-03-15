@@ -370,18 +370,63 @@ def revoke_admin_user_session(username: str) -> Dict[str, Any]:
     return _safe_user_view(_admin_user_by_username(normalized_username))
 
 
+def _read_rule_value(data: Dict[str, Any], field_path: str):
+    current: Any = data
+    for part in str(field_path or "").split("."):
+        if not part:
+            continue
+        if isinstance(current, dict):
+            current = current.get(part)
+        else:
+            return None
+    return current
+
+
+def _rule_matches(rule: Dict[str, Any], data: Dict[str, Any]) -> bool:
+    value = str(_read_rule_value(data, rule.get("condition_field", "")) or "")
+    expected = str(rule.get("condition_value", ""))
+    return {
+        "eq": value == expected,
+        "neq": value != expected,
+        "contains": expected in value,
+    }.get(rule.get("condition_op"), False)
+
+
+def _deterministic_sample_bucket(value: Any) -> int:
+    digest = hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % 100
+
+
+def _rule_canary_matches(rule: Dict[str, Any], data: Dict[str, Any]) -> bool:
+    meta = rule.get("meta")
+    meta = meta if isinstance(meta, dict) else {}
+    sample_raw = meta.get("sample_percent")
+    if sample_raw in (None, "", False):
+        return True
+    try:
+        sample_percent = float(sample_raw)
+    except (TypeError, ValueError):
+        return True
+
+    if sample_percent <= 0:
+        return False
+    if sample_percent >= 100:
+        return True
+
+    sticky_field = str(meta.get("sticky_field") or "request_id")
+    sticky_value = _read_rule_value(data, sticky_field)
+    if sticky_value in (None, ""):
+        sticky_value = data.get("request_id") or data.get("customer_id") or json.dumps(data, sort_keys=True, ensure_ascii=True)
+    return _deterministic_sample_bucket(sticky_value) < sample_percent
+
+
 def resolve_mode(data: Dict[str, Any]) -> str:
     mode = data.get("orchestration_mode", "auto")
     if mode not in ("auto", ""):
         return mode
     for rule in query("SELECT * FROM routing_rules WHERE enabled=TRUE ORDER BY priority"):
-        value = str(data.get(rule["condition_field"], ""))
-        matched = {
-            "eq": value == rule["condition_value"],
-            "neq": value != rule["condition_value"],
-            "contains": rule["condition_value"] in value,
-        }.get(rule["condition_op"], False)
-        if matched:
+        matched = _rule_matches(rule, data)
+        if matched and _rule_canary_matches(rule, data):
             return rule["target_mode"]
     return "flowable"
 

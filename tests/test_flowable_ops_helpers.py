@@ -128,6 +128,38 @@ class FlowableOpsHelperTests(unittest.TestCase):
         self.assertEqual(result["steps"]["creditsafe"]["status"], "SKIPPED")
         self.assertEqual(result["summary"]["request_id"], "REQ-55")
 
+    def test_resolve_mode_supports_deterministic_canary_rules(self):
+        original_query = services.query
+        try:
+            services.query = lambda *args, **kwargs: [
+                {
+                    "name": "5% Flowable Canary",
+                    "condition_field": "orchestration_mode",
+                    "condition_op": "eq",
+                    "condition_value": "auto",
+                    "target_mode": "flowable",
+                    "meta": {"sample_percent": 5, "sticky_field": "request_id"},
+                },
+                {
+                    "name": "Fallback Custom",
+                    "condition_field": "orchestration_mode",
+                    "condition_op": "eq",
+                    "condition_value": "auto",
+                    "target_mode": "custom",
+                    "meta": {},
+                },
+            ]
+            flowable_request = {"request_id": "REQ-56", "customer_id": "CUST-001", "orchestration_mode": "auto"}
+            custom_request = {"request_id": "REQ-1", "customer_id": "CUST-001", "orchestration_mode": "auto"}
+            self.assertEqual(services.resolve_mode(flowable_request), "flowable")
+            self.assertEqual(services.resolve_mode(custom_request), "custom")
+        finally:
+            services.query = original_query
+
+    def test_rule_canary_uses_fallback_identity_when_sticky_field_missing(self):
+        rule = {"meta": {"sample_percent": 100, "sticky_field": "payload.customer_segment"}}
+        self.assertTrue(services._rule_canary_matches(rule, {"request_id": "REQ-1"}))
+
 
 if __name__ == '__main__':
     unittest.main()

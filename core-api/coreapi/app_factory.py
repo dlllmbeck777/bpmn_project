@@ -193,7 +193,7 @@ def get_admin_users(x_api_key: str = Header(default=""), x_user_role: str = Head
 
 
 @app.post("/api/v1/admin-users", response_model=StatusResponse, status_code=201, tags=["Users"])
-def add_admin_user(body: AdminUserCreateIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+def add_admin_user(body: AdminUserCreateIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""), x_user_name: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_ADMIN)
     created = create_admin_user(body.username, body.display_name, body.role, body.password, body.enabled)
     audit("admin_user", created["username"], "created", created, performed_by=x_user_name)
@@ -222,7 +222,7 @@ def edit_admin_user(
 
 
 @app.post("/api/v1/admin-users/{username}/revoke-session", response_model=StatusResponse, tags=["Users"])
-def revoke_user_session(username: str, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+def revoke_user_session(username: str, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""), x_user_name: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_ADMIN)
     updated = revoke_admin_user_session(username)
     audit("admin_user", updated["username"], "session_revoked", updated, performed_by=x_user_name)
