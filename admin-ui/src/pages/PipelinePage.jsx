@@ -1,217 +1,93 @@
 import React, { useEffect, useState } from 'react'
-
+import { get, post, put, del } from '../lib/api'
+import { IconChevron } from '../components/Icons'
 import Modal from '../components/Modal'
-import { del, get, post, put } from '../lib/api'
 
-function stepMeta(step) {
-  return step && typeof step.meta === 'object' && step.meta !== null ? step.meta : {}
-}
+const empty = { pipeline_name: 'default', step_order: 1, service_id: '', enabled: true, meta: {} }
 
-export default function PipelinePage({ canEdit = true }) {
-  const [steps, setSteps] = useState([])
+export default function PipelinePage({ canEdit }) {
+  const [items, setItems] = useState([])
   const [services, setServices] = useState([])
   const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState({})
   const [error, setError] = useState('')
 
   const load = () => {
-    get('/api/v1/pipeline-steps').then((data) => setSteps(data.items || [])).catch((err) => setError(err.message))
-    get('/api/v1/services').then((data) => setServices(data.items || [])).catch((err) => setError(err.message))
+    get('/api/v1/pipeline-steps?pipeline_name=default').then(d => setItems(d.items || [])).catch(e => setError(e.message))
+    get('/api/v1/services?type=connector').then(d => setServices(d.items || [])).catch(() => {})
   }
-
   useEffect(() => { load() }, [])
 
-  const connectors = services.filter((service) => service.type === 'connector')
-
-  const openNew = () => {
-    if (!canEdit) return
-    setForm({
-      pipeline_name: 'default',
-      step_order: (steps.length + 1) * 10,
-      service_id: connectors[0]?.id || '',
-      enabled: true,
-      meta: { skip_in_custom: false, skip_in_flowable: false },
-    })
-    setEditing('new')
-  }
-
-  const openEdit = (step) => {
-    if (!canEdit) return
-    setForm({
-      ...step,
-      enabled: !!step.enabled,
-      meta: {
-        skip_in_custom: !!stepMeta(step).skip_in_custom,
-        skip_in_flowable: !!stepMeta(step).skip_in_flowable,
-      },
-    })
-    setEditing(step.id)
-  }
-
   const save = async () => {
-    if (!canEdit) return
     try {
-      const data = { ...form, meta: form.meta || {} }
-      if (editing === 'new') await post('/api/v1/pipeline-steps', data)
-      else await put(`/api/v1/pipeline-steps/${editing}`, data)
-      setEditing(null)
-      setError('')
-      load()
-    } catch (err) {
-      setError(err.message)
-    }
+      if (editing._id) await put(`/api/v1/pipeline-steps/${editing._id}`, editing)
+      else await post('/api/v1/pipeline-steps', editing)
+      setEditing(null); load()
+    } catch (e) { setError(e.message) }
   }
 
   const remove = async (id) => {
-    if (!canEdit) return
-    if (!confirm('Delete pipeline step?')) return
-    try {
-      await del(`/api/v1/pipeline-steps/${id}`)
-      setError('')
-      load()
-    } catch (err) {
-      setError(err.message)
-    }
-  }
-
-  const toggleEnabled = async (step) => {
-    if (!canEdit) return
-    try {
-      await put(`/api/v1/pipeline-steps/${step.id}`, {
-        pipeline_name: step.pipeline_name,
-        step_order: step.step_order,
-        service_id: step.service_id,
-        enabled: !step.enabled,
-        meta: stepMeta(step),
-      })
-      setError('')
-      load()
-    } catch (err) {
-      setError(err.message)
-    }
-  }
-
-  const toggleModeSkip = async (step, modeKey) => {
-    if (!canEdit) return
-    try {
-      const meta = { ...stepMeta(step), [modeKey]: !stepMeta(step)[modeKey] }
-      await put(`/api/v1/pipeline-steps/${step.id}`, {
-        pipeline_name: step.pipeline_name,
-        step_order: step.step_order,
-        service_id: step.service_id,
-        enabled: step.enabled,
-        meta,
-      })
-      setError('')
-      load()
-    } catch (err) {
-      setError(err.message)
-    }
+    if (!confirm('Delete this pipeline step?')) return
+    try { await del(`/api/v1/pipeline-steps/${id}`); load() } catch (e) { setError(e.message) }
   }
 
   return (
     <>
-      {error && <div className="notice mb-16">{error}</div>}
-      {!canEdit && <div className="notice mb-16">This page is read-only for the selected role.</div>}
-      <div className="notice mb-16">Disabled steps and mode-specific skip policies are recorded as <span className="mono">SKIPPED</span>. You can now bypass a step only in <span className="mono">custom</span> or only in <span className="mono">flowable</span>.</div>
+      {error && <div className="notice notice-error mb-16">{error}</div>}
 
-      <div className="flex-between mb-16">
-        <div className="card-title" style={{ margin: 0 }}>Pipeline Steps</div>
-        {canEdit && <button className="btn btn-primary" onClick={openNew}>Add Step</button>}
-      </div>
-
-      <div className="card mb-16">
-        <div className="card-title"><span className="dot dot-purple" /> Active Pipeline</div>
+      <div className="card mb-20">
+        <div className="card-title">Execution chain</div>
         <div className="pipeline">
-          {steps.filter((step) => step.enabled).sort((left, right) => left.step_order - right.step_order).map((step, index) => (
+          {items.filter(s => s.enabled).map((step, i) => (
             <React.Fragment key={step.id}>
-              {index > 0 && <span className="pipe-arrow">→</span>}
-              <div className="pipe-step active">{step.service_name || step.service_id}</div>
+              {i > 0 && <span className="pipe-arrow"><IconChevron /></span>}
+              <div className="pipe-step active">{step.step_order}. {step.service_id}</div>
             </React.Fragment>
           ))}
         </div>
       </div>
 
+      <div className="flex-between mb-16">
+        <div />
+        {canEdit && <button className="btn btn-primary btn-sm" onClick={() => setEditing({ ...empty, step_order: items.length + 1 })}>+ Add step</button>}
+      </div>
+
       <div className="card">
         <table className="tbl">
-          <thead><tr><th>Order</th><th>Service</th><th>URL</th><th>Status</th><th>Skip Policy</th>{canEdit && <th>Actions</th>}</tr></thead>
+          <thead><tr><th>Order</th><th>Service</th><th>Service name</th><th>Enabled</th>{canEdit && <th></th>}</tr></thead>
           <tbody>
-            {steps.sort((left, right) => left.step_order - right.step_order).map((step) => (
-              <tr key={step.id}>
-                <td className="mono">{step.step_order}</td>
-                <td>{step.service_name || step.service_id}</td>
-                <td className="mono table-small">{step.base_url || '-'}</td>
-                <td><span className={`badge ${step.enabled ? 'badge-green' : 'badge-red'}`}>{step.enabled ? 'ON' : 'OFF'}</span></td>
-                <td>
-                  <div className="flex-gap">
-                    {stepMeta(step).skip_in_custom ? <span className="badge badge-orange">Skip custom</span> : <span className="badge badge-gray">Custom runs</span>}
-                    {stepMeta(step).skip_in_flowable ? <span className="badge badge-blue">Skip flowable</span> : <span className="badge badge-gray">Flowable runs</span>}
-                  </div>
-                </td>
-                {canEdit && (
-                  <td>
-                    <div className="flex-gap">
-                      <button className="btn btn-ghost btn-sm" onClick={() => toggleEnabled(step)}>{step.enabled ? 'Disable' : 'Enable'}</button>
-                      <button className="btn btn-ghost btn-sm" onClick={() => toggleModeSkip(step, 'skip_in_custom')}>{stepMeta(step).skip_in_custom ? 'Run in custom' : 'Skip custom'}</button>
-                      <button className="btn btn-ghost btn-sm" onClick={() => toggleModeSkip(step, 'skip_in_flowable')}>{stepMeta(step).skip_in_flowable ? 'Run in flowable' : 'Skip flowable'}</button>
-                      <button className="btn btn-ghost btn-sm" onClick={() => openEdit(step)}>Edit</button>
-                      <button className="btn btn-danger btn-sm" onClick={() => remove(step.id)}>Delete</button>
-                    </div>
-                  </td>
-                )}
+            {items.map(s => (
+              <tr key={s.id}>
+                <td className="mono" style={{ fontWeight: 600 }}>{s.step_order}</td>
+                <td className="mono">{s.service_id}</td>
+                <td>{s.service_name || s.service_id}</td>
+                <td><span className={`badge ${s.enabled ? 'badge-green' : 'badge-red'}`}>{s.enabled ? 'enabled' : 'disabled'}</span></td>
+                {canEdit && <td style={{ display: 'flex', gap: 4 }}>
+                  <button className="btn btn-ghost btn-xs" onClick={() => setEditing({ ...s, _id: s.id })}>Edit</button>
+                  <button className="btn btn-danger btn-xs" onClick={() => remove(s.id)}>Delete</button>
+                </td>}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {canEdit && editing && (
-        <Modal title={editing === 'new' ? 'Add Pipeline Step' : 'Edit Pipeline Step'} onClose={() => setEditing(null)}>
+      {editing && (
+        <Modal title={editing._id ? 'Edit step' : 'Add step'} onClose={() => setEditing(null)}>
           <div className="form-inline">
-            <div className="form-row"><label>Step Order</label><input type="number" value={form.step_order ?? 0} onChange={(event) => setForm({ ...form, step_order: Number(event.target.value) })} /></div>
-            <div className="form-row">
-              <label>Service</label>
-              <select value={form.service_id || ''} onChange={(event) => setForm({ ...form, service_id: event.target.value })}>
-                {services.map((service) => <option key={service.id} value={service.id}>{service.name} ({service.id})</option>)}
+            <div className="form-row"><label>Step order</label><input type="number" value={editing.step_order} onChange={e => setEditing({ ...editing, step_order: +e.target.value })} /></div>
+            <div className="form-row"><label>Service ID</label>
+              <select value={editing.service_id} onChange={e => setEditing({ ...editing, service_id: e.target.value })}>
+                <option value="">Select...</option>
+                {services.map(s => <option key={s.id} value={s.id}>{s.id} ({s.name})</option>)}
               </select>
             </div>
           </div>
           <div className="form-row">
-            <label className="checkbox-row">
-              <input type="checkbox" checked={!!form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} />
-              Enabled
+            <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
+              <input type="checkbox" checked={editing.enabled} onChange={e => setEditing({ ...editing, enabled: e.target.checked })} style={{ width: 'auto' }} /> Enabled
             </label>
           </div>
-          <div className="form-row">
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={!!form.meta?.skip_in_custom}
-                onChange={(event) => setForm({
-                  ...form,
-                  meta: { ...(form.meta || {}), skip_in_custom: event.target.checked },
-                })}
-              />
-              Skip in custom orchestration
-            </label>
-          </div>
-          <div className="form-row">
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={!!form.meta?.skip_in_flowable}
-                onChange={(event) => setForm({
-                  ...form,
-                  meta: { ...(form.meta || {}), skip_in_flowable: event.target.checked },
-                })}
-              />
-              Skip in flowable orchestration
-            </label>
-          </div>
-          <div className="form-actions">
-            <button className="btn btn-ghost" onClick={() => setEditing(null)}>Cancel</button>
-            <button className="btn btn-primary" onClick={save}>Save</button>
-          </div>
+          <div className="form-actions"><button className="btn btn-ghost" onClick={() => setEditing(null)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save</button></div>
         </Modal>
       )}
     </>

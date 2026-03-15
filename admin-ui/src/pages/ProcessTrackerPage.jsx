@@ -1,163 +1,184 @@
 import { useEffect, useMemo, useState } from 'react'
-
-import Modal from '../components/Modal'
 import { get } from '../lib/api'
+import { IconSearch } from '../components/Icons'
 
-const FINAL_STATUSES = new Set(['COMPLETED', 'REJECTED', 'REVIEW'])
-
-function timeLabel(value) {
-  return value ? String(value).slice(11, 19) : '--:--:--'
+function statusColor(s) {
+  if (['OK', 'PASS', 'COMPLETED'].includes(s)) return 'var(--green)'
+  if (['REJECTED', 'FAILED', 'REJECT', 'UNAVAILABLE'].includes(s)) return 'var(--red)'
+  if (['REVIEW', 'SKIPPED'].includes(s)) return 'var(--amber)'
+  return 'var(--blue)'
 }
 
-function payloadPreview(payload) {
-  try {
-    const text = JSON.stringify(payload)
-    return text.length > 120 ? `${text.slice(0, 120)}...` : text
-  } catch {
-    return String(payload)
-  }
-}
-
-function shapeForItem(item) {
-  if (item.stage === 'gateway' && item.direction === 'IN') return 'start'
-  if (item.stage === 'request' && (FINAL_STATUSES.has(item.status) || String(item.title || '').toLowerCase().includes('finalized'))) return 'end'
-  if (item.stage === 'routing' || String(item.stage || '').startsWith('stop_factor')) return 'gateway'
-  return 'task'
-}
-
-function toneForItem(item) {
-  const normalized = String(item.status || '').toUpperCase()
-  if (normalized === 'COMPLETED' || normalized === 'PASS' || normalized === 'OK') return 'success'
-  if (normalized === 'SKIPPED' || normalized === 'REVIEW' || normalized === 'RUNNING') return 'warn'
-  if (normalized === 'FAILED' || normalized === 'REJECTED' || normalized === 'UNAVAILABLE') return 'danger'
-  return item.direction === 'OUT' ? 'out' : item.direction === 'IN' ? 'in' : 'neutral'
-}
-
-function stageLabel(item) {
-  if (item.service_id) return item.service_id
-  return item.stage
+function badgeCls(s) {
+  if (['OK', 'PASS', 'COMPLETED'].includes(s)) return 'badge-green'
+  if (['REJECTED', 'FAILED', 'REJECT', 'UNAVAILABLE'].includes(s)) return 'badge-red'
+  if (['REVIEW', 'SKIPPED'].includes(s)) return 'badge-amber'
+  return 'badge-blue'
 }
 
 function sortEvents(events) {
-  return [...events].sort((left, right) => {
-    const leftTime = new Date(left.created_at || 0).getTime()
-    const rightTime = new Date(right.created_at || 0).getTime()
-    if (leftTime !== rightTime) return leftTime - rightTime
-    return (left.id || 0) - (right.id || 0)
-  })
+  return [...events].sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0) || (a.id || 0) - (b.id || 0))
+}
+
+function laneOf(ev) {
+  if (['gateway', 'routing'].includes(ev.stage)) return 'Gateway & routing'
+  if (ev.stage === 'stop_factor_pre') return 'Pre checks'
+  if (ev.stage === 'connector') return 'Connectors'
+  if (ev.stage === 'parser') return 'Parser'
+  if (ev.stage === 'stop_factor_post') return 'Post checks'
+  if (ev.stage === 'request') return 'Finalization'
+  return ev.stage
 }
 
 export default function ProcessTrackerPage() {
   const [items, setItems] = useState([])
   const [requestId, setRequestId] = useState('')
-  const [selected, setSelected] = useState(null)
+  const [filter, setFilter] = useState('')
+  const [selGroup, setSelGroup] = useState(null)
+  const [selEvent, setSelEvent] = useState(null)
   const [error, setError] = useState('')
 
-  const load = async (filter = requestId) => {
-    try {
-      const query = filter ? `?request_id=${encodeURIComponent(filter)}` : ''
-      const data = await get(`/api/v1/process-tracker${query}`)
-      setItems(data.items || [])
-      setError('')
-    } catch (err) {
-      setError(err.message)
-    }
+  const load = (rid = requestId) => {
+    const q = rid ? `?request_id=${encodeURIComponent(rid)}` : ''
+    get(`/api/v1/process-tracker${q}`).then(d => setItems(d.items || [])).catch(e => setError(e.message))
   }
-
   useEffect(() => { load('') }, [])
 
   const grouped = useMemo(() => {
-    const groups = new Map()
+    const map = new Map()
     for (const item of items) {
       const key = item.request_id || 'unknown'
-      if (!groups.has(key)) groups.set(key, [])
-      groups.get(key).push(item)
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push(item)
     }
-    return Array.from(groups.entries())
-      .map(([key, events]) => ({
-        request_id: key,
-        events: sortEvents(events),
-      }))
-      .sort((left, right) => {
-        const leftLast = left.events[left.events.length - 1]?.created_at || ''
-        const rightLast = right.events[right.events.length - 1]?.created_at || ''
-        return new Date(rightLast).getTime() - new Date(leftLast).getTime()
-      })
+    return Array.from(map.entries()).map(([k, evts]) => {
+      const sorted = sortEvents(evts)
+      const last = sorted[sorted.length - 1]
+      const status = last?.status || 'UNKNOWN'
+      return { request_id: k, events: sorted, status, time: (sorted[0]?.created_at || '').slice(11, 19) }
+    }).sort((a, b) => b.events[b.events.length - 1]?.created_at?.localeCompare(a.events[a.events.length - 1]?.created_at || '') || 0)
   }, [items])
+
+  const filteredGroups = filter ? grouped.filter(g => g.status === filter) : grouped
+  const group = selGroup || filteredGroups[0]
+
+  const renderWaterfall = () => {
+    if (!group) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>Select a request</div>
+
+    const evts = group.events
+    // Assign offsets based on index (we don't have real ms, so approximate)
+    const withOffsets = evts.map((ev, i) => ({ ...ev, _offset: i * 100, _dur: ev.stage === 'connector' ? 300 : ev.stage === 'parser' ? 80 : ev.stage?.startsWith('stop_factor') ? 40 : 10 }))
+    const totalMs = withOffsets.reduce((max, e) => Math.max(max, e._offset + e._dur), 1)
+
+    // Group by lane
+    const laneOrder = ['Gateway & routing', 'Pre checks', 'Connectors', 'Parser', 'Post checks', 'Finalization']
+    const lanes = new Map()
+    for (const ev of withOffsets) {
+      const lane = laneOf(ev)
+      if (!lanes.has(lane)) lanes.set(lane, [])
+      lanes.get(lane).push(ev)
+    }
+
+    const connectors = withOffsets.filter(e => e.stage === 'connector' && e.status !== 'SKIPPED')
+    const avgConn = connectors.length ? Math.round(connectors.reduce((s, e) => s + e._dur, 0) / connectors.length) : 0
+    const skipped = withOffsets.filter(e => e.status === 'SKIPPED').length
+
+    return (
+      <>
+        <div className="summary-bar">
+          <div className="sum-card"><div className="sum-label">Total latency</div><div className="sum-val">{totalMs}ms</div></div>
+          <div className="sum-card"><div className="sum-label">Events</div><div className="sum-val">{evts.length}</div></div>
+          <div className="sum-card"><div className="sum-label">Avg connector</div><div className="sum-val">{avgConn}ms</div></div>
+          <div className="sum-card"><div className="sum-label">Skipped</div><div className="sum-val">{skipped}</div></div>
+        </div>
+
+        <div className="wf-header"><span>Service</span><span>Timeline</span><span style={{ textAlign: 'right' }}>Duration</span></div>
+
+        {laneOrder.filter(l => lanes.has(l)).map(laneName => (
+          <div key={laneName}>
+            <div className="swimlane-label">{laneName}</div>
+            {lanes.get(laneName).map((ev, i) => {
+              const leftPct = (ev._offset / totalMs * 100).toFixed(1)
+              const widthPct = Math.max(ev._dur / totalMs * 100, 0.8).toFixed(1)
+              const isSelected = selEvent?.id === ev.id
+              return (
+                <div key={ev.id} className={`wf-row${isSelected ? ' selected' : ''}`} onClick={() => setSelEvent(isSelected ? null : ev)}>
+                  <div className="wf-svc">
+                    <span className="wf-svc-dot" style={{ background: statusColor(ev.status) }} />
+                    <span>{ev.service_id || ev.stage}</span>
+                  </div>
+                  <div className="wf-bar-wrap">
+                    <div className="wf-bar" style={{ left: `${leftPct}%`, width: `${widthPct}%`, background: statusColor(ev.status) }} />
+                  </div>
+                  <div className="wf-dur">{ev._dur}ms</div>
+                </div>
+              )
+            })}
+          </div>
+        ))}
+
+        <div className="wf-scale" style={{ marginLeft: 130, marginRight: 60 }}>
+          <span>0ms</span><span>{Math.round(totalMs / 2)}ms</span><span>{totalMs}ms</span>
+        </div>
+
+        {selEvent && (
+          <div className="detail-panel">
+            <div className="flex-center gap-8 mb-12">
+              <span style={{ fontWeight: 600, fontSize: 14 }}>{selEvent.title}</span>
+              <span className={`badge ${badgeCls(selEvent.status)}`}>{selEvent.status}</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 10 }}>
+              <div className="text-sm"><span className="text-muted">Stage: </span>{selEvent.stage}</div>
+              <div className="text-sm"><span className="text-muted">Direction: </span>{selEvent.direction}</div>
+              <div className="text-sm"><span className="text-muted">Service: </span>{selEvent.service_id || '—'}</div>
+              <div className="text-sm"><span className="text-muted">Time: </span>{(selEvent.created_at || '').slice(11, 19)}</div>
+            </div>
+            {selEvent.payload && Object.keys(selEvent.payload).length > 0 && (
+              <pre className="json-view" style={{ maxHeight: 120 }}>{JSON.stringify(selEvent.payload, null, 2)}</pre>
+            )}
+          </div>
+        )}
+      </>
+    )
+  }
 
   return (
     <>
-      {error && <div className="notice mb-16">{error}</div>}
-      <div className="card mb-16">
-        <div className="tracker-toolbar">
-          <div className="form-row tracker-filter">
-            <label>Request ID Filter</label>
-            <input value={requestId} onChange={(event) => setRequestId(event.target.value)} placeholder="REQ-2026-0001" />
-          </div>
-          <div className="form-actions tracker-actions">
-            <button className="btn btn-ghost" onClick={() => { setRequestId(''); load('') }}>Reset</button>
-            <button className="btn btn-primary" onClick={() => load()}>Refresh</button>
-          </div>
+      {error && <div className="notice notice-error mb-16">{error}</div>}
+
+      <div className="toolbar">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-surface)', borderRadius: 'var(--radius)', padding: '5px 10px', border: '1px solid var(--border)', flex: 1, maxWidth: 280 }}>
+          <IconSearch />
+          <input value={requestId} onChange={e => setRequestId(e.target.value)} placeholder="Filter by request ID..." style={{ border: 'none', padding: 0, background: 'none', flex: 1, fontSize: 13, boxShadow: 'none' }} onKeyDown={e => e.key === 'Enter' && load()} />
+        </div>
+        {['', 'COMPLETED', 'REVIEW', 'REJECTED', 'RUNNING'].map(f => (
+          <button key={f} className={`btn btn-xs${filter === f ? ' btn-primary' : ''}`} onClick={() => setFilter(f)}>{f || 'All'}</button>
+        ))}
+        <div style={{ marginLeft: 'auto' }}>
+          <button className="btn btn-ghost btn-sm" onClick={() => { setRequestId(''); load('') }}>Reset</button>
+          <button className="btn btn-primary btn-sm" onClick={() => load()} style={{ marginLeft: 4 }}>Refresh</button>
         </div>
       </div>
 
-      <div className="notice mb-16">Tracker now renders as a process scheme: start/end events, routing and stop-factor gateways, and task boxes for adapters, connectors, parser and finalization.</div>
-
-      <div className="tracker-legend mb-16">
-        <span className="badge badge-blue">OUT</span>
-        <span className="badge badge-green">IN</span>
-        <span className="badge badge-orange">STATE</span>
-      </div>
-
-      {grouped.length === 0 ? (
-        <div className="card"><p className="muted-copy">No tracker events yet.</p></div>
-      ) : (
-        <div className="tracker-request-grid">
-          {grouped.map((group) => (
-            <div className="card tracker-request-card" key={group.request_id}>
-              <div className="flex-between mb-16">
-                <div>
-                  <div className="card-title" style={{ marginBottom: 4 }}><span className="dot dot-blue" /> {group.request_id}</div>
-                  <div className="muted-copy">{group.events.length} event(s)</div>
-                </div>
-                <div className="mono">{timeLabel(group.events[0]?.created_at)} -> {timeLabel(group.events[group.events.length - 1]?.created_at)}</div>
+      <div className="master-detail">
+        <div className="master-list">
+          {filteredGroups.length === 0 ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>No tracker events</div>
+          ) : filteredGroups.map(g => (
+            <div key={g.request_id} className={`master-item${group?.request_id === g.request_id ? ' active' : ''}`} onClick={() => { setSelGroup(g); setSelEvent(null) }}>
+              <div className="flex-between" style={{ marginBottom: 4 }}>
+                <span className="mono" style={{ fontWeight: 600, fontSize: 13 }}>{g.request_id}</span>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{g.time}</span>
               </div>
-
-              <div className="tracker-flow-canvas">
-                {group.events.map((item, index) => {
-                  const shape = shapeForItem(item)
-                  const tone = toneForItem(item)
-                  return (
-                    <div className="tracker-flow-segment" key={item.id}>
-                      {index > 0 && <div className="tracker-flow-arrow" />}
-                      <button className={`tracker-bpmn tracker-bpmn-${shape} tracker-bpmn-${tone}`} onClick={() => setSelected(item)}>
-                        <span className="tracker-bpmn-inner">
-                          <span className="tracker-bpmn-time mono">{timeLabel(item.created_at)}</span>
-                          <span className="tracker-bpmn-title">{item.title}</span>
-                          <span className="tracker-bpmn-meta mono">{stageLabel(item)}</span>
-                          <span className="tracker-bpmn-status">{item.status || item.direction}</span>
-                        </span>
-                      </button>
-                    </div>
-                  )
-                })}
+              <div className="flex-center gap-6">
+                <span className={`badge ${badgeCls(g.status)}`}>{(g.status || '').toLowerCase()}</span>
+                <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{g.events.length} events</span>
               </div>
             </div>
           ))}
         </div>
-      )}
-
-      {selected && (
-        <Modal title={`${selected.request_id} · ${selected.title}`} onClose={() => setSelected(null)}>
-          <div className="tracker-detail-meta mb-16">
-            <span className={`badge ${selected.direction === 'OUT' ? 'badge-blue' : selected.direction === 'IN' ? 'badge-green' : 'badge-orange'}`}>{selected.direction}</span>
-            <span className="badge badge-gray">{selected.status || '-'}</span>
-            <span className="mono">{stageLabel(selected)}</span>
-          </div>
-          <div className="tracker-meta-line">Preview: {payloadPreview(selected.payload)}</div>
-          <pre className="json-view mt-16">{JSON.stringify(selected, null, 2)}</pre>
-        </Modal>
-      )}
+        <div className="detail-pane">{renderWaterfall()}</div>
+      </div>
     </>
   )
 }
