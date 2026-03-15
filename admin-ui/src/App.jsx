@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import Dashboard from './pages/Dashboard'
 import ServicesPage from './pages/ServicesPage'
+import ScenariosPage from './pages/ScenariosPage'
 import UsersPage from './pages/UsersPage'
 import RoutingPage from './pages/RoutingPage'
 import StopFactorsPage from './pages/StopFactorsPage'
@@ -26,6 +27,7 @@ const sections = [
   {
     group: 'Configuration',
     items: [
+      { id: 'scenarios', label: 'Scenarios', Icon: IconRoute, minRole: 'senior_analyst' },
       { id: 'services', label: 'Services', Icon: IconSettings, minRole: 'senior_analyst' },
       { id: 'routing', label: 'Routing rules', Icon: IconRoute, minRole: 'senior_analyst' },
       { id: 'stopfactors', label: 'Stop factors', Icon: IconAlert, minRole: 'senior_analyst' },
@@ -47,6 +49,7 @@ const sections = [
 
 const pageTitle = {
   dashboard: ['Dashboard', 'Platform overview and health status'],
+  scenarios: ['Scenarios', 'Apply operational routing and pipeline setups with one click'],
   services: ['Services', 'Manage service registry, URLs and retries'],
   users: ['Users & access', 'Create users, assign roles, manage sessions'],
   routing: ['Routing rules', 'Control flowable vs custom routing'],
@@ -106,6 +109,7 @@ export default function App() {
   const content = useMemo(() => {
     switch (current) {
       case 'services': return <ServicesPage canEdit={canAdmin} />
+      case 'scenarios': return <ScenariosPage canEdit={canManageConfig} />
       case 'users': return <UsersPage canEdit={canAdmin} />
       case 'routing': return <RoutingPage canEdit={canManageConfig} />
       case 'stopfactors': return <StopFactorsPage canEdit={canManageConfig} />
