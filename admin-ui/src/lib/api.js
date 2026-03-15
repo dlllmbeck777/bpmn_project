@@ -23,6 +23,10 @@ function normalizeBaseUrl(value) {
   return trimmed.replace(/\/+$/, '')
 }
 
+export function getDefaultApiBase() {
+  return normalizeBaseUrl(DEFAULT_API_BASE)
+}
+
 function readSessionValue(key) {
   return (sessionStorage.getItem(key) || localStorage.getItem(key) || '').trim()
 }

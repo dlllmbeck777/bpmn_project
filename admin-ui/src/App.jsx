@@ -2,20 +2,18 @@ import { useEffect, useMemo, useState } from 'react'
 
 import Dashboard from './pages/Dashboard'
 import ServicesPage from './pages/ServicesPage'
-import ScenariosPage from './pages/ScenariosPage'
 import UsersPage from './pages/UsersPage'
-import RoutingPage from './pages/RoutingPage'
-import StopFactorsPage from './pages/StopFactorsPage'
-import PipelinePage from './pages/PipelinePage'
 import ProcessTrackerPage from './pages/ProcessTrackerPage'
 import FlowableAdminPage from './pages/FlowableAdminPage'
 import RequestsPage from './pages/RequestsPage'
 import AuditPage from './pages/AuditPage'
 import LoginPage from './pages/LoginPage'
 import SettingsPage from './pages/SettingsPage'
+import ControlCenterPage from './pages/ControlCenterPage'
 import { getTheme, setTheme } from './lib/theme'
 import { clearAuth, getApiBase, getApiKey, getCurrentUsername, getRoleLabel, getUserRole, hasUiSession } from './lib/api'
-import { IconGrid, IconSettings, IconRoute, IconAlert, IconList, IconUsers, IconClipboard, IconActivity, IconClock, IconGear, IconLayers } from './components/Icons'
+import { getStartPage } from './lib/preferences'
+import { IconGrid, IconSettings, IconRoute, IconUsers, IconClipboard, IconActivity, IconClock, IconGear, IconLayers } from './components/Icons'
 
 const ROLE_LEVELS = { analyst: 1, senior_analyst: 2, admin: 3 }
 
@@ -27,11 +25,8 @@ const sections = [
   {
     group: 'Configuration',
     items: [
-      { id: 'scenarios', label: 'Scenarios', Icon: IconRoute, minRole: 'senior_analyst' },
+      { id: 'control', label: 'Control center', Icon: IconRoute, minRole: 'senior_analyst' },
       { id: 'services', label: 'Services', Icon: IconSettings, minRole: 'senior_analyst' },
-      { id: 'routing', label: 'Routing rules', Icon: IconRoute, minRole: 'senior_analyst' },
-      { id: 'stopfactors', label: 'Stop factors', Icon: IconAlert, minRole: 'senior_analyst' },
-      { id: 'pipeline', label: 'Pipeline', Icon: IconList, minRole: 'senior_analyst' },
       { id: 'users', label: 'Users & access', Icon: IconUsers, minRole: 'admin' },
     ],
   },
@@ -49,17 +44,14 @@ const sections = [
 
 const pageTitle = {
   dashboard: ['Dashboard', 'Platform overview and health status'],
-  scenarios: ['Scenarios', 'Apply operational routing and pipeline setups with one click'],
+  control: ['Control center', 'Manage scenarios, routing, stop checks, and pipeline behavior from one place'],
   services: ['Services', 'Manage service registry, URLs and retries'],
   users: ['Users & access', 'Create users, assign roles, manage sessions'],
-  routing: ['Routing rules', 'Control flowable vs custom routing'],
-  stopfactors: ['Stop factors', 'Pre and post checks for request decisions'],
-  pipeline: ['Pipeline', 'Connector execution order'],
   flowable: ['Flowable engine', 'Inspect and manage Flowable instances, jobs and process definitions'],
   tracker: ['Process tracker', 'Trace request steps with waterfall timeline'],
   requests: ['Requests', 'Credit check request lifecycle'],
   audit: ['Audit log', 'Configuration change history'],
-  settings: ['Settings', 'Configure API base URL and view session info'],
+  settings: ['Settings', 'Workspace preferences, diagnostics, and quick navigation'],
 }
 
 function hasMinRole(role, min) {
@@ -70,7 +62,7 @@ export default function App() {
   const [apiMeta, setApiMeta] = useState(() => ({
     base: getApiBase(), hasKey: !!getApiKey(), role: getUserRole(), username: getCurrentUsername(),
   }))
-  const [active, setActive] = useState('dashboard')
+  const [active, setActive] = useState(() => getStartPage())
   const [theme, setThemeState] = useState(() => getTheme())
 
   const refresh = () => setApiMeta({
@@ -87,6 +79,7 @@ export default function App() {
   )
 
   const visibleIds = useMemo(() => visibleSections.flatMap(s => s.items.map(i => i.id)), [visibleSections])
+  const visibleItems = useMemo(() => visibleSections.flatMap((section) => section.items), [visibleSections])
   const current = visibleIds.includes(active) ? active : (visibleIds[0] || 'dashboard')
 
   useEffect(() => {
@@ -108,25 +101,22 @@ export default function App() {
 
   const content = useMemo(() => {
     switch (current) {
+      case 'control': return <ControlCenterPage canEdit={canManageConfig} canAdmin={canAdmin} onNavigate={setActive} />
       case 'services': return <ServicesPage canEdit={canAdmin} />
-      case 'scenarios': return <ScenariosPage canEdit={canManageConfig} />
       case 'users': return <UsersPage canEdit={canAdmin} />
-      case 'routing': return <RoutingPage canEdit={canManageConfig} />
-      case 'stopfactors': return <StopFactorsPage canEdit={canManageConfig} />
-      case 'pipeline': return <PipelinePage canEdit={canManageConfig} />
       case 'flowable': return <FlowableAdminPage canManage={canManageConfig} />
       case 'tracker': return <ProcessTrackerPage />
       case 'requests': return <RequestsPage />
       case 'audit': return <AuditPage />
-      case 'settings': return <SettingsPage onSave={refresh} theme={theme} onThemeChange={handleThemeChange} />
+      case 'settings': return <SettingsPage onSave={refresh} theme={theme} onThemeChange={handleThemeChange} availablePages={visibleItems} currentPage={current} onNavigate={setActive} />
       default: return <Dashboard />
     }
-  }, [apiMeta.role, current, theme])
+  }, [canAdmin, canManageConfig, current, theme, visibleItems])
 
   const handleLogout = () => {
     clearAuth()
     refresh()
-    setActive('dashboard')
+    setActive(getStartPage())
   }
 
   if (!isAuth) return <LoginPage onLogin={refresh} />
