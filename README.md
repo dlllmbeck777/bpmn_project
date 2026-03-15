@@ -37,6 +37,8 @@ Russian operational and project documentation:
 - `docs/OPERATIONS_RUNBOOK_RU.md`
 - `docs/TECH_SPECIFICATION_RU.md`
 - `docs/CONFLUENCE_READY_RU.md`
+- `docs/ARCHITECTURE_EXECUTIVE_RU.md`
+- `docs/ARCHITECTURE_TECHNICAL_RU.md`
 
 ## Stress Test
 

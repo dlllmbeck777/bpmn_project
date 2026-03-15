@@ -17,15 +17,16 @@
 ### Рекомендуемые дочерние страницы
 
 1. `Обзор платформы`
-2. `Архитектура`
-3. `Роли и доступы`
-4. `Операционные сценарии`
-5. `Routing и canary`
-6. `Pipeline и сервисы`
-7. `Flowable UI и BPMN`
-8. `Production deployment`
-9. `Troubleshooting`
-10. `Техническое задание`
+2. `Архитектура для руководства`
+3. `Техническая архитектура`
+4. `Роли и доступы`
+5. `Операционные сценарии`
+6. `Routing и canary`
+7. `Pipeline и сервисы`
+8. `Flowable UI и BPMN`
+9. `Production deployment`
+10. `Troubleshooting`
+11. `Техническое задание`
 
 ---
 
@@ -52,6 +53,36 @@ Credit Platform v5 предназначена для оркестрации за
 - audit log
 - управление пользователями и доступами
 - production deployment через Docker Compose
+
+---
+
+## Готовый текст для страницы "Архитектура для руководства"
+
+Готовая версия хранится в:
+
+- `docs/ARCHITECTURE_EXECUTIVE_RU.md`
+
+Рекомендуется вставлять как отдельную страницу для:
+
+- CEO / COO
+- product leadership
+- delivery managers
+- архитектурного комитета
+
+---
+
+## Готовый текст для страницы "Техническая архитектура"
+
+Готовая версия хранится в:
+
+- `docs/ARCHITECTURE_TECHNICAL_RU.md`
+
+Рекомендуется вставлять как отдельную страницу для:
+
+- backend engineers
+- DevOps
+- техлидов
+- senior analysts
 
 ---
 
