@@ -91,6 +91,7 @@ services:
       - CONFIG_SERVICE_URL=http://core-api:8000
       - FLOWABLE_PASSWORD=${FLOWABLE_PASSWORD:-test}
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
+      - FLOWABLE_AUTO_DEPLOY_BPMN=${FLOWABLE_AUTO_DEPLOY_BPMN:-true}
     volumes:
       - ./processes:/processes:ro
     depends_on:

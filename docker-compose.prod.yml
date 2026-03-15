@@ -17,6 +17,8 @@ services:
         condition: service_healthy
       admin-ui:
         condition: service_healthy
+      flowable-ui:
+        condition: service_started
     restart: always
     networks: [frontend]
     deploy:
@@ -185,7 +187,13 @@ services:
         reservations: { memory: 512M }
 
   flowable-ui:
-    profiles: [dev]
+    ports: !reset []
+    networks: [frontend, flowable]
+    restart: always
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: '0.75', memory: 512M }
 
   admin-ui:
     build:

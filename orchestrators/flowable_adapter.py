@@ -22,6 +22,7 @@ CONFIG_URL = os.getenv("CONFIG_SERVICE_URL", "http://core-api:8000")
 BPMN_PATH = os.getenv("BPMN_PATH", "/processes/credit-service-chain.bpmn20.xml")
 FLOWABLE_USER = os.getenv("FLOWABLE_USER", "admin")
 FLOWABLE_PASSWORD = os.getenv("FLOWABLE_PASSWORD", "test")
+FLOWABLE_AUTO_DEPLOY_BPMN = os.getenv("FLOWABLE_AUTO_DEPLOY_BPMN", "true").strip().lower() in {"1", "true", "yes", "on"}
 CORE_CALLBACK_URL = os.getenv("CORE_CALLBACK_URL", f"{CONFIG_URL}/internal/cases/complete")
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 SERVICE_NAME = "flowable-adapter"
@@ -345,6 +346,9 @@ async def _watch_process_completion(flowable_url: str, instance_id: str, body: "
 
 @app.on_event("startup")
 async def auto_deploy_bpmn():
+    if not FLOWABLE_AUTO_DEPLOY_BPMN:
+        log.info("BPMN auto-deploy disabled; Flowable UI/database is the source of truth")
+        return
     if not os.path.exists(BPMN_PATH):
         log.warning(f"BPMN file not found: {BPMN_PATH}")
         return
