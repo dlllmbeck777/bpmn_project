@@ -1,6 +1,6 @@
 import asyncio
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
@@ -438,13 +438,38 @@ def _rule_canary_matches(rule: Dict[str, Any], data: Dict[str, Any]) -> bool:
     return _deterministic_sample_bucket(sticky_value) < sample_percent
 
 
+def _rule_daily_quota_matches(rule: Dict[str, Any]) -> bool:
+    meta = rule.get("meta")
+    meta = meta if isinstance(meta, dict) else {}
+    if not meta.get("daily_quota_enabled"):
+        return True
+
+    try:
+        daily_quota_max = int(meta.get("daily_quota_max") or 0)
+    except (TypeError, ValueError):
+        return True
+
+    if daily_quota_max <= 0:
+        return True
+
+    now = datetime.now(timezone.utc)
+    day_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    day_end = day_start + timedelta(days=1)
+    current_count = int(query(
+        "SELECT COUNT(*) FROM requests WHERE orchestration_mode=%s AND created_at >= %s AND created_at < %s",
+        (rule.get("target_mode"), day_start, day_end),
+        "scalar",
+    ) or 0)
+    return current_count < daily_quota_max
+
+
 def resolve_mode(data: Dict[str, Any]) -> str:
     mode = data.get("orchestration_mode", "auto")
     if mode not in ("auto", ""):
         return mode
     for rule in query("SELECT * FROM routing_rules WHERE enabled=TRUE ORDER BY priority"):
         matched = _rule_matches(rule, data)
-        if matched and _rule_canary_matches(rule, data):
+        if matched and _rule_canary_matches(rule, data) and _rule_daily_quota_matches(rule):
             return rule["target_mode"]
     return "flowable"
 

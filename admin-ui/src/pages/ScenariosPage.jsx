@@ -12,15 +12,18 @@ const CUSTOM_RULE = {
   meta: {},
 }
 
+const CANARY_RULE_NAME = 'Auto -> Flowable canary'
+const LEGACY_CANARY_RULE_NAME = 'Auto -> Flowable canary 5%'
+
 const CANARY_RULE = {
-  name: 'Auto -> Flowable canary 5%',
+  name: CANARY_RULE_NAME,
   priority: 4,
   condition_field: 'orchestration_mode',
   condition_op: 'eq',
   condition_value: 'auto',
   target_mode: 'flowable',
   enabled: true,
-  meta: { sample_percent: 5, sticky_field: 'request_id' },
+  meta: { sample_percent: 5, sticky_field: 'request_id', daily_quota_enabled: false },
 }
 
 const CUSTOM_REPORT_CHAIN = ['isoftpull', 'creditsafe', 'plaid']
@@ -29,11 +32,57 @@ function normalizeMeta(meta) {
   return meta && typeof meta === 'object' && !Array.isArray(meta) ? { ...meta } : {}
 }
 
+function isCanaryRule(rule) {
+  const name = String(rule?.name || '').trim().toLowerCase()
+  return name === CANARY_RULE_NAME.toLowerCase() || name === LEGACY_CANARY_RULE_NAME.toLowerCase() || name.startsWith(`${CANARY_RULE_NAME.toLowerCase()} `)
+}
+
+function findCanaryRule(rules) {
+  return (rules || []).find((rule) => isCanaryRule(rule))
+}
+
+function toPercentInput(rule) {
+  const raw = normalizeMeta(rule?.meta).sample_percent
+  return raw === undefined || raw === null || raw === '' ? '5' : String(raw)
+}
+
+function toStickyInput(rule) {
+  return String(normalizeMeta(rule?.meta).sticky_field || 'request_id')
+}
+
+function toDailyQuotaEnabled(rule) {
+  return !!normalizeMeta(rule?.meta).daily_quota_enabled
+}
+
+function toDailyQuotaMax(rule) {
+  const raw = normalizeMeta(rule?.meta).daily_quota_max
+  return raw === undefined || raw === null || raw === '' ? '' : String(raw)
+}
+
+function formatCanarySummary(rule) {
+  if (!rule) return 'Rule missing'
+  const meta = normalizeMeta(rule.meta)
+  const percent = meta.sample_percent ?? 100
+  const stickyField = meta.sticky_field || 'request_id'
+  if (!rule.enabled) return `Disabled (${percent}% by ${stickyField})`
+  if (meta.daily_quota_enabled && meta.daily_quota_max) {
+    return `${percent}% by ${stickyField}, max ${meta.daily_quota_max}/day`
+  }
+  return `${percent}% by ${stickyField}`
+}
+
 export default function ScenariosPage({ canEdit }) {
   const [routingRules, setRoutingRules] = useState([])
   const [pipelineSteps, setPipelineSteps] = useState([])
   const [stopFactors, setStopFactors] = useState([])
   const [services, setServices] = useState([])
+  const [canaryForm, setCanaryForm] = useState({
+    enabled: true,
+    samplePercent: '5',
+    stickyField: 'request_id',
+    dailyQuotaEnabled: false,
+    dailyQuotaMax: '',
+  })
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
   const [busy, setBusy] = useState('')
@@ -59,7 +108,7 @@ export default function ScenariosPage({ canEdit }) {
 
   const scenarioState = useMemo(() => {
     const customRule = routingRules.find((rule) => rule.name === CUSTOM_RULE.name)
-    const canaryRule = routingRules.find((rule) => rule.name === CANARY_RULE.name)
+    const canaryRule = findCanaryRule(routingRules)
     const stopEnabledCount = stopFactors.filter((item) => item.enabled).length
     const customRunServices = pipelineSteps
       .filter((step) => step.enabled && !normalizeMeta(step.meta).skip_in_custom)
@@ -71,8 +120,20 @@ export default function ScenariosPage({ canEdit }) {
       stopEnabledCount,
       customRunServices,
       disabledServices,
+      canarySummary: formatCanarySummary(canaryRule),
     }
   }, [routingRules, pipelineSteps, services, stopFactors])
+
+  useEffect(() => {
+    const canaryRule = findCanaryRule(routingRules)
+    setCanaryForm({
+      enabled: canaryRule ? !!canaryRule.enabled : true,
+      samplePercent: toPercentInput(canaryRule),
+      stickyField: toStickyInput(canaryRule),
+      dailyQuotaEnabled: toDailyQuotaEnabled(canaryRule),
+      dailyQuotaMax: toDailyQuotaMax(canaryRule),
+    })
+  }, [routingRules])
 
   const upsertRule = async (existing, payload) => {
     if (existing) {
@@ -89,9 +150,9 @@ export default function ScenariosPage({ canEdit }) {
     try {
       await upsertRule(routingRules.find((rule) => rule.name === CUSTOM_RULE.name), CUSTOM_RULE)
 
-      const canaryRule = routingRules.find((rule) => rule.name === CANARY_RULE.name)
+      const canaryRule = findCanaryRule(routingRules)
       if (canaryRule) {
-        await put(`/api/v1/routing-rules/${canaryRule.id}`, { ...canaryRule, enabled: false, meta: normalizeMeta(canaryRule.meta) })
+        await put(`/api/v1/routing-rules/${canaryRule.id}`, { ...canaryRule, name: CANARY_RULE_NAME, enabled: false, meta: normalizeMeta(canaryRule.meta) })
       }
       setInfo('Scenario applied: all auto traffic now routes to custom.')
       await load()
@@ -102,15 +163,43 @@ export default function ScenariosPage({ canEdit }) {
     }
   }
 
-  const applyCanary = async () => {
+  const applyCanarySettings = async () => {
     setBusy('canary')
     setError('')
     setInfo('')
     try {
-      const customRule = routingRules.find((rule) => rule.name === CUSTOM_RULE.name)
-      await upsertRule(customRule, { ...CUSTOM_RULE, priority: 6 })
-      await upsertRule(routingRules.find((rule) => rule.name === CANARY_RULE.name), CANARY_RULE)
-      setInfo('Scenario applied: 5% of auto traffic goes to Flowable, remaining auto traffic stays on custom.')
+      const samplePercent = Number(canaryForm.samplePercent)
+      if (canaryForm.enabled && (!Number.isFinite(samplePercent) || samplePercent <= 0 || samplePercent > 100)) {
+        throw new Error('Canary percent must be between 1 and 100.')
+      }
+
+      const dailyQuotaMax = Number(canaryForm.dailyQuotaMax)
+      if (canaryForm.dailyQuotaEnabled && (!Number.isFinite(dailyQuotaMax) || dailyQuotaMax < 1)) {
+        throw new Error('Max requests per day must be at least 1 when daily quota mode is enabled.')
+      }
+
+      const canaryMeta = {
+        sample_percent: Number.isFinite(samplePercent) ? Math.max(1, Math.min(100, Math.round(samplePercent))) : 5,
+        sticky_field: (canaryForm.stickyField || '').trim() || 'request_id',
+        daily_quota_enabled: !!canaryForm.dailyQuotaEnabled,
+      }
+      if (canaryForm.dailyQuotaEnabled) {
+        canaryMeta.daily_quota_max = Math.max(1, Math.round(dailyQuotaMax))
+      }
+
+      if (canaryForm.enabled) {
+        const customRule = routingRules.find((rule) => rule.name === CUSTOM_RULE.name)
+        await upsertRule(customRule, { ...CUSTOM_RULE, priority: 6 })
+      }
+
+      await upsertRule(findCanaryRule(routingRules), {
+        ...CANARY_RULE,
+        enabled: !!canaryForm.enabled,
+        meta: canaryMeta,
+      })
+      setInfo(canaryForm.enabled
+        ? 'Scenario applied: Flowable canary is configured and remaining auto traffic stays on custom.'
+        : 'Scenario applied: Flowable canary is now disabled.')
       await load()
     } catch (e) {
       setError(e.message)
@@ -178,9 +267,9 @@ export default function ScenariosPage({ canEdit }) {
           <div className="stat-sub">{scenarioState.customRule ? `Priority ${scenarioState.customRule.priority}` : 'Rule missing'}</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">5% Flowable canary</div>
+          <div className="stat-label">Flowable canary</div>
           <div className="stat-value purple">{scenarioState.canaryRule?.enabled ? 'ON' : 'OFF'}</div>
-          <div className="stat-sub">{scenarioState.canaryRule?.enabled ? '5% active' : 'Disabled'}</div>
+          <div className="stat-sub">{scenarioState.canarySummary}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Enabled stop factors</div>
@@ -200,8 +289,81 @@ export default function ScenariosPage({ canEdit }) {
         <div className="form-actions" style={{ justifyContent: 'flex-start', flexWrap: 'wrap' }}>
           <button className="btn btn-primary" disabled={busy === 'custom'} onClick={applyAllAutoToCustom}>Route all auto traffic to custom</button>
           <button className="btn btn-ghost" disabled={busy === 'pipeline'} onClick={prepareCustomReportsChain}>Prepare custom reports chain</button>
-          <button className="btn btn-ghost" disabled={busy === 'canary'} onClick={applyCanary}>Enable 5% Flowable canary</button>
           <button className="btn btn-warn" disabled={busy === 'stop-factors'} onClick={disableAllStopFactors}>Disable all stop factors</button>
+        </div>
+      </div>
+
+      <div className="card mb-16">
+        <div className="card-title">Flowable canary</div>
+        <div className="muted mb-12">Configure the exact share of auto traffic that should go to Flowable. The rest of auto traffic stays on custom when the canary is enabled.</div>
+        <div className="form-inline">
+          <div className="form-row">
+            <label>Percent</label>
+            <input
+              type="number"
+              min="1"
+              max="100"
+              value={canaryForm.samplePercent}
+              onChange={(e) => setCanaryForm((current) => ({ ...current, samplePercent: e.target.value }))}
+              placeholder="5"
+            />
+          </div>
+          <div className="form-row">
+            <label>Sticky field</label>
+            <input
+              value={canaryForm.stickyField}
+              onChange={(e) => setCanaryForm((current) => ({ ...current, stickyField: e.target.value }))}
+              placeholder="request_id"
+            />
+          </div>
+        </div>
+        <div className="form-inline">
+          <div className="form-row">
+            <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={canaryForm.enabled}
+                onChange={(e) => setCanaryForm((current) => ({ ...current, enabled: e.target.checked }))}
+                style={{ width: 'auto' }}
+              />
+              Enabled
+            </label>
+          </div>
+          <div className="form-row">
+            <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={canaryForm.dailyQuotaEnabled}
+                onChange={(e) => setCanaryForm((current) => ({ ...current, dailyQuotaEnabled: e.target.checked }))}
+                style={{ width: 'auto' }}
+              />
+              Daily quota mode
+            </label>
+          </div>
+        </div>
+        <div className="form-inline">
+          <div className="form-row">
+            <label>Max requests per day</label>
+            <input
+              type="number"
+              min="1"
+              value={canaryForm.dailyQuotaMax}
+              onChange={(e) => setCanaryForm((current) => ({ ...current, dailyQuotaMax: e.target.value }))}
+              placeholder="6"
+              disabled={!canaryForm.dailyQuotaEnabled}
+            />
+          </div>
+          <div className="form-row">
+            <label>Current effective summary</label>
+            <div className="notice">
+              {canaryForm.enabled
+                ? `${canaryForm.samplePercent || '5'}% by ${canaryForm.stickyField || 'request_id'}${canaryForm.dailyQuotaEnabled && canaryForm.dailyQuotaMax ? `, max ${canaryForm.dailyQuotaMax}/day` : ''}`
+                : 'Canary disabled'}
+            </div>
+          </div>
+        </div>
+        <div className="form-actions" style={{ justifyContent: 'flex-start' }}>
+          <button className="btn btn-ghost" disabled={busy === 'canary'} onClick={applyCanarySettings}>Apply</button>
         </div>
       </div>
 

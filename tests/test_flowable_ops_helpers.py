@@ -161,6 +161,63 @@ class FlowableOpsHelperTests(unittest.TestCase):
         rule = {"meta": {"sample_percent": 100, "sticky_field": "payload.customer_segment"}}
         self.assertTrue(services._rule_canary_matches(rule, {"request_id": "REQ-1"}))
 
+    def test_rule_daily_quota_disabled_by_default(self):
+        self.assertTrue(services._rule_daily_quota_matches({"target_mode": "flowable", "meta": {}}))
+
+    def test_rule_daily_quota_respects_daily_limit(self):
+        original_query = services.query
+        try:
+            services.query = lambda *args, **kwargs: 3
+            self.assertFalse(services._rule_daily_quota_matches({
+                "target_mode": "flowable",
+                "meta": {"daily_quota_enabled": True, "daily_quota_max": 3},
+            }))
+            self.assertTrue(services._rule_daily_quota_matches({
+                "target_mode": "flowable",
+                "meta": {"daily_quota_enabled": True, "daily_quota_max": 4},
+            }))
+        finally:
+            services.query = original_query
+
+    def test_resolve_mode_falls_back_when_canary_quota_is_reached(self):
+        original_query = services.query
+        try:
+            def fake_query(sql, params=None, fetch=None):
+                if "SELECT COUNT(*) FROM requests" in sql:
+                    return 2
+                return [
+                    {
+                        "name": "Auto -> Flowable canary",
+                        "condition_field": "orchestration_mode",
+                        "condition_op": "eq",
+                        "condition_value": "auto",
+                        "target_mode": "flowable",
+                        "meta": {
+                            "sample_percent": 100,
+                            "sticky_field": "request_id",
+                            "daily_quota_enabled": True,
+                            "daily_quota_max": 2,
+                        },
+                    },
+                    {
+                        "name": "Auto -> Custom default",
+                        "condition_field": "orchestration_mode",
+                        "condition_op": "eq",
+                        "condition_value": "auto",
+                        "target_mode": "custom",
+                        "meta": {},
+                    },
+                ]
+
+            services.query = fake_query
+            self.assertEqual(services.resolve_mode({
+                "request_id": "REQ-77",
+                "customer_id": "CUST-001",
+                "orchestration_mode": "auto",
+            }), "custom")
+        finally:
+            services.query = original_query
+
     def test_build_requests_list_query_supports_status_and_time_filters(self):
         created_from = datetime(2026, 3, 16, 8, 0, tzinfo=timezone.utc)
         created_to = datetime(2026, 3, 16, 10, 0, tzinfo=timezone.utc)

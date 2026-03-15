@@ -13,6 +13,9 @@ const empty = {
   meta: {},
 }
 
+const CANARY_RULE_NAME = 'Auto -> Flowable canary'
+const LEGACY_CANARY_RULE_NAME = 'Auto -> Flowable canary 5%'
+
 const CUSTOM_PRESET = {
   name: 'Auto -> Custom default',
   priority: 0,
@@ -25,14 +28,14 @@ const CUSTOM_PRESET = {
 }
 
 const CANARY_PRESET = {
-  name: 'Auto -> Flowable canary 5%',
+  name: CANARY_RULE_NAME,
   priority: 4,
   condition_field: 'orchestration_mode',
   condition_op: 'eq',
   condition_value: 'auto',
   target_mode: 'flowable',
   enabled: true,
-  meta: { sample_percent: 5, sticky_field: 'request_id' },
+  meta: { sample_percent: 5, sticky_field: 'request_id', daily_quota_enabled: false },
 }
 
 function normalizeMeta(meta) {
@@ -43,8 +46,26 @@ function withMeta(rule) {
   return { ...rule, meta: normalizeMeta(rule.meta) }
 }
 
+function isCanaryRule(rule) {
+  const name = String(rule?.name || '').trim().toLowerCase()
+  return name === CANARY_RULE_NAME.toLowerCase() || name === LEGACY_CANARY_RULE_NAME.toLowerCase() || name.startsWith(`${CANARY_RULE_NAME.toLowerCase()} `)
+}
+
 function getSamplePercent(rule) {
   const raw = normalizeMeta(rule.meta).sample_percent
+  return raw === undefined || raw === null || raw === '' ? '' : String(raw)
+}
+
+function getStickyField(rule) {
+  return normalizeMeta(rule.meta).sticky_field || ''
+}
+
+function isDailyQuotaEnabled(rule) {
+  return !!normalizeMeta(rule.meta).daily_quota_enabled
+}
+
+function getDailyQuotaMax(rule) {
+  const raw = normalizeMeta(rule.meta).daily_quota_max
   return raw === undefined || raw === null || raw === '' ? '' : String(raw)
 }
 
@@ -62,7 +83,7 @@ export default function RoutingPage({ canEdit }) {
   useEffect(() => { load() }, [])
 
   const canaryRule = useMemo(
-    () => items.find((rule) => (rule.name || '').toLowerCase() === CANARY_PRESET.name.toLowerCase()),
+    () => items.find((rule) => isCanaryRule(rule)),
     [items],
   )
 
@@ -76,6 +97,13 @@ export default function RoutingPage({ canEdit }) {
       meta.sample_percent = Number.isFinite(normalized) ? Math.max(0, Math.min(100, normalized)) : samplePercent
     }
     if (!meta.sticky_field) delete meta.sticky_field
+    meta.daily_quota_enabled = !!meta.daily_quota_enabled
+    if (!meta.daily_quota_enabled) {
+      delete meta.daily_quota_max
+    } else {
+      const normalized = Number(meta.daily_quota_max)
+      meta.daily_quota_max = Number.isFinite(normalized) ? Math.max(1, Math.round(normalized)) : meta.daily_quota_max
+    }
     return { ...rule, meta }
   }
 
@@ -132,7 +160,7 @@ export default function RoutingPage({ canEdit }) {
       if (existingCustom) await put(`/api/v1/routing-rules/${existingCustom.id}`, customFallback)
       else await post('/api/v1/routing-rules', customFallback)
 
-      const existingCanary = items.find((rule) => rule.name === CANARY_PRESET.name)
+      const existingCanary = canaryRule
       const canaryPayload = buildPayload(existingCanary
         ? { ...existingCanary, ...CANARY_PRESET, enabled: true }
         : CANARY_PRESET)
@@ -170,7 +198,7 @@ export default function RoutingPage({ canEdit }) {
         <div className="muted mb-12">These presets set up the two testing scenarios you described without editing raw JSON by hand.</div>
         <div className="form-actions">
           {canEdit && <button className="btn btn-primary btn-sm" disabled={busyPreset === 'custom'} onClick={routeAllAutoToCustom}>Route all auto traffic to custom</button>}
-          {canEdit && <button className="btn btn-ghost btn-sm" disabled={busyPreset === 'canary'} onClick={enableCanary}>Enable 5% Flowable canary</button>}
+          {canEdit && <button className="btn btn-ghost btn-sm" disabled={busyPreset === 'canary'} onClick={enableCanary}>Apply Flowable canary</button>}
           {canEdit && <button className="btn btn-ghost btn-sm" disabled={!canaryRule || busyPreset === 'canary-off'} onClick={disableCanary}>Disable canary rule</button>}
         </div>
       </div>
@@ -181,7 +209,7 @@ export default function RoutingPage({ canEdit }) {
       </div>
       <div className="card">
         <table className="tbl">
-          <thead><tr><th>Name</th><th>Priority</th><th>Condition</th><th>Target</th><th>Traffic share</th><th>Enabled</th>{canEdit && <th></th>}</tr></thead>
+          <thead><tr><th>Name</th><th>Priority</th><th>Condition</th><th>Target</th><th>Traffic share</th><th>Sticky field</th><th>Daily quota</th><th>Enabled</th>{canEdit && <th></th>}</tr></thead>
           <tbody>
             {items.map((r) => (
               <tr key={r.id}>
@@ -193,6 +221,12 @@ export default function RoutingPage({ canEdit }) {
                   {getSamplePercent(r)
                     ? <span className="badge badge-amber">{getSamplePercent(r)}%</span>
                     : <span className="badge badge-gray">100%</span>}
+                </td>
+                <td className="mono text-sm">{getStickyField(r) || '-'}</td>
+                <td>
+                  {isDailyQuotaEnabled(r)
+                    ? <span className="badge badge-teal">{getDailyQuotaMax(r) || '?'} / day</span>
+                    : <span className="badge badge-gray">off</span>}
                 </td>
                 <td><span className={`badge ${r.enabled ? 'badge-green' : 'badge-red'}`}>{r.enabled ? 'enabled' : 'disabled'}</span></td>
                 {canEdit && <td style={{ display: 'flex', gap: 4 }}>
@@ -227,7 +261,30 @@ export default function RoutingPage({ canEdit }) {
           <div className="form-row"><label>Condition value</label><input value={editing.condition_value} onChange={(e) => setEditing({ ...editing, condition_value: e.target.value })} /></div>
           <div className="form-inline">
             <div className="form-row"><label>Traffic share %</label><input type="number" min="0" max="100" value={getSamplePercent(editing)} onChange={(e) => setEditing({ ...editing, meta: { ...normalizeMeta(editing.meta), sample_percent: e.target.value } })} placeholder="100" /></div>
-            <div className="form-row"><label>Sticky field</label><input value={normalizeMeta(editing.meta).sticky_field || ''} onChange={(e) => setEditing({ ...editing, meta: { ...normalizeMeta(editing.meta), sticky_field: e.target.value } })} placeholder="request_id" /></div>
+            <div className="form-row"><label>Sticky field</label><input value={getStickyField(editing)} onChange={(e) => setEditing({ ...editing, meta: { ...normalizeMeta(editing.meta), sticky_field: e.target.value } })} placeholder="request_id" /></div>
+          </div>
+          <div className="form-inline">
+            <div className="form-row">
+              <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={isDailyQuotaEnabled(editing)}
+                  onChange={(e) => setEditing({ ...editing, meta: { ...normalizeMeta(editing.meta), daily_quota_enabled: e.target.checked } })}
+                  style={{ width: 'auto' }}
+                /> Daily quota mode
+              </label>
+            </div>
+            <div className="form-row">
+              <label>Max requests per day</label>
+              <input
+                type="number"
+                min="1"
+                value={getDailyQuotaMax(editing)}
+                onChange={(e) => setEditing({ ...editing, meta: { ...normalizeMeta(editing.meta), daily_quota_max: e.target.value } })}
+                placeholder="6"
+                disabled={!isDailyQuotaEnabled(editing)}
+              />
+            </div>
           </div>
           <div className="form-row">
             <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
