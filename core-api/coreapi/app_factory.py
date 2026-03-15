@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import threading
 from typing import Any, Dict, Optional
 
 import psycopg2
@@ -14,13 +15,50 @@ from migrations import run_migrations, seed_defaults
 from shared import all_breaker_states, close_pool, config_cache, encrypt_field, get_correlation_id, get_conn, get_logger, init_pool, mask_field, metrics, new_correlation_id, put_conn, resilient_post
 
 PORT = int(os.getenv("CORE_PORT", "8000"))
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 SERVICE_NAME = "core-api"
 log = get_logger(SERVICE_NAME)
 
+INSECURE_ENCRYPT_KEYS = {"change-me-in-production-32chars!", "default-dev-key-change-in-prod!!", ""}
+
+
+def _validate_config():
+    """Fail fast if critical configuration is missing or insecure."""
+    errors = []
+    warnings = []
+
+    encrypt_key = os.getenv("ENCRYPT_KEY", "")
+    if encrypt_key in INSECURE_ENCRYPT_KEYS:
+        errors.append("ENCRYPT_KEY must be changed from default value")
+    elif len(encrypt_key) < 32:
+        errors.append(f"ENCRYPT_KEY must be at least 32 characters (current: {len(encrypt_key)})")
+
+    for var in ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD"):
+        if not os.getenv(var):
+            errors.append(f"{var} is not set")
+
+    cors_raw = os.getenv("CORS_ORIGINS", "")
+    if not cors_raw or cors_raw.strip() == "*":
+        warnings.append("CORS_ORIGINS is empty or '*' — all origins allowed; restrict for production")
+
+    if not os.getenv("GATEWAY_API_KEY"):
+        warnings.append("GATEWAY_API_KEY is empty — gateway API is open without authentication")
+    if not os.getenv("INTERNAL_API_KEY"):
+        warnings.append("INTERNAL_API_KEY is empty — internal endpoints are open")
+
+    for w in warnings:
+        log.warning(f"CONFIG WARNING: {w}")
+    if errors:
+        for e in errors:
+            log.error(f"CONFIG ERROR: {e}")
+        raise RuntimeError(f"Configuration errors: {'; '.join(errors)}")
+
+    log.info("Configuration validated OK")
+
+
 app = FastAPI(
     title="Credit Platform API",
-    version="5.1.0",
+    version="5.2.0",
     description="""
 ## Credit check orchestration platform
 
@@ -42,7 +80,27 @@ stop-factor evaluation, and external service notification.
         {"name": "Flowable Ops", "description": "Operational visibility and controlled actions for Flowable instances"},
     ],
 )
-app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
+
+# P0-08: CORS — restrict origins, methods, headers (no wildcard in production)
+_cors_origins = CORS_ORIGINS if CORS_ORIGINS else ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Api-Key", "X-User-Role", "X-User-Name", "X-Correlation-ID", "X-Internal-Api-Key"],
+    allow_credentials=True,
+    max_age=3600,
+)
+
+
+@app.middleware("http")
+async def body_size_limit(request: Request, call_next):
+    """P0-07: Reject oversized request bodies (64KB max)."""
+    MAX_BODY = 65536
+    cl = request.headers.get("content-length")
+    if cl and int(cl) > MAX_BODY:
+        return Response(status_code=413, content='{"detail":"Request body too large"}', media_type="application/json")
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -61,15 +119,40 @@ async def correlation_middleware(request: Request, call_next):
     return response
 
 
+def _data_retention_worker():
+    """P1-05: Periodically clean old data to prevent unbounded table growth."""
+    while True:
+        time.sleep(3600)  # every hour
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            # Rate limit buckets older than 2 hours
+            cur.execute("DELETE FROM rate_limit_buckets WHERE window_start < %s", (int(time.time()) - 7200,))
+            # Tracker events older than 90 days
+            cur.execute("DELETE FROM request_tracker_events WHERE created_at < NOW() - INTERVAL '90 days'")
+            # SNP notifications older than 90 days
+            cur.execute("DELETE FROM snp_notifications WHERE sent_at < NOW() - INTERVAL '90 days'")
+            # Audit log older than 365 days
+            cur.execute("DELETE FROM audit_log WHERE performed_at < NOW() - INTERVAL '365 days'")
+            cur.close()
+            put_conn(conn)
+            log.info("data retention cleanup completed")
+        except Exception as exc:
+            log.warning(f"data retention cleanup failed: {exc}")
+
+
 @app.on_event("startup")
 def startup():
+    _validate_config()
     init_pool()
     conn = get_conn()
     run_migrations(conn)
     seed_defaults(conn)
     put_conn(conn)
     ensure_default_ui_users()
-    log.info("core-api started")
+    # P1-05: Start background cleanup thread
+    threading.Thread(target=_data_retention_worker, daemon=True, name="data-retention").start()
+    log.info("core-api started (v5.2.0)")
 
 
 @app.on_event("shutdown")
@@ -113,7 +196,7 @@ def get_admin_users(x_api_key: str = Header(default=""), x_user_role: str = Head
 def add_admin_user(body: AdminUserCreateIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_ADMIN)
     created = create_admin_user(body.username, body.display_name, body.role, body.password, body.enabled)
-    audit("admin_user", created["username"], "created", created)
+    audit("admin_user", created["username"], "created", created, performed_by=x_user_name)
     return {"status": "created", "id": created["username"]}
 
 
@@ -134,7 +217,7 @@ def edit_admin_user(
         enabled=body.enabled,
         actor_username=x_user_name,
     )
-    audit("admin_user", updated["username"], "updated", updated)
+    audit("admin_user", updated["username"], "updated", updated, performed_by=x_user_name)
     return {"status": "updated", "id": updated["username"]}
 
 
@@ -142,7 +225,7 @@ def edit_admin_user(
 def revoke_user_session(username: str, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_ADMIN)
     updated = revoke_admin_user_session(username)
-    audit("admin_user", updated["username"], "session_revoked", updated)
+    audit("admin_user", updated["username"], "session_revoked", updated, performed_by=x_user_name)
     return {"status": "updated", "id": updated["username"]}
 
 
@@ -155,7 +238,7 @@ def remove_admin_user(
 ):
     require_min_role(x_api_key, x_user_role, ROLE_ADMIN)
     delete_admin_user(username, actor_username=x_user_name)
-    audit("admin_user", username, "deleted", {"username": username})
+    audit("admin_user", username, "deleted", {"username": username}, performed_by=x_user_name)
     return {"status": "deleted", "id": username}
 
 
@@ -193,7 +276,7 @@ def get_service(sid: str, x_api_key: str = Header(default=""), x_user_role: str 
 
 
 @app.post("/api/v1/services", response_model=StatusResponse, status_code=201, tags=["Services"])
-def create_service(body: ServiceIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+def create_service(body: ServiceIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""),  x_user_name: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_ADMIN)
     try:
         execute(
@@ -202,7 +285,7 @@ def create_service(body: ServiceIn, x_api_key: str = Header(default=""), x_user_
         )
     except psycopg2.IntegrityError:
         raise HTTPException(409, "Service ID already exists")
-    audit("service", body.id, "created", body.model_dump())
+    audit("service", body.id, "created", body.model_dump(), performed_by=x_user_name)
     config_cache.invalidate("svc:")
     config_cache.invalidate("services:")
     config_cache.invalidate("conn_urls")
@@ -210,13 +293,13 @@ def create_service(body: ServiceIn, x_api_key: str = Header(default=""), x_user_
 
 
 @app.put("/api/v1/services/{sid}", response_model=StatusResponse, tags=["Services"])
-def update_service(sid: str, body: ServiceIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+def update_service(sid: str, body: ServiceIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""),  x_user_name: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_ADMIN)
     execute(
         "UPDATE services SET name=%s,type=%s,base_url=%s,health_path=%s,enabled=%s,timeout_ms=%s,retry_count=%s,endpoint_path=%s,meta=%s,updated_at=NOW() WHERE id=%s",
         (body.name, body.type, body.base_url, body.health_path, body.enabled, body.timeout_ms, body.retry_count, body.endpoint_path, json.dumps(body.meta), sid),
     )
-    audit("service", sid, "updated", body.model_dump())
+    audit("service", sid, "updated", body.model_dump(), performed_by=x_user_name)
     config_cache.invalidate("svc:")
     config_cache.invalidate("services:")
     config_cache.invalidate("conn_urls")
@@ -224,10 +307,10 @@ def update_service(sid: str, body: ServiceIn, x_api_key: str = Header(default=""
 
 
 @app.delete("/api/v1/services/{sid}", response_model=StatusResponse, tags=["Services"])
-def delete_service(sid: str, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+def delete_service(sid: str, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""),  x_user_name: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_ADMIN)
     execute("DELETE FROM services WHERE id=%s", (sid,))
-    audit("service", sid, "deleted")
+    audit("service", sid, "deleted", performed_by=x_user_name)
     config_cache.invalidate()
     return {"status": "deleted", "id": sid}
 
@@ -244,34 +327,34 @@ def list_rules(x_api_key: str = Header(default=""), x_user_role: str = Header(de
 
 
 @app.post("/api/v1/routing-rules", response_model=StatusResponse, status_code=201, tags=["Routing Rules"])
-def create_rule(body: RuleIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+def create_rule(body: RuleIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""),  x_user_name: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
     entity_id = execute_returning(
         "INSERT INTO routing_rules (name,priority,condition_field,condition_op,condition_value,target_mode,enabled,meta) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
         (body.name, body.priority, body.condition_field, body.condition_op, body.condition_value, body.target_mode, body.enabled, json.dumps(body.meta)),
     )
-    audit("routing_rule", entity_id, "created", body.model_dump())
+    audit("routing_rule", entity_id, "created", body.model_dump(), performed_by=x_user_name)
     config_cache.invalidate("rules")
     return {"status": "created", "id": entity_id}
 
 
 @app.put("/api/v1/routing-rules/{rid}", response_model=StatusResponse, tags=["Routing Rules"])
-def update_rule(rid: int, body: RuleIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+def update_rule(rid: int, body: RuleIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""),  x_user_name: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
     execute(
         "UPDATE routing_rules SET name=%s,priority=%s,condition_field=%s,condition_op=%s,condition_value=%s,target_mode=%s,enabled=%s,meta=%s,updated_at=NOW() WHERE id=%s",
         (body.name, body.priority, body.condition_field, body.condition_op, body.condition_value, body.target_mode, body.enabled, json.dumps(body.meta), rid),
     )
-    audit("routing_rule", rid, "updated", body.model_dump())
+    audit("routing_rule", rid, "updated", body.model_dump(), performed_by=x_user_name)
     config_cache.invalidate("rules")
     return {"status": "updated", "id": rid}
 
 
 @app.delete("/api/v1/routing-rules/{rid}", response_model=StatusResponse, tags=["Routing Rules"])
-def delete_rule(rid: int, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+def delete_rule(rid: int, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""),  x_user_name: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
     execute("DELETE FROM routing_rules WHERE id=%s", (rid,))
-    audit("routing_rule", rid, "deleted")
+    audit("routing_rule", rid, "deleted", performed_by=x_user_name)
     config_cache.invalidate("rules")
     return {"status": "deleted", "id": rid}
 
@@ -294,34 +377,34 @@ def list_stop_factors(stage: Optional[str] = Query(None), x_api_key: str = Heade
 
 
 @app.post("/api/v1/stop-factors", response_model=StatusResponse, status_code=201, tags=["Stop Factors"])
-def create_stop_factor(body: StopFactorIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+def create_stop_factor(body: StopFactorIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""),  x_user_name: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
     entity_id = execute_returning(
         "INSERT INTO stop_factors (name,stage,check_type,field_path,operator,threshold,action_on_fail,enabled,priority,meta) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
         (body.name, body.stage, body.check_type, body.field_path, body.operator, body.threshold, body.action_on_fail, body.enabled, body.priority, json.dumps(body.meta)),
     )
-    audit("stop_factor", entity_id, "created", body.model_dump())
+    audit("stop_factor", entity_id, "created", body.model_dump(), performed_by=x_user_name)
     config_cache.invalidate("stops:")
     return {"status": "created", "id": entity_id}
 
 
 @app.put("/api/v1/stop-factors/{sfid}", response_model=StatusResponse, tags=["Stop Factors"])
-def update_stop_factor(sfid: int, body: StopFactorIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+def update_stop_factor(sfid: int, body: StopFactorIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""),  x_user_name: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
     execute(
         "UPDATE stop_factors SET name=%s,stage=%s,check_type=%s,field_path=%s,operator=%s,threshold=%s,action_on_fail=%s,enabled=%s,priority=%s,meta=%s,updated_at=NOW() WHERE id=%s",
         (body.name, body.stage, body.check_type, body.field_path, body.operator, body.threshold, body.action_on_fail, body.enabled, body.priority, json.dumps(body.meta), sfid),
     )
-    audit("stop_factor", sfid, "updated", body.model_dump())
+    audit("stop_factor", sfid, "updated", body.model_dump(), performed_by=x_user_name)
     config_cache.invalidate("stops:")
     return {"status": "updated", "id": sfid}
 
 
 @app.delete("/api/v1/stop-factors/{sfid}", response_model=StatusResponse, tags=["Stop Factors"])
-def delete_stop_factor(sfid: int, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+def delete_stop_factor(sfid: int, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""),  x_user_name: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
     execute("DELETE FROM stop_factors WHERE id=%s", (sfid,))
-    audit("stop_factor", sfid, "deleted")
+    audit("stop_factor", sfid, "deleted", performed_by=x_user_name)
     config_cache.invalidate("stops:")
     return {"status": "deleted", "id": sfid}
 
@@ -343,34 +426,34 @@ def list_pipeline_steps(pipeline_name: str = Query("default"), x_api_key: str = 
 
 
 @app.post("/api/v1/pipeline-steps", response_model=StatusResponse, status_code=201, tags=["Pipeline"])
-def create_pipeline_step(body: PipelineStepIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+def create_pipeline_step(body: PipelineStepIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""),  x_user_name: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
     entity_id = execute_returning(
         "INSERT INTO pipeline_steps (pipeline_name,step_order,service_id,enabled,meta) VALUES (%s,%s,%s,%s,%s) RETURNING id",
         (body.pipeline_name, body.step_order, body.service_id, body.enabled, json.dumps(body.meta)),
     )
-    audit("pipeline_step", entity_id, "created", body.model_dump())
+    audit("pipeline_step", entity_id, "created", body.model_dump(), performed_by=x_user_name)
     config_cache.invalidate("pipeline:")
     return {"status": "created", "id": entity_id}
 
 
 @app.put("/api/v1/pipeline-steps/{pid}", response_model=StatusResponse, tags=["Pipeline"])
-def update_pipeline_step(pid: int, body: PipelineStepIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+def update_pipeline_step(pid: int, body: PipelineStepIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""),  x_user_name: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
     execute(
         "UPDATE pipeline_steps SET pipeline_name=%s,step_order=%s,service_id=%s,enabled=%s,meta=%s,updated_at=NOW() WHERE id=%s",
         (body.pipeline_name, body.step_order, body.service_id, body.enabled, json.dumps(body.meta), pid),
     )
-    audit("pipeline_step", pid, "updated", body.model_dump())
+    audit("pipeline_step", pid, "updated", body.model_dump(), performed_by=x_user_name)
     config_cache.invalidate("pipeline:")
     return {"status": "updated", "id": pid}
 
 
 @app.delete("/api/v1/pipeline-steps/{pid}", response_model=StatusResponse, tags=["Pipeline"])
-def delete_pipeline_step(pid: int, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+def delete_pipeline_step(pid: int, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""),  x_user_name: str = Header(default="")):
     require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
     execute("DELETE FROM pipeline_steps WHERE id=%s", (pid,))
-    audit("pipeline_step", pid, "deleted")
+    audit("pipeline_step", pid, "deleted", performed_by=x_user_name)
     config_cache.invalidate("pipeline:")
     return {"status": "deleted", "id": pid}
 

@@ -27,6 +27,7 @@ SENIOR_ANALYST_LOGIN_PASSWORD = os.getenv("SENIOR_ANALYST_LOGIN_PASSWORD", "seni
 ANALYST_LOGIN_USERNAME = os.getenv("ANALYST_LOGIN_USERNAME", "analyst")
 ANALYST_LOGIN_PASSWORD = os.getenv("ANALYST_LOGIN_PASSWORD", "analyst")
 RATE_LIMIT = int(os.getenv("RATE_LIMIT_PER_MIN", "120"))
+SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "8"))
 SERVICE_NAME = "core-api"
 log = get_logger(SERVICE_NAME)
 
@@ -98,7 +99,10 @@ def _admin_user_by_username(username: str, *, enabled_only: bool = False):
 def _admin_user_by_session_token(token: str):
     if not (token or "").strip():
         return None
-    return to_json_ready(query("SELECT * FROM admin_users WHERE session_token=%s AND enabled=TRUE", ((token or "").strip(),), "one"))
+    return to_json_ready(query(
+        "SELECT * FROM admin_users WHERE session_token=%s AND enabled=TRUE AND (session_expires_at IS NULL OR session_expires_at > NOW())",
+        ((token or "").strip(),), "one"
+    ))
 
 
 def ensure_default_ui_users():
@@ -120,26 +124,26 @@ def ensure_default_ui_users():
 
 
 def require_gateway_auth(key: str):
-    if API_KEY and key != API_KEY:
+    if API_KEY and not secrets.compare_digest(key or "", API_KEY):
         metrics.inc("auth_failures", 'scope="gateway"')
         raise HTTPException(401, "invalid api key")
 
 
 def require_admin_auth(key: str):
-    if ADMIN_API_KEY and key != ADMIN_API_KEY:
+    if ADMIN_API_KEY and not secrets.compare_digest(key or "", ADMIN_API_KEY):
         metrics.inc("auth_failures", 'scope="admin"')
         raise HTTPException(401, "invalid admin api key")
 
 
 def require_internal_auth(key: str):
-    if INTERNAL_API_KEY and key != INTERNAL_API_KEY:
+    if INTERNAL_API_KEY and not secrets.compare_digest(key or "", INTERNAL_API_KEY):
         metrics.inc("auth_failures", 'scope="internal"')
         raise HTTPException(401, "invalid internal api key")
 
 
 def require_internal_or_min_role(key: str, requested_role: str, minimum_role: str) -> str:
     key = (key or "").strip()
-    if INTERNAL_API_KEY and key == INTERNAL_API_KEY:
+    if INTERNAL_API_KEY and secrets.compare_digest(key, INTERNAL_API_KEY):
         return "internal"
     return require_min_role(key, requested_role, minimum_role)
 
@@ -154,13 +158,15 @@ def authenticate_ui_login(username: str, password: str):
             raise HTTPException(403, "user account is disabled")
         if verify_password(password, db_user.get("password_hash", "")):
             session_token = _issue_session_token()
+            from datetime import datetime, timedelta, timezone as tz
+            session_expires = datetime.now(tz.utc) + timedelta(hours=SESSION_TTL_HOURS)
             execute(
                 """
                 UPDATE admin_users
-                SET session_token=%s, session_issued_at=NOW(), last_login_at=NOW(), updated_at=NOW()
+                SET session_token=%s, session_issued_at=NOW(), session_expires_at=%s, last_login_at=NOW(), updated_at=NOW()
                 WHERE username=%s
                 """,
-                (session_token, username),
+                (session_token, session_expires, username),
             )
             role = normalize_role(db_user.get("role"))
             metrics.inc("auth_logins", f'role="{role}"')

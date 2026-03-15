@@ -2,11 +2,10 @@
 from datetime import datetime, timezone
 from typing import Any, Dict
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+# CORS removed for internal service
 from pydantic import BaseModel
 
 app = FastAPI(title="report-parser", version="4.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 class ParseRequest(BaseModel):
     request_id: str

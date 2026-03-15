@@ -1,23 +1,23 @@
 import { useState } from 'react'
-
 import { getApiBase, login } from '../lib/api'
+import { IconLayers } from '../components/Icons'
 
 export default function LoginPage({ onLogin }) {
-  const [apiBase, setApiBase] = useState(getApiBase())
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [baseUrl, setBaseUrl] = useState(getApiBase())
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const submit = async (event) => {
-    event.preventDefault()
+  const handleSubmit = async (e) => {
+    e.preventDefault()
     setLoading(true)
     setError('')
     try {
-      await login({ username, password, baseUrl: apiBase })
-      onLogin?.()
-    } catch (loginError) {
-      setError(loginError.message)
+      await login({ username, password, baseUrl })
+      onLogin()
+    } catch (err) {
+      setError(err.message)
     } finally {
       setLoading(false)
     }
@@ -25,41 +25,38 @@ export default function LoginPage({ onLogin }) {
 
   return (
     <div className="login-shell">
-      <div className="login-card">
-        <div className="logo login-logo">
-          <div className="logo-icon">CP</div>
+      <form className="login-card" onSubmit={handleSubmit}>
+        <div className="login-logo flex-center gap-8">
+          <div className="logo-icon"><IconLayers /></div>
           <div>
             <div className="logo-text">Credit Platform</div>
-            <div className="logo-sub">Admin Console Login</div>
+            <div className="logo-sub">Admin Console</div>
           </div>
         </div>
+        <h2>Sign in</h2>
+        <p className="sub">Enter your credentials to access the admin panel</p>
 
-        <div className="page-header login-header">
-          <h1>Sign In</h1>
-          <p>Use a role account instead of pasting raw API keys into the UI.</p>
+        <div className="form-row">
+          <label>Username</label>
+          <input value={username} onChange={e => setUsername(e.target.value)} placeholder="admin" autoFocus />
+        </div>
+        <div className="form-row">
+          <label>Password</label>
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••" />
+        </div>
+        <div className="form-row">
+          <label>API Base URL</label>
+          <input value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="http://localhost:8000" />
         </div>
 
-        <form onSubmit={submit}>
-          <div className="form-row">
-            <label>API Base URL</label>
-            <input value={apiBase} onChange={(event) => setApiBase(event.target.value)} placeholder="http://localhost:8000" />
-          </div>
-          <div className="form-row">
-            <label>Username</label>
-            <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
-          </div>
-          <div className="form-row">
-            <label>Password</label>
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
-          </div>
-          {error && <div className="notice mb-16">{error}</div>}
-          <div className="form-actions">
-            <button className="btn btn-primary" type="submit" disabled={loading}>
-              {loading ? 'Signing In...' : 'Sign In'}
-            </button>
-          </div>
-        </form>
-      </div>
+        {error && <div className="login-error">{error}</div>}
+
+        <div className="form-actions" style={{ marginTop: 20 }}>
+          <button className="btn btn-primary w-full" type="submit" disabled={loading} style={{ width: '100%', justifyContent: 'center' }}>
+            {loading ? 'Signing in...' : 'Sign in'}
+          </button>
+        </div>
+      </form>
     </div>
   )
 }

@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
+# CORS removed for internal service
 from pydantic import BaseModel, Field
 
 CONFIG_URL = os.getenv("CONFIG_SERVICE_URL", "http://core-api:8000")
@@ -45,7 +45,6 @@ handler.setFormatter(JsonFormatter())
 log.setLevel(logging.INFO)
 
 app = FastAPI(title=SERVICE_NAME, version="5.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 _cache: Dict[str, tuple] = {}
 _background_tasks = set()

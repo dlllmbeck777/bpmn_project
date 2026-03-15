@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
+# CORS removed for internal service
 from pydantic import BaseModel, Field
 
 CONFIG_URL = os.getenv("CONFIG_SERVICE_URL", "http://core-api:8000")
@@ -14,7 +14,6 @@ INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 TRACKER_URL = f"{CONFIG_URL}/internal/requests/track"
 
 app = FastAPI(title="custom-adapter", version="5.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 _cache: Dict[str, tuple] = {}
 

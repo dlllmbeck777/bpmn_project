@@ -117,8 +117,8 @@ def track_request_event(
     )
 
 
-def audit(entity_type: str, entity_id: Any, action: str, changes=None):
+def audit(entity_type: str, entity_id: Any, action: str, changes=None, performed_by: Optional[str] = None):
     execute(
-        "INSERT INTO audit_log (entity_type,entity_id,action,changes) VALUES (%s,%s,%s,%s)",
-        (entity_type, str(entity_id), action, json.dumps(changes or {})),
+        "INSERT INTO audit_log (entity_type,entity_id,action,changes,performed_by) VALUES (%s,%s,%s,%s,%s)",
+        (entity_type, str(entity_id), action, json.dumps(changes or {}), performed_by),
     )

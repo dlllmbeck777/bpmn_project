@@ -1,14 +1,33 @@
 # Credit Platform v5
 
-Multi-service credit orchestration platform built with FastAPI, PostgreSQL, Flowable, React/Vite, Prometheus and Grafana.
+Multi-service credit orchestration platform built with FastAPI, PostgreSQL, Flowable, React/Vite, Prometheus, and Grafana.
 
 ## Quick Start
 
 ```bash
 cp .env.example .env
-# Edit .env and set ENCRYPT_KEY plus any optional API keys/passwords
 docker compose up -d --build
 ```
+
+The local stack exposes the main services directly on host ports and is intended for development and testing.
+
+## Production Deployment
+
+This repository also includes production deployment assets:
+
+- `docker-compose.prod.yml`
+- `infra/nginx/nginx.conf`
+- `admin-ui/Dockerfile.prod`
+- `scripts/generate-env.sh`
+- `docs/DEPLOYMENT.md`
+
+Typical production flow:
+
+```bash
+DOMAIN=admin.example.com bash scripts/deploy-prod.sh
+```
+
+See `docs/DEPLOYMENT.md` for the full walkthrough.
 
 ## Services (14)
 
@@ -32,7 +51,7 @@ docker compose up -d --build
 ## Key Features
 
 - Field-level encryption for sensitive identifiers with legacy decrypt support.
-- Optional `GATEWAY_API_KEY`, `ADMIN_API_KEY`, and `INTERNAL_API_KEY`.
+- Role-scoped API keys and UI logins for admin, senior analyst, and analyst flows.
 - Request persistence, audit log, stop factors, routing rules, and configurable pipeline steps.
 - Shared config invalidation, shared rate limiting, and shared circuit breaker state in PostgreSQL.
 - Flowable orchestration with BPMN auto-deploy and callback-based completion.
@@ -48,6 +67,7 @@ docker compose up -d --build
 
 ## Notes
 
-- `admin-ui` uses `localStorage` for API base URL and `X-Api-Key`.
+- `admin-ui` stores API base URL and session data in `localStorage`.
 - Default seeded stop factors target `result.parsed_report.summary.*`.
 - The Flowable path uses callback completion via `/internal/cases/complete`.
+- For production, use the dedicated UI image in `admin-ui/Dockerfile.prod`.

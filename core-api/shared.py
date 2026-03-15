@@ -150,13 +150,31 @@ def get_conn():
     if _db_pool is None:
         init_pool()
     conn = _db_pool.getconn()
-    conn.autocommit = True
-    return conn
+    try:
+        conn.autocommit = True
+        # Test the connection is alive (handles PostgreSQL restart)
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.close()
+        return conn
+    except Exception:
+        # Connection is stale — discard and get a fresh one
+        try:
+            _db_pool.putconn(conn, close=True)
+        except Exception:
+            pass
+        conn = _db_pool.getconn()
+        conn.autocommit = True
+        return conn
 
 
 def put_conn(conn):
     if _db_pool and conn is not None:
-        _db_pool.putconn(conn)
+        try:
+            _db_pool.putconn(conn)
+        except Exception:
+            # Connection already closed or pool is gone — ignore
+            pass
 
 
 def close_pool():

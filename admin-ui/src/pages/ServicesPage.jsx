@@ -1,123 +1,90 @@
 import { useEffect, useState } from 'react'
-
+import { get, post, put, del } from '../lib/api'
 import Modal from '../components/Modal'
-import { del, get, post, put } from '../lib/api'
 
-export default function ServicesPage({ canEdit = true }) {
+const typeColors = { orchestrator: 'badge-blue', connector: 'badge-purple', processor: 'badge-amber', engine: 'badge-teal' }
+
+const empty = { id: '', name: '', type: 'connector', base_url: '', health_path: '/health', enabled: true, timeout_ms: 10000, retry_count: 2, endpoint_path: '/api/process', meta: {} }
+
+export default function ServicesPage({ canEdit }) {
   const [items, setItems] = useState([])
   const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState({})
   const [error, setError] = useState('')
 
-  const load = () => get('/api/v1/services').then((data) => setItems(data.items || [])).catch((err) => setError(err.message))
-
+  const load = () => get('/api/v1/services').then(d => setItems(d.items || [])).catch(e => setError(e.message))
   useEffect(() => { load() }, [])
 
-  const openNew = () => {
-    if (!canEdit) return
-    setForm({ id: '', name: '', type: 'connector', base_url: '', health_path: '/health', endpoint_path: '/api/process', enabled: true, timeout_ms: 10000, retry_count: 2 })
-    setEditing('new')
-  }
-
-  const openEdit = (service) => {
-    if (!canEdit) return
-    setForm({ ...service, enabled: !!service.enabled })
-    setEditing(service.id)
-  }
-
   const save = async () => {
-    if (!canEdit) return
     try {
-      const data = { ...form, meta: form.meta || {} }
-      if (editing === 'new') await post('/api/v1/services', data)
-      else await put(`/api/v1/services/${editing}`, data)
+      if (items.find(s => s.id === editing.id && !editing._isNew)) {
+        await put(`/api/v1/services/${editing.id}`, editing)
+      } else {
+        await post('/api/v1/services', editing)
+      }
       setEditing(null)
-      setError('')
       load()
-    } catch (err) {
-      setError(err.message)
-    }
+    } catch (e) { setError(e.message) }
   }
 
   const remove = async (id) => {
-    if (!canEdit) return
-    if (!confirm(`Delete service ${id}?`)) return
-    try {
-      await del(`/api/v1/services/${id}`)
-      setError('')
-      load()
-    } catch (err) {
-      setError(err.message)
-    }
+    if (!confirm(`Delete service "${id}"?`)) return
+    try { await del(`/api/v1/services/${id}`); load() } catch (e) { setError(e.message) }
   }
 
   return (
     <>
-      {error && <div className="notice mb-16">{error}</div>}
-      {!canEdit && <div className="notice mb-16">Senior analysts have read-only access to the service registry. Only admins can change service definitions.</div>}
+      {error && <div className="notice notice-error mb-16">{error}</div>}
 
       <div className="flex-between mb-16">
-        <div className="card-title" style={{ margin: 0 }}>Service Registry</div>
-        {canEdit && <button className="btn btn-primary" onClick={openNew}>Add Service</button>}
+        <div />
+        {canEdit && <button className="btn btn-primary btn-sm" onClick={() => setEditing({ ...empty, _isNew: true })}>+ Add service</button>}
       </div>
 
       <div className="card">
         <table className="tbl">
-          <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Base URL</th><th>Endpoint</th><th>Timeout</th><th>Status</th>{canEdit && <th>Actions</th>}</tr></thead>
+          <thead><tr><th>Service</th><th>Type</th><th>Base URL</th><th>Timeout</th><th>Retries</th><th>Status</th>{canEdit && <th></th>}</tr></thead>
           <tbody>
-            {items.map((service) => (
-              <tr key={service.id}>
-                <td className="mono">{service.id}</td>
-                <td>{service.name}</td>
-                <td><span className="badge badge-gray">{service.type}</span></td>
-                <td className="mono table-small">{service.base_url}</td>
-                <td className="mono table-small">{service.endpoint_path}</td>
-                <td className="mono">{service.timeout_ms}ms</td>
-                <td><span className={`badge ${service.enabled ? 'badge-green' : 'badge-red'}`}>{service.enabled ? 'ON' : 'OFF'}</span></td>
-                {canEdit && (
-                  <td>
-                    <div className="flex-gap">
-                      <button className="btn btn-ghost btn-sm" onClick={() => openEdit(service)}>Edit</button>
-                      <button className="btn btn-danger btn-sm" onClick={() => remove(service.id)}>Delete</button>
-                    </div>
-                  </td>
-                )}
+            {items.map(s => (
+              <tr key={s.id}>
+                <td className="mono" style={{ fontWeight: 600 }}>{s.id}</td>
+                <td><span className={`badge ${typeColors[s.type] || 'badge-gray'}`}>{s.type}</span></td>
+                <td className="mono text-sm" style={{ color: 'var(--text-3)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.base_url}</td>
+                <td className="mono">{(s.timeout_ms / 1000).toFixed(0)}s</td>
+                <td className="mono">{s.retry_count}</td>
+                <td><span className={`svc-dot ${s.enabled ? 'up' : 'down'}`} /></td>
+                {canEdit && <td style={{ display: 'flex', gap: 4 }}>
+                  <button className="btn btn-ghost btn-xs" onClick={() => setEditing({ ...s })}>Edit</button>
+                  <button className="btn btn-danger btn-xs" onClick={() => remove(s.id)}>Delete</button>
+                </td>}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {canEdit && editing && (
-        <Modal title={editing === 'new' ? 'Add Service' : `Edit ${editing}`} onClose={() => setEditing(null)}>
+      {editing && (
+        <Modal title={editing._isNew ? 'Add service' : `Edit ${editing.id}`} onClose={() => setEditing(null)}>
           <div className="form-inline">
-            <div className="form-row"><label>ID</label><input value={form.id || ''} onChange={(event) => setForm({ ...form, id: event.target.value })} disabled={editing !== 'new'} /></div>
-            <div className="form-row"><label>Name</label><input value={form.name || ''} onChange={(event) => setForm({ ...form, name: event.target.value })} /></div>
+            <div className="form-row"><label>ID</label><input value={editing.id} onChange={e => setEditing({ ...editing, id: e.target.value })} disabled={!editing._isNew} /></div>
+            <div className="form-row"><label>Name</label><input value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} /></div>
           </div>
           <div className="form-inline">
-            <div className="form-row">
-              <label>Type</label>
-              <select value={form.type || 'connector'} onChange={(event) => setForm({ ...form, type: event.target.value })}>
-                <option value="connector">connector</option>
-                <option value="orchestrator">orchestrator</option>
-                <option value="gateway">gateway</option>
-                <option value="engine">engine</option>
-                <option value="processor">processor</option>
-                <option value="external">external</option>
+            <div className="form-row"><label>Type</label>
+              <select value={editing.type} onChange={e => setEditing({ ...editing, type: e.target.value })}>
+                <option value="connector">connector</option><option value="orchestrator">orchestrator</option>
+                <option value="processor">processor</option><option value="engine">engine</option>
               </select>
             </div>
-            <div className="form-row"><label>Health Path</label><input value={form.health_path || ''} onChange={(event) => setForm({ ...form, health_path: event.target.value })} /></div>
+            <div className="form-row"><label>Endpoint path</label><input value={editing.endpoint_path} onChange={e => setEditing({ ...editing, endpoint_path: e.target.value })} /></div>
           </div>
-          <div className="form-row"><label>Base URL</label><input value={form.base_url || ''} onChange={(event) => setForm({ ...form, base_url: event.target.value })} placeholder="http://host:port" /></div>
-          <div className="form-row"><label>Endpoint Path</label><input value={form.endpoint_path || ''} onChange={(event) => setForm({ ...form, endpoint_path: event.target.value })} placeholder="/api/pull" /></div>
+          <div className="form-row"><label>Base URL</label><input value={editing.base_url} onChange={e => setEditing({ ...editing, base_url: e.target.value })} /></div>
           <div className="form-inline">
-            <div className="form-row"><label>Timeout (ms)</label><input type="number" value={form.timeout_ms || 10000} onChange={(event) => setForm({ ...form, timeout_ms: Number(event.target.value) })} /></div>
-            <div className="form-row"><label>Retries</label><input type="number" value={form.retry_count || 2} onChange={(event) => setForm({ ...form, retry_count: Number(event.target.value) })} /></div>
+            <div className="form-row"><label>Timeout (ms)</label><input type="number" value={editing.timeout_ms} onChange={e => setEditing({ ...editing, timeout_ms: +e.target.value })} /></div>
+            <div className="form-row"><label>Retry count</label><input type="number" value={editing.retry_count} onChange={e => setEditing({ ...editing, retry_count: +e.target.value })} /></div>
           </div>
           <div className="form-row">
-            <label className="checkbox-row">
-              <input type="checkbox" checked={!!form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} />
-              Enabled
+            <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
+              <input type="checkbox" checked={editing.enabled} onChange={e => setEditing({ ...editing, enabled: e.target.checked })} style={{ width: 'auto' }} /> Enabled
             </label>
           </div>
           <div className="form-actions">

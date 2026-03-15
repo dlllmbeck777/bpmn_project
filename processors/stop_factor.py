@@ -8,13 +8,12 @@ from typing import Any, Dict
 
 import httpx
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+# CORS removed for internal service
 from pydantic import BaseModel
 
 CONFIG_URL = os.getenv("CONFIG_SERVICE_URL", "http://core-api:8000")
 
 app = FastAPI(title="stop-factor", version="4.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 class CheckRequest(BaseModel):

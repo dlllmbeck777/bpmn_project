@@ -7,53 +7,39 @@ import RoutingPage from './pages/RoutingPage'
 import StopFactorsPage from './pages/StopFactorsPage'
 import PipelinePage from './pages/PipelinePage'
 import ProcessTrackerPage from './pages/ProcessTrackerPage'
-import FlowableOpsPage from './pages/FlowableOpsPage'
+import FlowableAdminPage from './pages/FlowableAdminPage'
 import RequestsPage from './pages/RequestsPage'
 import AuditPage from './pages/AuditPage'
 import LoginPage from './pages/LoginPage'
 import SettingsPage from './pages/SettingsPage'
 import { clearAuth, getApiBase, getApiKey, getCurrentUsername, getRoleLabel, getUserRole, hasUiSession } from './lib/api'
+import { IconGrid, IconSettings, IconRoute, IconAlert, IconList, IconUsers, IconClipboard, IconActivity, IconClock, IconGear, IconLayers } from './components/Icons'
 
-const icons = {
-  dashboard: '[]',
-  services: '<>',
-  users: 'US',
-  routing: '->',
-  stopfactors: 'SF',
-  pipeline: '||',
-  flowableops: 'FO',
-  tracker: 'TR',
-  requests: 'RQ',
-  audit: 'LG',
-  settings: '::',
-}
-
-const ROLE_LEVELS = {
-  analyst: 1,
-  senior_analyst: 2,
-  admin: 3,
-}
+const ROLE_LEVELS = { analyst: 1, senior_analyst: 2, admin: 3 }
 
 const sections = [
-  { group: 'Overview', items: [{ id: 'dashboard', label: 'Dashboard', icon: icons.dashboard, minRole: 'analyst' }] },
+  {
+    group: 'Overview',
+    items: [{ id: 'dashboard', label: 'Dashboard', Icon: IconGrid, minRole: 'analyst' }],
+  },
   {
     group: 'Configuration',
     items: [
-      { id: 'services', label: 'Services', icon: icons.services, minRole: 'senior_analyst' },
-      { id: 'users', label: 'Users & Access', icon: icons.users, minRole: 'admin' },
-      { id: 'routing', label: 'Routing Rules', icon: icons.routing, minRole: 'senior_analyst' },
-      { id: 'stopfactors', label: 'Stop Factors', icon: icons.stopfactors, minRole: 'senior_analyst' },
-      { id: 'pipeline', label: 'Pipeline', icon: icons.pipeline, minRole: 'senior_analyst' },
+      { id: 'services', label: 'Services', Icon: IconSettings, minRole: 'senior_analyst' },
+      { id: 'routing', label: 'Routing rules', Icon: IconRoute, minRole: 'senior_analyst' },
+      { id: 'stopfactors', label: 'Stop factors', Icon: IconAlert, minRole: 'senior_analyst' },
+      { id: 'pipeline', label: 'Pipeline', Icon: IconList, minRole: 'senior_analyst' },
+      { id: 'users', label: 'Users & access', Icon: IconUsers, minRole: 'admin' },
     ],
   },
   {
     group: 'Operations',
     items: [
-      { id: 'flowableops', label: 'Flowable Ops', icon: icons.flowableops, minRole: 'analyst' },
-      { id: 'tracker', label: 'Process Tracker', icon: icons.tracker, minRole: 'analyst' },
-      { id: 'requests', label: 'Requests', icon: icons.requests, minRole: 'analyst' },
-      { id: 'audit', label: 'Audit Log', icon: icons.audit, minRole: 'analyst' },
-      { id: 'settings', label: 'Settings', icon: icons.settings, minRole: 'analyst' },
+      { id: 'requests', label: 'Requests', Icon: IconClipboard, minRole: 'analyst' },
+      { id: 'tracker', label: 'Process tracker', Icon: IconActivity, minRole: 'analyst' },
+      { id: 'flowable', label: 'Flowable engine', Icon: IconLayers, minRole: 'analyst' },
+      { id: 'audit', label: 'Audit log', Icon: IconClock, minRole: 'analyst' },
+      { id: 'settings', label: 'Settings', Icon: IconGear, minRole: 'analyst' },
     ],
   },
 ]
@@ -61,124 +47,114 @@ const sections = [
 const pageTitle = {
   dashboard: ['Dashboard', 'Platform overview and health status'],
   services: ['Services', 'Manage service registry, URLs and retries'],
-  users: ['Users & Access', 'Create users, assign roles, disable accounts and revoke sessions'],
-  routing: ['Routing Rules', 'Control flowable vs custom routing'],
-  stopfactors: ['Stop Factors', 'Pre and post checks for request decisions'],
-  pipeline: ['Pipeline', 'Order connector execution chain'],
-  flowableops: ['Flowable Ops', 'Inspect Flowable instances, jobs, and controlled recovery actions'],
-  tracker: ['Process Tracker', 'Trace request steps, payloads, and skipped chains'],
-  requests: ['Requests', 'Inspect submitted credit check requests'],
-  audit: ['Audit Log', 'Review configuration changes'],
-  settings: ['Settings', 'Configure API base URL, key and role used by this UI'],
+  users: ['Users & access', 'Create users, assign roles, manage sessions'],
+  routing: ['Routing rules', 'Control flowable vs custom routing'],
+  stopfactors: ['Stop factors', 'Pre and post checks for request decisions'],
+  pipeline: ['Pipeline', 'Connector execution order'],
+  flowable: ['Flowable engine', 'Inspect and manage Flowable instances, jobs and process definitions'],
+  tracker: ['Process tracker', 'Trace request steps with waterfall timeline'],
+  requests: ['Requests', 'Credit check request lifecycle'],
+  audit: ['Audit log', 'Configuration change history'],
+  settings: ['Settings', 'Configure API base URL and view session info'],
 }
 
-function hasMinRole(role, minimumRole) {
-  return (ROLE_LEVELS[role] || 0) >= (ROLE_LEVELS[minimumRole] || 0)
-}
-
-function getDefaultSection(role) {
-  return sections
-    .flatMap((section) => section.items)
-    .find((item) => hasMinRole(role, item.minRole))?.id || 'dashboard'
+function hasMinRole(role, min) {
+  return (ROLE_LEVELS[role] || 0) >= (ROLE_LEVELS[min] || 0)
 }
 
 export default function App() {
-  const [apiMeta, setApiMeta] = useState(() => ({ base: getApiBase(), hasKey: !!getApiKey(), role: getUserRole(), username: getCurrentUsername() }))
-  const [active, setActive] = useState(() => getDefaultSection(getUserRole()))
+  const [apiMeta, setApiMeta] = useState(() => ({
+    base: getApiBase(), hasKey: !!getApiKey(), role: getUserRole(), username: getCurrentUsername(),
+  }))
+  const [active, setActive] = useState('dashboard')
 
-  const refreshApiMeta = () => setApiMeta({ base: getApiBase(), hasKey: !!getApiKey(), role: getUserRole(), username: getCurrentUsername() })
-  const isAuthenticated = hasUiSession()
+  const refresh = () => setApiMeta({
+    base: getApiBase(), hasKey: !!getApiKey(), role: getUserRole(), username: getCurrentUsername(),
+  })
+
+  const isAuth = hasUiSession()
 
   const visibleSections = useMemo(
     () => sections
-      .map((section) => ({
-        ...section,
-        items: section.items.filter((item) => hasMinRole(apiMeta.role, item.minRole)),
-      }))
-      .filter((section) => section.items.length > 0),
+      .map(s => ({ ...s, items: s.items.filter(i => hasMinRole(apiMeta.role, i.minRole)) }))
+      .filter(s => s.items.length > 0),
     [apiMeta.role],
   )
 
-  const visibleIds = useMemo(() => visibleSections.flatMap((section) => section.items.map((item) => item.id)), [visibleSections])
-  const currentPage = visibleIds.includes(active) ? active : (visibleIds[0] || 'dashboard')
-  const [title, subtitle] = pageTitle[currentPage] || ['', '']
+  const visibleIds = useMemo(() => visibleSections.flatMap(s => s.items.map(i => i.id)), [visibleSections])
+  const current = visibleIds.includes(active) ? active : (visibleIds[0] || 'dashboard')
 
   useEffect(() => {
     if (!visibleIds.includes(active)) setActive(visibleIds[0] || 'dashboard')
   }, [active, visibleIds])
 
-  const content = useMemo(() => {
-    const canManageConfig = hasMinRole(apiMeta.role, 'senior_analyst')
-    const canManageServices = hasMinRole(apiMeta.role, 'admin')
+  const [title, subtitle] = pageTitle[current] || ['', '']
 
-    switch (currentPage) {
-      case 'services':
-        return <ServicesPage canEdit={canManageServices} />
-      case 'users':
-        return <UsersPage canEdit={canManageServices} />
-      case 'routing':
-        return <RoutingPage canEdit={canManageConfig} />
-      case 'stopfactors':
-        return <StopFactorsPage canEdit={canManageConfig} />
-      case 'pipeline':
-        return <PipelinePage canEdit={canManageConfig} />
-      case 'flowableops':
-        return <FlowableOpsPage canManage={canManageConfig} />
-      case 'tracker':
-        return <ProcessTrackerPage />
-      case 'requests':
-        return <RequestsPage />
-      case 'audit':
-        return <AuditPage />
-      case 'settings':
-        return <SettingsPage onSave={refreshApiMeta} />
-      default:
-        return <Dashboard />
+  const canManageConfig = hasMinRole(apiMeta.role, 'senior_analyst')
+  const canAdmin = hasMinRole(apiMeta.role, 'admin')
+
+  const content = useMemo(() => {
+    switch (current) {
+      case 'services': return <ServicesPage canEdit={canAdmin} />
+      case 'users': return <UsersPage canEdit={canAdmin} />
+      case 'routing': return <RoutingPage canEdit={canManageConfig} />
+      case 'stopfactors': return <StopFactorsPage canEdit={canManageConfig} />
+      case 'pipeline': return <PipelinePage canEdit={canManageConfig} />
+      case 'flowable': return <FlowableAdminPage canManage={canManageConfig} />
+      case 'tracker': return <ProcessTrackerPage />
+      case 'requests': return <RequestsPage />
+      case 'audit': return <AuditPage />
+      case 'settings': return <SettingsPage onSave={refresh} />
+      default: return <Dashboard />
     }
-  }, [apiMeta.role, currentPage])
+  }, [apiMeta.role, current])
 
   const handleLogout = () => {
     clearAuth()
-    refreshApiMeta()
+    refresh()
     setActive('dashboard')
   }
 
-  if (!isAuthenticated) {
-    return <LoginPage onLogin={refreshApiMeta} />
-  }
+  if (!isAuth) return <LoginPage onLogin={refresh} />
+
+  const initials = (apiMeta.username || 'U').slice(0, 2).toUpperCase()
 
   return (
     <div className="layout">
       <aside className="sidebar">
         <div className="logo">
-          <div className="logo-icon">CP</div>
+          <div className="logo-icon"><IconLayers /></div>
           <div>
             <div className="logo-text">Credit Platform</div>
-            <div className="logo-sub">Admin Console v2.1</div>
+            <div className="logo-sub">Admin Console v5.1</div>
           </div>
         </div>
 
-        {visibleSections.map((section) => (
+        {visibleSections.map(section => (
           <div className="nav-group" key={section.group}>
             <div className="nav-label">{section.group}</div>
-            {section.items.map((item) => (
-              <button key={item.id} className={`nav-btn ${currentPage === item.id ? 'active' : ''}`} onClick={() => setActive(item.id)}>
-                <span className="icon">{item.icon}</span> {item.label}
+            {section.items.map(item => (
+              <button
+                key={item.id}
+                className={`nav-btn${current === item.id ? ' active' : ''}`}
+                onClick={() => setActive(item.id)}
+              >
+                <item.Icon />
+                {item.label}
               </button>
             ))}
           </div>
         ))}
 
         <div className="sidebar-footer">
-          <div className="sidebar-meta">User</div>
-          <div className="mono sidebar-copy">{apiMeta.username || 'session'}</div>
-          <div className="sidebar-meta">API</div>
-          <div className="mono sidebar-copy">{apiMeta.base}</div>
-          <div className="sidebar-meta">Role</div>
-          <div className="mono sidebar-copy">{getRoleLabel(apiMeta.role)}</div>
-          <div className="sidebar-meta">Key</div>
-          <div className="mono sidebar-copy">{apiMeta.hasKey ? 'configured' : 'not set'}</div>
-          <button className="btn btn-ghost btn-sm sidebar-logout" onClick={handleLogout}>Log Out</button>
+          <div className="sidebar-user">
+            <div className="sidebar-avatar">{initials}</div>
+            <div>
+              <div className="sidebar-name">{apiMeta.username || 'session'}</div>
+              <div className="sidebar-role">{getRoleLabel(apiMeta.role)}</div>
+            </div>
+          </div>
+          <button className="btn btn-ghost btn-sm sidebar-logout" onClick={handleLogout}>Log out</button>
         </div>
       </aside>
 

@@ -12,6 +12,7 @@ services:
     volumes:
       - config_db_data:/var/lib/postgresql/data
     restart: unless-stopped
+    networks: [db]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U config"]
       interval: 5s
@@ -56,6 +57,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+    networks: [frontend, backend, db]
 
   # ── Processors ────────────────────────────────────────
   processors:
@@ -70,6 +72,13 @@ services:
       core-api:
         condition: service_healthy
     restart: unless-stopped
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -sf http://localhost:8105/health && curl -sf http://localhost:8106/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   # ── Orchestrators ─────────────────────────────────────
   orchestrators:
@@ -90,6 +99,13 @@ services:
       flowable-rest:
         condition: service_started
     restart: unless-stopped
+    networks: [backend, flowable]
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -sf http://localhost:8011/health && curl -sf http://localhost:8012/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   # ── Connectors ────────────────────────────────────────
   isoftpull:
@@ -98,6 +114,12 @@ services:
     ports:
       - "8101:8101"
     restart: unless-stopped
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8101/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
 
   creditsafe:
     build: ./connectors/creditsafe
@@ -105,6 +127,12 @@ services:
     ports:
       - "8102:8102"
     restart: unless-stopped
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8102/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
 
   plaid:
     build: ./connectors/plaid
@@ -112,6 +140,12 @@ services:
     ports:
       - "8103:8103"
     restart: unless-stopped
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8103/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
 
   # ── Flowable Engine ───────────────────────────────────
   flowable-db:
@@ -126,6 +160,12 @@ services:
     volumes:
       - flowable_db_data:/var/lib/postgresql/data
     restart: unless-stopped
+    networks: [flowable]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowable"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   flowable-rest:
     image: flowable/flowable-rest:6.8.0
@@ -142,6 +182,7 @@ services:
     depends_on:
       - flowable-db
     restart: unless-stopped
+    networks: [flowable]
 
   flowable-ui:
     image: flowable/flowable-ui:6.8.0
@@ -158,6 +199,7 @@ services:
     depends_on:
       - flowable-db
     restart: unless-stopped
+    networks: [flowable]
 
   # ── Admin UI ──────────────────────────────────────────
   admin-ui:
@@ -169,6 +211,7 @@ services:
       core-api:
         condition: service_healthy
     restart: unless-stopped
+    networks: [frontend]
 
   # ── Observability ─────────────────────────────────────
   prometheus:
@@ -181,6 +224,7 @@ services:
     depends_on:
       - core-api
     restart: unless-stopped
+    networks: [monitoring, backend]
 
   grafana:
     image: grafana/grafana:10.4.0
@@ -195,14 +239,28 @@ services:
     depends_on:
       - prometheus
     restart: unless-stopped
+    networks: [monitoring]
   crm:
     build: ./connectors/crm
     container_name: crm
     ports:
       - "8104:8104"
     restart: unless-stopped
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8104/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
 
 volumes:
   config_db_data:
   flowable_db_data:
   grafana_data:
+
+networks:
+  frontend:
+  backend:
+  db:
+  flowable:
+  monitoring:

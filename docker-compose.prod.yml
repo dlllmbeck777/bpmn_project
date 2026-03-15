@@ -1,0 +1,251 @@
+# Production override:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up -d --build
+# Removes internal port exposure, adds resource limits, logging, networks, and nginx.
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: nginx
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      core-api:
+        condition: service_healthy
+      admin-ui:
+        condition: service_healthy
+    restart: always
+    networks: [frontend]
+    deploy:
+      resources:
+        limits: { cpus: '0.5', memory: 128M }
+    logging: &logging
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  config-db:
+    ports: !reset []
+    environment:
+      POSTGRES_DB: ${CONFIG_DB_NAME}
+      POSTGRES_USER: ${CONFIG_DB_USER}
+      POSTGRES_PASSWORD: ${CONFIG_DB_PASSWORD}
+    networks: [db]
+    restart: always
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: '1.0', memory: 1G }
+        reservations: { memory: 256M }
+
+  core-api:
+    ports: !reset []
+    environment:
+      - DB_HOST=config-db
+      - DB_PORT=5432
+      - DB_NAME=${CONFIG_DB_NAME}
+      - DB_USER=${CONFIG_DB_USER}
+      - DB_PASSWORD=${CONFIG_DB_PASSWORD}
+      - DB_POOL_MIN=${DB_POOL_MIN:-4}
+      - DB_POOL_MAX=${DB_POOL_MAX:-20}
+      - GATEWAY_API_KEY=${GATEWAY_API_KEY}
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
+      - SENIOR_ANALYST_API_KEY=${SENIOR_ANALYST_API_KEY}
+      - ANALYST_API_KEY=${ANALYST_API_KEY}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY}
+      - ENCRYPT_KEY=${ENCRYPT_KEY}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - RATE_LIMIT_PER_MIN=${RATE_LIMIT_PER_MIN:-60}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SESSION_TTL_HOURS=${SESSION_TTL_HOURS:-8}
+    networks: [frontend, backend, db]
+    restart: always
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: '1.0', memory: 512M }
+        reservations: { cpus: '0.25', memory: 128M }
+
+  processors:
+    ports: !reset []
+    networks: [backend]
+    restart: always
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -sf http://localhost:8105/health && curl -sf http://localhost:8106/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits: { cpus: '0.5', memory: 256M }
+
+  orchestrators:
+    ports: !reset []
+    networks: [backend, flowable]
+    restart: always
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -sf http://localhost:8011/health && curl -sf http://localhost:8012/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits: { cpus: '0.5', memory: 256M }
+
+  isoftpull:
+    ports: !reset []
+    networks: [backend]
+    restart: always
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8101/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits: { cpus: '0.25', memory: 128M }
+
+  creditsafe:
+    ports: !reset []
+    networks: [backend]
+    restart: always
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8102/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits: { cpus: '0.25', memory: 128M }
+
+  plaid:
+    ports: !reset []
+    networks: [backend]
+    restart: always
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8103/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits: { cpus: '0.25', memory: 128M }
+
+  crm:
+    ports: !reset []
+    networks: [backend]
+    restart: always
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8104/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits: { cpus: '0.25', memory: 128M }
+
+  flowable-db:
+    ports: !reset []
+    environment:
+      POSTGRES_DB: flowable
+      POSTGRES_USER: flowable
+      POSTGRES_PASSWORD: ${FLOWABLE_DB_PASSWORD}
+    networks: [flowable]
+    restart: always
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: '0.5', memory: 512M }
+
+  flowable-rest:
+    ports: !reset []
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://flowable-db:5432/flowable
+      - SPRING_DATASOURCE_USERNAME=flowable
+      - SPRING_DATASOURCE_PASSWORD=${FLOWABLE_DB_PASSWORD}
+      - SPRING_DATASOURCE_DRIVER-CLASS-NAME=org.postgresql.Driver
+      - FLOWABLE_COMMON_APP_IDM-ADMIN_USER=admin
+      - FLOWABLE_COMMON_APP_IDM-ADMIN_PASSWORD=${FLOWABLE_PASSWORD}
+    networks: [flowable]
+    restart: always
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: '1.0', memory: 1G }
+        reservations: { memory: 512M }
+
+  flowable-ui:
+    profiles: [dev]
+
+  admin-ui:
+    build:
+      context: ./admin-ui
+      dockerfile: Dockerfile.prod
+    ports: !reset []
+    networks: [frontend]
+    restart: always
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits: { cpus: '0.25', memory: 128M }
+
+  prometheus:
+    ports: !reset []
+    networks: [monitoring, backend]
+    restart: always
+    logging: *logging
+
+  grafana:
+    ports: !reset []
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_SERVER_ROOT_URL=https://${DOMAIN}/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+    networks: [monitoring, frontend]
+    restart: always
+    logging: *logging
+
+  db-backup:
+    image: prodrigestivill/postgres-backup-local:15
+    container_name: db-backup
+    environment:
+      POSTGRES_HOST: config-db
+      POSTGRES_DB: ${CONFIG_DB_NAME}
+      POSTGRES_USER: ${CONFIG_DB_USER}
+      POSTGRES_PASSWORD: ${CONFIG_DB_PASSWORD}
+      POSTGRES_EXTRA_OPTS: "--clean --if-exists"
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: 14
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 6
+      HEALTHCHECK_PORT: 8080
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      config-db:
+        condition: service_healthy
+    networks: [db]
+    restart: always
+    logging: *logging
+
+networks:
+  frontend:
+  backend:
+  db:
+  flowable:
+  monitoring:

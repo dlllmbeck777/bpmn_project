@@ -1,53 +1,47 @@
 import { useEffect, useState } from 'react'
-
 import { get } from '../lib/api'
-
-function formatChanges(value) {
-  if (value == null) return '-'
-  if (typeof value === 'string') return value
-  try {
-    return JSON.stringify(value)
-  } catch {
-    return String(value)
-  }
-}
 
 export default function AuditPage() {
   const [items, setItems] = useState([])
+  const [expanded, setExpanded] = useState(null)
   const [error, setError] = useState('')
 
-  const load = () => get('/api/v1/audit-log').then((data) => setItems(data.items || [])).catch((err) => setError(err.message))
-
+  const load = () => get('/api/v1/audit-log').then(d => setItems(d.items || [])).catch(e => setError(e.message))
   useEffect(() => { load() }, [])
+
+  const entityColors = { service: 'badge-blue', routing_rule: 'badge-purple', stop_factor: 'badge-amber', pipeline_step: 'badge-teal', admin_user: 'badge-red', flowable_instance: 'badge-green', flowable_request: 'badge-green' }
 
   return (
     <>
-      {error && <div className="notice mb-16">{error}</div>}
-
+      {error && <div className="notice notice-error mb-16">{error}</div>}
       <div className="flex-between mb-16">
-        <div className="card-title" style={{ margin: 0 }}>Audit Log</div>
-        <button className="btn btn-ghost" onClick={load}>Refresh</button>
+        <div />
+        <button className="btn btn-ghost btn-sm" onClick={load}>Refresh</button>
       </div>
-
       <div className="card">
-        {items.length === 0 ? (
-          <p className="muted-copy">No audit entries yet.</p>
-        ) : (
-          <table className="tbl">
-            <thead><tr><th>Time</th><th>Entity</th><th>ID</th><th>Action</th><th>Changes</th></tr></thead>
-            <tbody>
-              {items.map((item) => (
-                <tr key={item.id}>
-                  <td className="mono table-small">{item.performed_at?.slice(0, 19)}</td>
-                  <td>{item.entity_type}</td>
-                  <td className="mono">{item.entity_id}</td>
-                  <td><span className={`badge ${item.action === 'created' ? 'badge-green' : item.action === 'deleted' ? 'badge-red' : 'badge-blue'}`}>{item.action}</span></td>
-                  <td className="mono table-ellipsis" title={formatChanges(item.changes)}>{formatChanges(item.changes)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <table className="tbl">
+          <thead><tr><th>Time</th><th>Entity</th><th>Entity ID</th><th>Action</th><th>Changes</th></tr></thead>
+          <tbody>
+            {items.map(a => (
+              <tr key={a.id}>
+                <td className="mono text-sm" style={{ color: 'var(--text-3)', whiteSpace: 'nowrap' }}>{(a.performed_at || '').slice(0, 19).replace('T', ' ')}</td>
+                <td><span className={`badge ${entityColors[a.entity_type] || 'badge-gray'}`}>{a.entity_type}</span></td>
+                <td className="mono">{a.entity_id}</td>
+                <td style={{ fontWeight: 500 }}>{a.action}</td>
+                <td>
+                  {a.changes && Object.keys(a.changes).length > 0 ? (
+                    <button className="btn btn-ghost btn-xs" onClick={() => setExpanded(expanded === a.id ? null : a.id)}>
+                      {expanded === a.id ? 'Hide' : 'Show'} ({Object.keys(a.changes).length} fields)
+                    </button>
+                  ) : <span className="text-muted text-sm">—</span>}
+                  {expanded === a.id && (
+                    <pre className="json-view mt-12" style={{ maxHeight: 150 }}>{JSON.stringify(a.changes, null, 2)}</pre>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </>
   )

@@ -126,6 +126,12 @@ MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_admin_users_role ON admin_users(role);
         CREATE INDEX IF NOT EXISTS idx_admin_users_enabled ON admin_users(enabled);
     """),
+    (7, """
+        ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS session_expires_at TIMESTAMPTZ;
+    """),
+    (8, """
+        ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS performed_by TEXT;
+    """),
 ]
 
 
@@ -145,11 +151,40 @@ def run_migrations(conn):
             conn.commit()
             print(f"[migrations] applied v{version}")
 
+    # P1-08: Migrate legacy XOR encryption (ENC:) to Fernet (ENC2:)
+    try:
+        cur.execute("SELECT request_id, iin_encrypted FROM requests WHERE iin_encrypted LIKE 'ENC:%%'")
+        legacy_rows = cur.fetchall()
+        if legacy_rows:
+            from shared import encrypt_field, decrypt_field
+            migrated = 0
+            for rid, iin_enc in legacy_rows:
+                try:
+                    plaintext = decrypt_field(iin_enc)
+                    new_enc = encrypt_field(plaintext)
+                    cur.execute("UPDATE requests SET iin_encrypted=%s WHERE request_id=%s", (new_enc, rid))
+                    migrated += 1
+                except Exception as exc:
+                    print(f"[migrations] WARNING: failed to migrate encryption for {rid}: {exc}")
+            conn.commit()
+            if migrated:
+                print(f"[migrations] migrated {migrated}/{len(legacy_rows)} ENC: → ENC2: values")
+    except Exception:
+        pass  # table may not exist yet on first run
+
     cur.close()
 
 
 def seed_defaults(conn):
     cur = conn.cursor()
+
+    # P0-10: Only run seed on first startup — don't overwrite operator changes
+    cur.execute("SELECT value_text FROM system_state WHERE key='seed_completed'")
+    row = cur.fetchone()
+    if row and row[0] == 'true':
+        cur.close()
+        print("[seed] already completed, skipping (operator data preserved)")
+        return
 
     svcs = [
         ("flowable-adapter", "Flowable Adapter", "orchestrator", "http://orchestrators:8011", "/health", "/orchestrate"),
@@ -198,7 +233,8 @@ def seed_defaults(conn):
             cur.execute("INSERT INTO pipeline_steps (pipeline_name,step_order,service_id) VALUES (%s,%s,%s)", s)
 
     cur.execute("INSERT INTO system_state (key, value_text) VALUES ('config_version', '1') ON CONFLICT (key) DO NOTHING")
+    cur.execute("INSERT INTO system_state (key, value_text) VALUES ('seed_completed', 'true') ON CONFLICT (key) DO UPDATE SET value_text='true'")
 
     conn.commit()
     cur.close()
-    print("[seed] defaults ensured")
+    print("[seed] defaults ensured (first run)")
