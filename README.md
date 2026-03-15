@@ -29,6 +29,11 @@ DOMAIN=admin.example.com bash scripts/deploy-prod.sh
 
 See `docs/DEPLOYMENT.md` for the full walkthrough.
 
+## Stress Test
+
+For request submission load testing, use `k6` with `scripts/stress-test-requests.js`.
+Detailed steps are in `docs/STRESS_TEST.md`.
+
 For production modeling workflows, `flowable-ui` is available behind nginx and `FLOWABLE_AUTO_DEPLOY_BPMN=false` is recommended so BPMN definitions edited in Flowable Modeler are not overwritten by file-based auto-deploy on restart.
 
 ## Services (14)

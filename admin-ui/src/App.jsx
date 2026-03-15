@@ -12,6 +12,7 @@ import RequestsPage from './pages/RequestsPage'
 import AuditPage from './pages/AuditPage'
 import LoginPage from './pages/LoginPage'
 import SettingsPage from './pages/SettingsPage'
+import { getTheme, setTheme } from './lib/theme'
 import { clearAuth, getApiBase, getApiKey, getCurrentUsername, getRoleLabel, getUserRole, hasUiSession } from './lib/api'
 import { IconGrid, IconSettings, IconRoute, IconAlert, IconList, IconUsers, IconClipboard, IconActivity, IconClock, IconGear, IconLayers } from './components/Icons'
 
@@ -67,6 +68,7 @@ export default function App() {
     base: getApiBase(), hasKey: !!getApiKey(), role: getUserRole(), username: getCurrentUsername(),
   }))
   const [active, setActive] = useState('dashboard')
+  const [theme, setThemeState] = useState(() => getTheme())
 
   const refresh = () => setApiMeta({
     base: getApiBase(), hasKey: !!getApiKey(), role: getUserRole(), username: getCurrentUsername(),
@@ -93,6 +95,14 @@ export default function App() {
   const canManageConfig = hasMinRole(apiMeta.role, 'senior_analyst')
   const canAdmin = hasMinRole(apiMeta.role, 'admin')
 
+  const handleThemeChange = (value) => {
+    const nextTheme = setTheme(value)
+    setThemeState(nextTheme)
+    return nextTheme
+  }
+
+  const handleThemeToggle = () => handleThemeChange(theme === 'dark' ? 'light' : 'dark')
+
   const content = useMemo(() => {
     switch (current) {
       case 'services': return <ServicesPage canEdit={canAdmin} />
@@ -104,10 +114,10 @@ export default function App() {
       case 'tracker': return <ProcessTrackerPage />
       case 'requests': return <RequestsPage />
       case 'audit': return <AuditPage />
-      case 'settings': return <SettingsPage onSave={refresh} />
+      case 'settings': return <SettingsPage onSave={refresh} theme={theme} onThemeChange={handleThemeChange} />
       default: return <Dashboard />
     }
-  }, [apiMeta.role, current])
+  }, [apiMeta.role, current, theme])
 
   const handleLogout = () => {
     clearAuth()
@@ -154,6 +164,9 @@ export default function App() {
               <div className="sidebar-role">{getRoleLabel(apiMeta.role)}</div>
             </div>
           </div>
+          <button className="btn btn-ghost btn-sm sidebar-theme" onClick={handleThemeToggle}>
+            Theme: {theme === 'dark' ? 'Dark' : 'Light'}
+          </button>
           <button className="btn btn-ghost btn-sm sidebar-logout" onClick={handleLogout}>Log out</button>
         </div>
       </aside>
