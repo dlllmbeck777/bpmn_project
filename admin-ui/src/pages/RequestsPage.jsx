@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { get } from '../lib/api'
 
 function StatusBadge({ status }) {
@@ -31,6 +31,7 @@ export default function RequestsPage() {
   const [detail, setDetail] = useState(null)
   const [tracker, setTracker] = useState([])
   const [error, setError] = useState('')
+  const detailRef = useRef(null)
 
   const load = (overrides = {}) => {
     const nextFilter = overrides.filter !== undefined ? overrides.filter : filter
@@ -52,6 +53,12 @@ export default function RequestsPage() {
       setTracker((t.items || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)))
     } catch (e) { setError(e.message) }
   }
+
+  useEffect(() => {
+    if (detail && detailRef.current) {
+      detailRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [detail])
 
   return (
     <>
@@ -111,7 +118,7 @@ export default function RequestsPage() {
       </div>
 
       {detail && (
-        <div className="card">
+        <div className="card" ref={detailRef}>
           <div className="flex-between mb-16">
             <div className="card-title" style={{ margin: 0 }}>{detail.request_id} - Timeline</div>
             <div className="flex-center gap-8">
