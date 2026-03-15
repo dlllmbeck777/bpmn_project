@@ -62,7 +62,14 @@ export default function RequestsPage() {
                 <td><ModeBadge mode={r.orchestration_mode} /></td>
                 <td><StatusBadge status={r.status} /></td>
                 <td className="mono text-sm" style={{ color: 'var(--text-3)' }}>{(r.created_at || '').slice(11, 19)}</td>
-                <td style={{ color: 'var(--text-3)' }}>›</td>
+                <td>
+                  <button
+                    className="btn btn-ghost btn-xs"
+                    onClick={(e) => { e.stopPropagation(); openDetail(r.request_id) }}
+                  >
+                    Open
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -72,7 +79,7 @@ export default function RequestsPage() {
       {detail && (
         <div className="card">
           <div className="flex-between mb-16">
-            <div className="card-title" style={{ margin: 0 }}>{detail.request_id} — Timeline</div>
+            <div className="card-title" style={{ margin: 0 }}>{detail.request_id} - Timeline</div>
             <div className="flex-center gap-8">
               <StatusBadge status={detail.status} />
               <button className="btn btn-ghost btn-sm" onClick={() => setDetail(null)}>Close</button>

@@ -15,7 +15,7 @@ const empty = {
 
 const CUSTOM_PRESET = {
   name: 'Auto -> Custom default',
-  priority: 100,
+  priority: 0,
   condition_field: 'orchestration_mode',
   condition_op: 'eq',
   condition_value: 'auto',
@@ -26,7 +26,7 @@ const CUSTOM_PRESET = {
 
 const CANARY_PRESET = {
   name: 'Auto -> Flowable canary 5%',
-  priority: 5,
+  priority: 4,
   condition_field: 'orchestration_mode',
   condition_op: 'eq',
   condition_value: 'auto',
@@ -101,14 +101,44 @@ export default function RoutingPage({ canEdit }) {
     }
   }
 
-  const upsertPreset = async (preset, successKey) => {
-    setBusyPreset(successKey)
+  const routeAllAutoToCustom = async () => {
+    setBusyPreset('custom')
     setError('')
     try {
-      const existing = items.find((rule) => rule.name === preset.name)
-      const payload = buildPayload(existing ? { ...existing, ...preset, meta: { ...normalizeMeta(existing.meta), ...normalizeMeta(preset.meta) } } : preset)
-      if (existing) await put(`/api/v1/routing-rules/${existing.id}`, payload)
-      else await post('/api/v1/routing-rules', payload)
+      const existingCustom = items.find((rule) => rule.name === CUSTOM_PRESET.name)
+      const customPayload = buildPayload(existingCustom ? { ...existingCustom, ...CUSTOM_PRESET, enabled: true } : CUSTOM_PRESET)
+      if (existingCustom) await put(`/api/v1/routing-rules/${existingCustom.id}`, customPayload)
+      else await post('/api/v1/routing-rules', customPayload)
+
+      if (canaryRule) {
+        await put(`/api/v1/routing-rules/${canaryRule.id}`, buildPayload({ ...canaryRule, enabled: false }))
+      }
+      await load()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusyPreset('')
+    }
+  }
+
+  const enableCanary = async () => {
+    setBusyPreset('canary')
+    setError('')
+    try {
+      const existingCustom = items.find((rule) => rule.name === CUSTOM_PRESET.name)
+      const customFallback = buildPayload(existingCustom
+        ? { ...existingCustom, ...CUSTOM_PRESET, priority: 6, enabled: true }
+        : { ...CUSTOM_PRESET, priority: 6 })
+      if (existingCustom) await put(`/api/v1/routing-rules/${existingCustom.id}`, customFallback)
+      else await post('/api/v1/routing-rules', customFallback)
+
+      const existingCanary = items.find((rule) => rule.name === CANARY_PRESET.name)
+      const canaryPayload = buildPayload(existingCanary
+        ? { ...existingCanary, ...CANARY_PRESET, enabled: true }
+        : CANARY_PRESET)
+      if (existingCanary) await put(`/api/v1/routing-rules/${existingCanary.id}`, canaryPayload)
+      else await post('/api/v1/routing-rules', canaryPayload)
+
       await load()
     } catch (e) {
       setError(e.message)
@@ -139,8 +169,8 @@ export default function RoutingPage({ canEdit }) {
         <div className="card-title">Traffic presets</div>
         <div className="muted mb-12">These presets set up the two testing scenarios you described without editing raw JSON by hand.</div>
         <div className="form-actions">
-          {canEdit && <button className="btn btn-primary btn-sm" disabled={busyPreset === 'custom'} onClick={() => upsertPreset(CUSTOM_PRESET, 'custom')}>Route all auto traffic to custom</button>}
-          {canEdit && <button className="btn btn-ghost btn-sm" disabled={busyPreset === 'canary'} onClick={() => upsertPreset(CANARY_PRESET, 'canary')}>Enable 5% Flowable canary</button>}
+          {canEdit && <button className="btn btn-primary btn-sm" disabled={busyPreset === 'custom'} onClick={routeAllAutoToCustom}>Route all auto traffic to custom</button>}
+          {canEdit && <button className="btn btn-ghost btn-sm" disabled={busyPreset === 'canary'} onClick={enableCanary}>Enable 5% Flowable canary</button>}
           {canEdit && <button className="btn btn-ghost btn-sm" disabled={!canaryRule || busyPreset === 'canary-off'} onClick={disableCanary}>Disable canary rule</button>}
         </div>
       </div>
