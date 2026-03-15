@@ -39,6 +39,8 @@ Russian operational and project documentation:
 - `docs/CONFLUENCE_READY_RU.md`
 - `docs/ARCHITECTURE_EXECUTIVE_RU.md`
 - `docs/ARCHITECTURE_TECHNICAL_RU.md`
+- `docs/ARCHITECTURE_C4_RU.md`
+- `docs/CONFLUENCE_PASTE_READY_NO_MERMAID_RU.md`
 - `docs/INTEGRATION_SPEC_MOBILE_RU.md`
 - `docs/INTEGRATION_SPEC_SNP_RU.md`
 
