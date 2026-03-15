@@ -109,3 +109,10 @@ Internal services are not exposed in the production override.
 - `FLOWABLE_AUTO_DEPLOY_BPMN=false` means Flowable UI and the Flowable database become the source of truth for BPMN definitions.
 - If you edit and deploy a model from Flowable UI, keep the same process definition key expected by the adapter unless you intentionally update it in configuration.
 - `admin-ui` uses the production image defined in `admin-ui/Dockerfile.prod`.
+- Use the same `FLOWABLE_DB_PASSWORD` value consistently in both local/base and production Compose runs. If Flowable was first started with a different DB password, recreate only the Flowable stack with:
+
+```bash
+bash scripts/reset-flowable.sh
+```
+
+That command removes only Flowable DB data and brings back `flowable-db`, `flowable-rest`, `flowable-ui`, and `nginx`.

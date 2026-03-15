@@ -155,7 +155,7 @@ services:
     environment:
       POSTGRES_DB: flowable
       POSTGRES_USER: flowable
-      POSTGRES_PASSWORD: flowable
+      POSTGRES_PASSWORD: ${FLOWABLE_DB_PASSWORD:-flowable}
     ports:
       - "5434:5432"
     volumes:
@@ -176,7 +176,7 @@ services:
     environment:
       - SPRING_DATASOURCE_URL=jdbc:postgresql://flowable-db:5432/flowable
       - SPRING_DATASOURCE_USERNAME=flowable
-      - SPRING_DATASOURCE_PASSWORD=flowable
+      - SPRING_DATASOURCE_PASSWORD=${FLOWABLE_DB_PASSWORD:-flowable}
       - SPRING_DATASOURCE_DRIVER-CLASS-NAME=org.postgresql.Driver
       - FLOWABLE_COMMON_APP_IDM-ADMIN_USER=admin
       - FLOWABLE_COMMON_APP_IDM-ADMIN_PASSWORD=${FLOWABLE_PASSWORD:-test}
@@ -193,7 +193,7 @@ services:
     environment:
       - SPRING_DATASOURCE_URL=jdbc:postgresql://flowable-db:5432/flowable
       - SPRING_DATASOURCE_USERNAME=flowable
-      - SPRING_DATASOURCE_PASSWORD=flowable
+      - SPRING_DATASOURCE_PASSWORD=${FLOWABLE_DB_PASSWORD:-flowable}
       - SPRING_DATASOURCE_DRIVER-CLASS-NAME=org.postgresql.Driver
       - FLOWABLE_COMMON_APP_IDM-ADMIN_USER=admin
       - FLOWABLE_COMMON_APP_IDM-ADMIN_PASSWORD=${FLOWABLE_PASSWORD:-test}
