@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -105,6 +106,23 @@ class PipelineSkipPolicyTests(unittest.TestCase):
         policy = flowable_adapter._resolve_skip_policy(step, "flowable")
         self.assertTrue(policy["skip"])
         self.assertEqual(policy["reason"], "pipeline step disabled")
+
+    def test_flowable_skip_flags_mark_disabled_service_when_connector_url_missing(self):
+        original_acfg = flowable_adapter._acfg
+        try:
+            async def fake_acfg(path, ttl=30):
+                if path == "/api/v1/pipeline-steps?pipeline_name=default":
+                    return {"items": [{"service_id": "isoftpull", "enabled": True, "meta": {}}]}
+                return {}
+
+            flowable_adapter._acfg = fake_acfg
+            steps, flags, reasons, policies = asyncio.run(flowable_adapter._pipeline_skip_flags({}))
+            self.assertEqual(len(steps), 1)
+            self.assertTrue(flags["isoftpull"])
+            self.assertEqual(reasons["isoftpull"], "service disabled or connector url unavailable")
+            self.assertEqual(policies["isoftpull"]["source"], "service")
+        finally:
+            flowable_adapter._acfg = original_acfg
 
 
 if __name__ == '__main__':

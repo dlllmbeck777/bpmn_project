@@ -144,6 +144,19 @@ async def orchestrate(body: RequestIn, request: Request):
         endpoint_path = service.get("endpoint_path", "/api/process")
         timeout = service.get("timeout_ms", 10000) / 1000
         retries = service.get("retry_count", 2)
+        if not service.get("enabled", True):
+            results[service_id] = {"status": "SKIPPED", "reason": "service disabled"}
+            await _track(
+                body.request_id,
+                "connector",
+                "STATE",
+                "Connector skipped because service is disabled",
+                cid=cid,
+                service_id=service_id,
+                status="SKIPPED",
+                payload={"pipeline_step": step, "service": service},
+            )
+            continue
         if not base_url:
             results[service_id] = {"status": "NOT_CONFIGURED"}
             await _track(

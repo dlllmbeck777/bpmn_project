@@ -195,7 +195,7 @@ async def _parsed_report(request_id: str, steps: Dict[str, Any], cid: str):
         return {"status": "PARSER_UNAVAILABLE", "error": str(exc)}
 
 
-async def _pipeline_skip_flags():
+async def _pipeline_skip_flags(connector_urls: Dict[str, str]):
     steps = (await _acfg("/api/v1/pipeline-steps?pipeline_name=default")).get("items", [])
     step_map = {step.get("service_id"): step for step in steps if step.get("service_id")}
     flags = {}
@@ -204,6 +204,12 @@ async def _pipeline_skip_flags():
     for step in FLOWABLE_STEPS:
         service_id = step["service_id"]
         policy = _resolve_skip_policy(step_map.get(service_id), "flowable")
+        if not policy["skip"] and not connector_urls.get(service_id):
+            policy = {
+                "skip": True,
+                "reason": "service disabled or connector url unavailable",
+                "source": "service",
+            }
         flags[service_id] = policy["skip"]
         reasons[service_id] = policy["reason"]
         policies[service_id] = policy
@@ -399,7 +405,7 @@ async def orchestrate(body: RequestIn, request: Request):
     meta = flowable_cfg.get("meta", {})
     process_key = meta.get("process_key", "creditServiceChainOrchestration") if isinstance(meta, dict) else "creditServiceChainOrchestration"
     connector_urls = await _acfg("/api/v1/connector-urls") or {}
-    pipeline_steps, skip_flags, skip_reasons, skip_policies = await _pipeline_skip_flags()
+    pipeline_steps, skip_flags, skip_reasons, skip_policies = await _pipeline_skip_flags(connector_urls)
 
     variables = [
         {"name": "request_id", "value": body.request_id},
