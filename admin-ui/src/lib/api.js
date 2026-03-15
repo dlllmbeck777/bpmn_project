@@ -1,5 +1,11 @@
-const DEFAULT_API_BASE =
-  import.meta.env?.VITE_CONFIG_API_URL || `${window.location.protocol}//${window.location.hostname}:8000`
+const DEFAULT_API_BASE = (() => {
+  if (import.meta.env?.VITE_CONFIG_API_URL) return import.meta.env.VITE_CONFIG_API_URL
+  const port = window.location.port || ''
+  const useSameOrigin = !port || port === '80' || port === '443'
+  return useSameOrigin
+    ? window.location.origin
+    : `${window.location.protocol}//${window.location.hostname}:8000`
+})()
 
 const API_BASE_STORAGE_KEY = 'credit-platform.api-base'
 const API_KEY_STORAGE_KEY = 'credit-platform.api-key'
