@@ -17,10 +17,12 @@ services:
         condition: service_healthy
       admin-ui:
         condition: service_healthy
+      flowable-rest:
+        condition: service_started
       flowable-ui:
         condition: service_started
     restart: always
-    networks: [frontend]
+    networks: [frontend, flowable]
     deploy:
       resources:
         limits: { cpus: '0.5', memory: 128M }
