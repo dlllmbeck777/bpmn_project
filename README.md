@@ -20,6 +20,9 @@ This repository also includes production deployment assets:
 - `admin-ui/Dockerfile.prod`
 - `scripts/generate-env.sh`
 - `docs/DEPLOYMENT.md`
+- `docs/OPERATIONS_RUNBOOK_RU.md`
+- `docs/TECH_SPECIFICATION_RU.md`
+- `docs/CONFLUENCE_READY_RU.md`
 
 Typical production flow:
 
@@ -28,6 +31,12 @@ DOMAIN=admin.example.com bash scripts/deploy-prod.sh
 ```
 
 See `docs/DEPLOYMENT.md` for the full walkthrough.
+
+Russian operational and project documentation:
+
+- `docs/OPERATIONS_RUNBOOK_RU.md`
+- `docs/TECH_SPECIFICATION_RU.md`
+- `docs/CONFLUENCE_READY_RU.md`
 
 ## Stress Test
 
