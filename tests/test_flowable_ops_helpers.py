@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -159,6 +160,15 @@ class FlowableOpsHelperTests(unittest.TestCase):
     def test_rule_canary_uses_fallback_identity_when_sticky_field_missing(self):
         rule = {"meta": {"sample_percent": 100, "sticky_field": "payload.customer_segment"}}
         self.assertTrue(services._rule_canary_matches(rule, {"request_id": "REQ-1"}))
+
+    def test_build_requests_list_query_supports_status_and_time_filters(self):
+        created_from = datetime(2026, 3, 16, 8, 0, tzinfo=timezone.utc)
+        created_to = datetime(2026, 3, 16, 10, 0, tzinfo=timezone.utc)
+        sql, params = services.build_requests_list_query(50, status="FAILED", created_from=created_from, created_to=created_to)
+        self.assertIn("status=%s", sql)
+        self.assertIn("created_at >= %s", sql)
+        self.assertIn("created_at <= %s", sql)
+        self.assertEqual(params, ["FAILED", created_from, created_to, 50])
 
 
 if __name__ == '__main__':

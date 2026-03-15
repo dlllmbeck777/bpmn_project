@@ -1,5 +1,6 @@
 import asyncio
 import base64
+from datetime import datetime
 import hashlib
 import hmac
 import json
@@ -368,6 +369,23 @@ def revoke_admin_user_session(username: str) -> Dict[str, Any]:
         (normalized_username,),
     )
     return _safe_user_view(_admin_user_by_username(normalized_username))
+
+
+def build_requests_list_query(limit: int, status: Optional[str] = None, created_from: Optional[datetime] = None, created_to: Optional[datetime] = None):
+    sql = "SELECT * FROM requests WHERE TRUE"
+    params: List[Any] = []
+    if status:
+        sql += " AND status=%s"
+        params.append(status)
+    if created_from:
+        sql += " AND created_at >= %s"
+        params.append(created_from)
+    if created_to:
+        sql += " AND created_at <= %s"
+        params.append(created_to)
+    sql += " ORDER BY created_at DESC LIMIT %s"
+    params.append(limit)
+    return sql, params
 
 
 def _read_rule_value(data: Dict[str, Any], field_path: str):

@@ -2,6 +2,7 @@ import json
 import os
 import time
 import threading
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import psycopg2
@@ -9,7 +10,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from coreapi.models import AdminUserCreateIn, AdminUserUpdateIn, FlowableActionIn, HealthResponse, ListResponse, LoginIn, LoginResponse, PipelineStepIn, RequestIn, RequestResponse, RuleIn, ServiceIn, ServiceOut, StatusResponse, StopFactorIn, TrackerEventIn
-from coreapi.services import ROLE_ADMIN, ROLE_ANALYST, ROLE_SENIOR_ANALYST, apply_rate_limit, authenticate_ui_login, authorize_request_view, create_admin_user, delete_admin_user, ensure_default_ui_users, finalize_request, get_connector_urls, get_flowable_instance_detail, list_admin_users, list_flowable_instances, reconcile_flowable_request, require_gateway_auth, require_internal_auth, require_internal_or_min_role, require_min_role, resolve_mode, revoke_admin_user_session, retry_flowable_failed_jobs, run_stop_factor_check, set_flowable_instance_state, update_admin_user
+from coreapi.services import ROLE_ADMIN, ROLE_ANALYST, ROLE_SENIOR_ANALYST, apply_rate_limit, authenticate_ui_login, authorize_request_view, build_requests_list_query, create_admin_user, delete_admin_user, ensure_default_ui_users, finalize_request, get_connector_urls, get_flowable_instance_detail, list_admin_users, list_flowable_instances, reconcile_flowable_request, require_gateway_auth, require_internal_auth, require_internal_or_min_role, require_min_role, resolve_mode, revoke_admin_user_session, retry_flowable_failed_jobs, run_stop_factor_check, set_flowable_instance_state, update_admin_user
 from coreapi.storage import audit, execute, execute_returning, query, to_json_ready, track_request_event
 from migrations import run_migrations, seed_defaults
 from shared import all_breaker_states, close_pool, config_cache, encrypt_field, get_correlation_id, get_conn, get_logger, init_pool, mask_field, metrics, new_correlation_id, put_conn, resilient_post
@@ -542,10 +543,19 @@ def connector_urls():
 
 
 @app.get("/api/v1/requests", response_model=ListResponse, tags=["Requests"])
-def list_requests(request: Request, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""), limit: int = Query(50, le=200)):
+def list_requests(
+    request: Request,
+    x_api_key: str = Header(default=""),
+    x_user_role: str = Header(default=""),
+    limit: int = Query(50, le=200),
+    status: Optional[str] = Query(None),
+    created_from: Optional[datetime] = Query(None),
+    created_to: Optional[datetime] = Query(None),
+):
     authorize_request_view(x_api_key, x_user_role)
     apply_rate_limit(request.client.host if request.client else "unknown")
-    rows = query("SELECT * FROM requests ORDER BY created_at DESC LIMIT %s", (limit,))
+    sql, params = build_requests_list_query(limit, status=status, created_from=created_from, created_to=created_to)
+    rows = query(sql, params)
     items = []
     for row in rows:
         fixed = to_json_ready(row)

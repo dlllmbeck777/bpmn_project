@@ -17,15 +17,33 @@ function dotColor(status) {
   return ''
 }
 
+function toUtcIso(value) {
+  if (!value) return ''
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString()
+}
+
 export default function RequestsPage() {
   const [items, setItems] = useState([])
   const [filter, setFilter] = useState('')
+  const [createdFrom, setCreatedFrom] = useState('')
+  const [createdTo, setCreatedTo] = useState('')
   const [detail, setDetail] = useState(null)
   const [tracker, setTracker] = useState([])
   const [error, setError] = useState('')
 
-  const load = () => get('/api/v1/requests').then(d => setItems(d.items || [])).catch(e => setError(e.message))
-  useEffect(() => { load() }, [])
+  const load = (overrides = {}) => {
+    const nextFilter = overrides.filter !== undefined ? overrides.filter : filter
+    const nextFrom = overrides.createdFrom !== undefined ? overrides.createdFrom : createdFrom
+    const nextTo = overrides.createdTo !== undefined ? overrides.createdTo : createdTo
+    const params = new URLSearchParams()
+    if (nextFilter) params.set('status', nextFilter)
+    if (nextFrom) params.set('created_from', toUtcIso(nextFrom))
+    if (nextTo) params.set('created_to', toUtcIso(nextTo))
+    const query = params.toString()
+    return get(`/api/v1/requests${query ? `?${query}` : ''}`).then(d => setItems(d.items || [])).catch(e => setError(e.message))
+  }
+  useEffect(() => { load() }, [filter])
 
   const openDetail = async (rid) => {
     try {
@@ -34,8 +52,6 @@ export default function RequestsPage() {
       setTracker((t.items || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)))
     } catch (e) { setError(e.message) }
   }
-
-  const filtered = filter ? items.filter(i => i.status === filter) : items
 
   return (
     <>
@@ -50,11 +66,29 @@ export default function RequestsPage() {
         <button className="btn btn-ghost btn-sm" onClick={load}>Refresh</button>
       </div>
 
+      <div className="card mb-16">
+        <div className="card-title">Date and time filters</div>
+        <div className="form-inline">
+          <div className="form-row">
+            <label>From</label>
+            <input type="datetime-local" value={createdFrom} onChange={e => setCreatedFrom(e.target.value)} />
+          </div>
+          <div className="form-row">
+            <label>To</label>
+            <input type="datetime-local" value={createdTo} onChange={e => setCreatedTo(e.target.value)} />
+          </div>
+        </div>
+        <div className="form-actions">
+          <button className="btn btn-primary btn-sm" onClick={() => load()}>Apply</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => { setCreatedFrom(''); setCreatedTo(''); load({ createdFrom: '', createdTo: '' }) }}>Clear</button>
+        </div>
+      </div>
+
       <div className="card mb-20">
         <table className="tbl">
           <thead><tr><th>Request ID</th><th>Customer</th><th>Product</th><th>Mode</th><th>Status</th><th>Time</th><th></th></tr></thead>
           <tbody>
-            {filtered.map(r => (
+            {items.map(r => (
               <tr key={r.request_id} data-clickable onClick={() => openDetail(r.request_id)} style={{ cursor: 'pointer' }}>
                 <td className="mono" style={{ fontWeight: 600 }}>{r.request_id}</td>
                 <td className="mono">{r.customer_id}</td>
