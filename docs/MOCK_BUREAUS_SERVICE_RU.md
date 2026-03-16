@@ -21,7 +21,7 @@
 ## Как запустить локально
 
 ```bash
-docker compose --profile mock up -d --build mock-bureaus
+docker compose up -d --build
 ```
 
 Сервис поднимется на:
@@ -30,19 +30,33 @@ docker compose --profile mock up -d --build mock-bureaus
 http://localhost:8110
 ```
 
+При обычном `docker compose up -d --build` сервис стартует вместе с проектом. Отдельный запуск нужен только если ты поднимаешь один сервис изолированно.
+
 ## Как запустить на сервере
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod --profile mock up -d --build mock-bureaus
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up -d --build mock-bureaus
 ```
 
 ## Как подключить его к платформе
 
-В admin UI открой `Services` и замени `base_url`:
+В admin UI открой `Services` и нажми:
+
+```text
+Use demo mock connectors
+```
+
+Это автоматически переключит:
 
 - `isoftpull` -> `http://mock-bureaus:8110`
 - `creditsafe` -> `http://mock-bureaus:8110`
 - `plaid` -> `http://mock-bureaus:8110`
+
+Чтобы вернуться назад, нажми:
+
+```text
+Restore live connector URLs
+```
 
 Важно:
 
@@ -237,8 +251,8 @@ curl -X PUT http://localhost:8110/api/v1/mock/config/plaid \
 
 ## Рекомендуемый порядок тестирования
 
-1. Запустить `mock-bureaus`.
-2. Переключить `base_url` у `isoftpull`, `creditsafe`, `plaid` на `http://mock-bureaus:8110`.
+1. Поднять проект.
+2. В `Services` нажать `Use demo mock connectors`.
 3. Поставить нужные сценарии через API mock-сервиса.
 4. Отправить заявку в платформу.
 5. Проверить `Requests`, tracker, итоговый decision в Flowable или `custom`.

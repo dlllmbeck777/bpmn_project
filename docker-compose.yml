@@ -153,7 +153,6 @@ services:
   mock-bureaus:
     build: ./connectors/mock-bureaus
     container_name: mock-bureaus
-    profiles: ["mock"]
     ports:
       - "8110:8110"
     restart: unless-stopped

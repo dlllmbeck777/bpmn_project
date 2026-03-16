@@ -3,6 +3,13 @@ import { get, post, put, del } from '../lib/api'
 import Modal from '../components/Modal'
 
 const typeColors = { orchestrator: 'badge-blue', connector: 'badge-purple', processor: 'badge-amber', engine: 'badge-teal' }
+const DEMO_CONNECTOR_IDS = ['isoftpull', 'creditsafe', 'plaid']
+const DEMO_CONNECTOR_BASE_URL = 'http://mock-bureaus:8110'
+const DEFAULT_LIVE_BASE_URLS = {
+  isoftpull: 'http://isoftpull:8101',
+  creditsafe: 'http://creditsafe:8102',
+  plaid: 'http://plaid:8103',
+}
 
 const empty = { id: '', name: '', type: 'connector', base_url: '', health_path: '/health', enabled: true, timeout_ms: 10000, retry_count: 2, endpoint_path: '/api/process', meta: {} }
 
@@ -10,9 +17,14 @@ export default function ServicesPage({ canEdit }) {
   const [items, setItems] = useState([])
   const [editing, setEditing] = useState(null)
   const [error, setError] = useState('')
+  const [modeAction, setModeAction] = useState('')
 
   const load = () => get('/api/v1/services').then((d) => setItems(d.items || [])).catch((e) => setError(e.message))
   useEffect(() => { load() }, [])
+
+  const demoConnectors = items.filter((service) => DEMO_CONNECTOR_IDS.includes(service.id))
+  const demoModeEnabled = demoConnectors.length > 0 && demoConnectors.every((service) => service.base_url === DEMO_CONNECTOR_BASE_URL)
+  const liveUrlsStored = demoConnectors.some((service) => service?.meta?.live_base_url)
 
   const save = async () => {
     try {
@@ -47,9 +59,59 @@ export default function ServicesPage({ canEdit }) {
     }
   }
 
+  const switchConnectorMode = async (targetMode) => {
+    if (!canEdit) return
+    setError('')
+    setModeAction(targetMode)
+    try {
+      for (const serviceId of DEMO_CONNECTOR_IDS) {
+        const service = items.find((entry) => entry.id === serviceId)
+        if (!service) continue
+        const nextMeta = { ...(service.meta || {}) }
+        let nextBaseUrl = service.base_url
+        if (targetMode === 'demo') {
+          if (service.base_url && service.base_url !== DEMO_CONNECTOR_BASE_URL) {
+            nextMeta.live_base_url = service.base_url
+          }
+          nextMeta.demo_mode = true
+          nextMeta.demo_base_url = DEMO_CONNECTOR_BASE_URL
+          nextBaseUrl = DEMO_CONNECTOR_BASE_URL
+        } else {
+          nextBaseUrl = nextMeta.live_base_url || DEFAULT_LIVE_BASE_URLS[serviceId] || service.base_url
+          nextMeta.demo_mode = false
+        }
+        await put(`/api/v1/services/${service.id}`, { ...service, base_url: nextBaseUrl, meta: nextMeta })
+      }
+      await load()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setModeAction('')
+    }
+  }
+
   return (
     <>
       {error && <div className="notice notice-error mb-16">{error}</div>}
+
+      <div className="card mb-16">
+        <div className="card-title">Connector demo mode</div>
+        <div className="flex-between" style={{ gap: 16, alignItems: 'flex-start' }}>
+          <div className="muted" style={{ maxWidth: 720 }}>
+            Use the built-in mock connector service for leadership demos, QA, and Flowable walkthroughs without paid bureau calls.
+            The switch below repoints only <span className="mono">isoftpull</span>, <span className="mono">creditsafe</span>, and <span className="mono">plaid</span>.
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {canEdit && <button className="btn btn-ghost btn-sm" onClick={() => switchConnectorMode('live')} disabled={modeAction !== ''}>{modeAction === 'live' ? 'Restoring...' : 'Restore live connector URLs'}</button>}
+            {canEdit && <button className="btn btn-primary btn-sm" onClick={() => switchConnectorMode('demo')} disabled={modeAction !== ''}>{modeAction === 'demo' ? 'Switching...' : 'Use demo mock connectors'}</button>}
+          </div>
+        </div>
+        <div className="detail-panel mt-16">
+          <div className="kv-row"><span className="kv-key">Current mode</span><span className="kv-val">{demoModeEnabled ? 'Demo mock mode' : 'Live connector mode'}</span></div>
+          <div className="kv-row"><span className="kv-key">Mock service base URL</span><span className="kv-val mono">{DEMO_CONNECTOR_BASE_URL}</span></div>
+          <div className="kv-row"><span className="kv-key">Live URLs stored</span><span className="kv-val">{liveUrlsStored ? 'Yes' : 'No, fallback defaults will be used on restore'}</span></div>
+        </div>
+      </div>
 
       <div className="flex-between mb-16">
         <div className="muted">You can change URLs, retries, timeouts, and quickly disable connectors or engines from here.</div>
