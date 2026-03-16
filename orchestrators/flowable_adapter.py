@@ -264,6 +264,7 @@ async def _emit_flowable_trace(body: "RequestIn", process_variables: Dict[str, A
                 "customer_id": body.customer_id,
                 "iin": body.iin,
                 "product_type": body.product_type,
+                "applicant": body.applicant or (body.payload.get("applicant", {}) if isinstance(body.payload, dict) else {}),
             }
         response_payload = _parse_jsonish(process_variables.get(step["raw_key"], {}))
         if status == "SKIPPED":
@@ -387,6 +388,7 @@ class RequestIn(BaseModel):
     iin: str
     product_type: str
     orchestration_mode: str = "flowable"
+    applicant: Dict[str, Any] = Field(default_factory=dict)
     payload: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -414,6 +416,8 @@ async def orchestrate(body: RequestIn, request: Request):
         {"name": "product_type", "value": body.product_type},
         {"name": "route_mode", "value": "FLOWABLE"},
     ]
+    applicant_payload = body.applicant or (body.payload.get("applicant", {}) if isinstance(body.payload, dict) else {})
+    variables.append({"name": "applicant_json", "value": json.dumps(applicant_payload or {})})
     for service_id, url in connector_urls.items():
         variables.append({"name": f"{service_id}_url", "value": url})
     for service_id, skip in skip_flags.items():

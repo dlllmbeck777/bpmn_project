@@ -99,6 +99,7 @@ class RequestIn(BaseModel):
     iin: str
     product_type: str
     orchestration_mode: str = "custom"
+    applicant: Dict[str, Any] = Field(default_factory=dict)
     payload: Dict[str, Any] = Field(default_factory=dict)
 
 

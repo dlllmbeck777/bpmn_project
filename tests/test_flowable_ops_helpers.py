@@ -33,13 +33,24 @@ class _DummyHTTPException(Exception):
         self.detail = detail
 
 
+class _DummyFastAPI:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def get(self, *args, **kwargs):
+        return lambda func: func
+
+    def post(self, *args, **kwargs):
+        return lambda func: func
+
+
 sys.modules.setdefault(
     'httpx',
     SimpleNamespace(
         AsyncClient=_DummyAsyncClient,
     ),
 )
-sys.modules.setdefault('fastapi', SimpleNamespace(HTTPException=_DummyHTTPException))
+sys.modules.setdefault('fastapi', SimpleNamespace(HTTPException=_DummyHTTPException, FastAPI=_DummyFastAPI))
 
 from coreapi import services  # noqa: E402
 

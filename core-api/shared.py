@@ -105,7 +105,17 @@ def mask_field(value: str) -> str:
     return "***" + plain[-4:]
 
 
-SENSITIVE_FIELDS = {"ssn", "iin", "dateOfBirth"}
+SENSITIVE_FIELDS = {
+    "ssn",
+    "iin",
+    "dateOfBirth",
+    "firstName",
+    "lastName",
+    "address",
+    "zipCode",
+    "email",
+    "phone",
+}
 
 
 def encrypt_sensitive(data: dict) -> dict:

@@ -12,7 +12,7 @@ import httpx
 from fastapi import HTTPException
 
 from coreapi.storage import audit, execute, query, to_json_ready, track_request_event, tracker_payload
-from shared import check_rate_limit, config_cache, get_correlation_id, get_logger, metrics, resilient_post
+from shared import check_rate_limit, config_cache, decrypt_field, decrypt_sensitive, encrypt_field, encrypt_sensitive, get_correlation_id, get_logger, mask_field, metrics, resilient_post
 
 API_KEY = os.getenv("GATEWAY_API_KEY", "")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", API_KEY)
@@ -31,6 +31,22 @@ RATE_LIMIT = int(os.getenv("RATE_LIMIT_PER_MIN", "120"))
 SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "8"))
 SERVICE_NAME = "core-api"
 log = get_logger(SERVICE_NAME)
+DEFAULT_PRODUCT_TYPE = (os.getenv("DEFAULT_PRODUCT_TYPE", "loan") or "loan").strip() or "loan"
+DEFAULT_ORCHESTRATION_MODE = (os.getenv("DEFAULT_ORCHESTRATION_MODE", "auto") or "auto").strip().lower() or "auto"
+REQUEST_ID_PREFIX = (os.getenv("REQUEST_ID_PREFIX", "REQ") or "REQ").strip().upper() or "REQ"
+SUPPORTED_ORCHESTRATION_MODES = {"auto", "custom", "flowable"}
+APPLICANT_INPUT_FIELDS = (
+    "firstName",
+    "lastName",
+    "address",
+    "city",
+    "state",
+    "zipCode",
+    "ssn",
+    "dateOfBirth",
+    "email",
+    "phone",
+)
 
 ROLE_ANALYST = "analyst"
 ROLE_SENIOR_ANALYST = "senior_analyst"
@@ -261,6 +277,166 @@ def authorize_request_view(key: str, requested_role: str) -> str:
 def apply_rate_limit(ip: str):
     if not check_rate_limit(f"ip:{ip}", RATE_LIMIT, window_seconds=60):
         raise HTTPException(429, "rate limit exceeded")
+
+
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_mode(value: Any) -> str:
+    normalized = _clean_text(value).lower() or DEFAULT_ORCHESTRATION_MODE
+    return normalized if normalized in SUPPORTED_ORCHESTRATION_MODES else DEFAULT_ORCHESTRATION_MODE
+
+
+def _generate_request_id() -> str:
+    now = datetime.now(timezone.utc)
+    return f"{REQUEST_ID_PREFIX}-{now:%Y%m%d%H%M%S}-{secrets.token_hex(3).upper()}"
+
+
+def _build_customer_id(applicant: Dict[str, Any], fallback_request_id: str) -> str:
+    seed = (
+        _clean_text(applicant.get("ssn"))
+        or _clean_text(applicant.get("email"))
+        or _clean_text(applicant.get("phone"))
+        or fallback_request_id
+    )
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12].upper()
+    return f"CUST-{digest}"
+
+
+def _looks_like_applicant_input(data: Dict[str, Any]) -> bool:
+    return all(_clean_text(data.get(field)) for field in APPLICANT_INPUT_FIELDS)
+
+
+def _build_applicant_from_input(data: Dict[str, Any]) -> Dict[str, Any]:
+    return {field: _clean_text(data.get(field)) for field in APPLICANT_INPUT_FIELDS}
+
+
+def _build_applicant_from_legacy(data: Dict[str, Any]) -> Dict[str, Any]:
+    payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
+    source = data.get("applicant") if isinstance(data.get("applicant"), dict) else payload.get("applicant")
+    source = source if isinstance(source, dict) else {}
+    applicant = {
+        "firstName": _clean_text(source.get("firstName")),
+        "lastName": _clean_text(source.get("lastName")),
+        "address": _clean_text(source.get("address")),
+        "city": _clean_text(source.get("city")),
+        "state": _clean_text(source.get("state")),
+        "zipCode": _clean_text(source.get("zipCode")),
+        "ssn": _clean_text(source.get("ssn") or data.get("ssn") or data.get("iin")),
+        "dateOfBirth": _clean_text(source.get("dateOfBirth")),
+        "email": _clean_text(source.get("email")),
+        "phone": _clean_text(source.get("phone")),
+    }
+    return {key: value for key, value in applicant.items() if value not in ("", None)}
+
+
+def normalize_incoming_request(data: Dict[str, Any]) -> Dict[str, Any]:
+    applicant = _build_applicant_from_input(data) if _looks_like_applicant_input(data) else _build_applicant_from_legacy(data)
+    request_id = _clean_text(data.get("request_id")) or _generate_request_id()
+    customer_id = _clean_text(data.get("customer_id")) or _build_customer_id(applicant, request_id)
+    product_type = _clean_text(data.get("product_type")) or DEFAULT_PRODUCT_TYPE
+    orchestration_mode = _normalize_mode(data.get("orchestration_mode"))
+    ssn_value = _clean_text(applicant.get("ssn")) or _clean_text(data.get("ssn") or data.get("iin"))
+
+    payload = dict(data.get("payload") or {})
+    if applicant:
+        payload.setdefault("applicant", applicant)
+
+    internal = {
+        "request_id": request_id,
+        "customer_id": customer_id,
+        "iin": ssn_value,
+        "ssn": ssn_value,
+        "product_type": product_type,
+        "orchestration_mode": orchestration_mode,
+        "payload": payload,
+        "applicant": applicant,
+    }
+    if applicant:
+        internal.update(applicant)
+
+    return {
+        "request_id": request_id,
+        "customer_id": customer_id,
+        "product_type": product_type,
+        "orchestration_mode": orchestration_mode,
+        "internal": internal,
+        "applicant_profile": applicant,
+        "applicant_profile_encrypted": encrypt_sensitive(applicant) if applicant else {},
+        "ssn_encrypted": encrypt_field(ssn_value) if ssn_value else "",
+    }
+
+
+def _mask_tail(value: Any, visible: int = 4) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    if len(text) <= visible:
+        return "***"
+    return f"***{text[-visible:]}"
+
+
+def _mask_email(value: Any) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    if "@" not in text:
+        return _mask_tail(text)
+    local, domain = text.split("@", 1)
+    visible_local = local[:1] if local else ""
+    return f"{visible_local}***@{domain}"
+
+
+def build_applicant_name(applicant: Dict[str, Any]) -> str:
+    first = _clean_text((applicant or {}).get("firstName"))
+    last = _clean_text((applicant or {}).get("lastName"))
+    return " ".join(part for part in (first, last) if part)
+
+
+def build_applicant_location(applicant: Dict[str, Any]) -> str:
+    city = _clean_text((applicant or {}).get("city"))
+    state = _clean_text((applicant or {}).get("state"))
+    return ", ".join(part for part in (city, state) if part)
+
+
+def build_request_view(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not row:
+        return row
+    item = dict(row)
+    applicant = item.get("applicant_profile")
+    applicant = decrypt_sensitive(applicant) if isinstance(applicant, dict) else {}
+    if not applicant and item.get("ssn_encrypted"):
+        applicant = {"ssn": decrypt_field(item["ssn_encrypted"])}
+    elif not applicant and item.get("iin_encrypted"):
+        applicant = {"ssn": decrypt_field(item["iin_encrypted"])}
+
+    ssn_masked = ""
+    if item.get("ssn_encrypted"):
+        ssn_masked = mask_field(item["ssn_encrypted"])
+    elif item.get("iin_encrypted"):
+        ssn_masked = mask_field(item["iin_encrypted"])
+    elif applicant.get("ssn"):
+        ssn_masked = _mask_tail(applicant.get("ssn"))
+
+    email_masked = _mask_email(applicant.get("email"))
+    phone_masked = _mask_tail(applicant.get("phone"))
+    applicant_view = dict(applicant)
+    if applicant_view.get("ssn"):
+        applicant_view["ssn"] = ssn_masked
+    if applicant_view.get("email"):
+        applicant_view["email"] = email_masked
+    if applicant_view.get("phone"):
+        applicant_view["phone"] = phone_masked
+
+    item["applicant_profile"] = applicant_view
+    item["applicant_name"] = build_applicant_name(applicant)
+    item["applicant_location"] = build_applicant_location(applicant)
+    item["ssn_masked"] = ssn_masked
+    item["iin_masked"] = ssn_masked
+    item["email_masked"] = email_masked
+    item["phone_masked"] = phone_masked
+    return item
 
 
 def _safe_user_view(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -513,11 +689,28 @@ def normalize_result_payload(result: Dict[str, Any]):
 
 def get_request_context(request_id: str):
     row = query(
-        "SELECT request_id, customer_id, product_type, orchestration_mode, correlation_id FROM requests WHERE request_id=%s",
+        """
+        SELECT request_id, customer_id, product_type, orchestration_mode, correlation_id,
+               applicant_profile, ssn_encrypted, iin_encrypted
+        FROM requests
+        WHERE request_id=%s
+        """,
         (request_id,),
         "one",
     ) or {}
-    return to_json_ready(row) or {}
+    context = to_json_ready(row) or {}
+    applicant = context.get("applicant_profile")
+    applicant = decrypt_sensitive(applicant) if isinstance(applicant, dict) else {}
+    if not applicant and context.get("ssn_encrypted"):
+        applicant["ssn"] = decrypt_field(context["ssn_encrypted"])
+    elif not applicant and context.get("iin_encrypted"):
+        applicant["ssn"] = decrypt_field(context["iin_encrypted"])
+    if applicant:
+        context["applicant"] = applicant
+        context.update({key: value for key, value in applicant.items() if value not in ("", None)})
+        context.setdefault("ssn", applicant.get("ssn", ""))
+        context.setdefault("iin", applicant.get("ssn", ""))
+    return context
 
 
 async def ensure_parsed_report(request_id: str, result: Dict[str, Any], cid: str):
@@ -611,6 +804,7 @@ async def finalize_request(request_id: str, mode: str, result: Dict[str, Any], c
             "request_id": request_id,
             "status": final_status,
             "mode": mode,
+            "applicant": context.get("applicant") or {},
             "result": normalized_result,
             "post_stop_factor": sf_post,
         }
@@ -743,7 +937,8 @@ def _find_request_for_flowable_instance(instance_id: str):
 
 def _flowable_request_for_list(limit: int, request_id: Optional[str] = None):
     sql = """
-        SELECT request_id, customer_id, product_type, orchestration_mode, status, result, error, correlation_id, created_at, updated_at
+        SELECT request_id, customer_id, product_type, orchestration_mode, status, result, error, correlation_id,
+               created_at, updated_at, applicant_profile, ssn_encrypted
         FROM requests
         WHERE orchestration_mode='flowable'
     """
@@ -840,7 +1035,7 @@ def _flowable_summary_from_bundle(request_row: Optional[Dict[str, Any]], instanc
     historic = bundle.get("historic")
     jobs = bundle.get("jobs", [])
     process_variables = bundle.get("variables", {})
-    request_row = request_row or {}
+    request_row = build_request_view(request_row or {}) or {}
     process_definition_id = (
         (runtime or {}).get("processDefinitionId")
         or (historic or {}).get("processDefinitionId")
@@ -850,6 +1045,7 @@ def _flowable_summary_from_bundle(request_row: Optional[Dict[str, Any]], instanc
     return {
         "instance_id": instance_id,
         "request_id": request_row.get("request_id") or process_variables.get("request_id"),
+        "applicant_name": request_row.get("applicant_name", ""),
         "request_status": request_row.get("status", "UNKNOWN"),
         "orchestration_mode": request_row.get("orchestration_mode", "flowable"),
         "engine_status": _flowable_engine_status(runtime, historic, request_row.get("status", "")),
@@ -935,6 +1131,7 @@ async def get_flowable_instance_detail(instance_id: str) -> Dict[str, Any]:
         tracker_items = [to_json_ready(row) for row in query("SELECT * FROM request_tracker_events WHERE request_id=%s ORDER BY id DESC LIMIT 200", (linked_request_id,))]
 
     request_view = dict(request_row or {})
+    request_view = build_request_view(request_view) or request_view
     if request_view.get("result"):
         request_view["result"] = tracker_payload(normalize_result_payload(request_view.get("result")))
 
@@ -1046,12 +1243,7 @@ async def reconcile_flowable_request(request_id: str, requested_role: str, reaso
         "flowable",
         result,
         correlation_id,
-        request_data={
-            "request_id": request_row.get("request_id"),
-            "customer_id": request_row.get("customer_id"),
-            "product_type": request_row.get("product_type"),
-            "orchestration_mode": request_row.get("orchestration_mode"),
-        },
+        request_data=get_request_context(request_id),
     )
 
     audit(

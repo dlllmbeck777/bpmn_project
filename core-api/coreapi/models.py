@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class HealthResponse(BaseModel):
@@ -163,21 +163,81 @@ class PipelineStepIn(BaseModel):
 
 
 class RequestIn(BaseModel):
-    request_id: str = Field(..., example="REQ-2026-0001")
-    customer_id: str = Field(..., example="CUST-001")
-    iin: str = Field(..., example="900101123456")
-    product_type: str = Field(..., example="loan")
+    firstName: Optional[str] = Field(None, example="John")
+    lastName: Optional[str] = Field(None, example="Doe")
+    address: Optional[str] = Field(None, example="123 Main Street")
+    city: Optional[str] = Field(None, example="New York")
+    state: Optional[str] = Field(None, example="NY")
+    zipCode: Optional[str] = Field(None, example="10001")
+    ssn: Optional[str] = Field(None, example="123456789")
+    dateOfBirth: Optional[str] = Field(None, example="1985-06-15")
+    email: Optional[str] = Field(None, example="john@example.com")
+    phone: Optional[str] = Field(None, example="555-123-4567")
+    request_id: Optional[str] = Field(None, example="REQ-2026-0001")
+    customer_id: Optional[str] = Field(None, example="CUST-001")
+    iin: Optional[str] = Field(None, example="900101123456")
+    product_type: Optional[str] = Field(None, example="loan")
     orchestration_mode: str = Field("auto", example="auto")
     payload: Dict[str, Any] = Field(default_factory=dict, example={"amount": 5000, "currency": "USD"})
 
+    @model_validator(mode="after")
+    def validate_supported_contract(self):
+        applicant_fields = (
+            self.firstName,
+            self.lastName,
+            self.address,
+            self.city,
+            self.state,
+            self.zipCode,
+            self.ssn,
+            self.dateOfBirth,
+            self.email,
+            self.phone,
+        )
+        legacy_fields = (self.request_id, self.customer_id, self.iin, self.product_type)
+
+        if any(value not in (None, "") for value in applicant_fields):
+            missing = [
+                field_name
+                for field_name in (
+                    "firstName",
+                    "lastName",
+                    "address",
+                    "city",
+                    "state",
+                    "zipCode",
+                    "ssn",
+                    "dateOfBirth",
+                    "email",
+                    "phone",
+                )
+                if getattr(self, field_name) in (None, "")
+            ]
+            if missing:
+                raise ValueError(f"missing applicant fields: {', '.join(missing)}")
+            return self
+
+        if all(value not in (None, "") for value in legacy_fields):
+            return self
+
+        raise ValueError(
+            "request body must be either Applicant Input v2 "
+            "(firstName, lastName, address, city, state, zipCode, ssn, dateOfBirth, email, phone) "
+            "or the legacy internal request contract"
+        )
+
     model_config = {"json_schema_extra": {"examples": [
         {
-            "request_id": "REQ-2026-0001",
-            "customer_id": "CUST-001",
-            "iin": "900101123456",
-            "product_type": "loan",
-            "orchestration_mode": "auto",
-            "payload": {"amount": 5000},
+            "firstName": "John",
+            "lastName": "Doe",
+            "address": "123 Main Street",
+            "city": "New York",
+            "state": "NY",
+            "zipCode": "10001",
+            "ssn": "123456789",
+            "dateOfBirth": "1985-06-15",
+            "email": "john@example.com",
+            "phone": "555-123-4567",
         }
     ]}}
 

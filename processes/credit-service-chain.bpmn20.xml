@@ -24,6 +24,7 @@
         execution.setVariable('customer_id', execution.getVariable('customer_id') ?: '')
         execution.setVariable('iin', execution.getVariable('iin') ?: '')
         execution.setVariable('product_type', execution.getVariable('product_type') ?: '')
+        execution.setVariable('applicant_json', execution.getVariable('applicant_json') ?: '{}')
       ]]></script>
     </scriptTask>
     <exclusiveGateway id="gateway_iso" name="Skip iSoftPull?"/>
@@ -54,7 +55,7 @@
 X-Request-Id: ${request_id}</flowable:expression>
         </flowable:field>
         <flowable:field name="requestBody">
-          <flowable:expression>{"request_id":"${request_id}","customer_id":"${customer_id}","iin":"${iin}","product_type":"${product_type}"}</flowable:expression>
+          <flowable:expression>{"request_id":"${request_id}","customer_id":"${customer_id}","iin":"${iin}","product_type":"${product_type}","applicant":${applicant_json}}</flowable:expression>
         </flowable:field>
         <flowable:field name="saveResponseParameters"><flowable:string>true</flowable:string></flowable:field>
         <flowable:field name="resultVariablePrefix"><flowable:string>isoRaw</flowable:string></flowable:field>
@@ -92,6 +93,7 @@ X-Request-Id: ${request_id}</flowable:expression>
         def body = '{"request_id":"' + execution.getVariable('request_id') + '",' +
                    '"customer_id":"' + execution.getVariable('customer_id') + '",' +
                    '"iin":"' + execution.getVariable('iin') + '",' +
+                   '"applicant":' + (execution.getVariable('applicant_json') ?: '{}') + ',' +
                    '"isoftpull":' + isoBody + '}'
         execution.setVariable('creditsafe_request_body', body)
       ]]></script>
@@ -160,6 +162,7 @@ X-Request-Id: ${request_id}</flowable:expression>
         def body = '{"request_id":"' + execution.getVariable('request_id') + '",' +
                    '"customer_id":"' + execution.getVariable('customer_id') + '",' +
                    '"iin":"' + execution.getVariable('iin') + '",' +
+                   '"applicant":' + (execution.getVariable('applicant_json') ?: '{}') + ',' +
                    '"creditsafe":' + csBody + '}'
         execution.setVariable('plaid_request_body', body)
       ]]></script>
@@ -228,6 +231,7 @@ X-Request-Id: ${request_id}</flowable:expression>
         def body = '{"request_id":"' + execution.getVariable('request_id') + '",' +
                    '"customer_id":"' + execution.getVariable('customer_id') + '",' +
                    '"iin":"' + execution.getVariable('iin') + '",' +
+                   '"applicant":' + (execution.getVariable('applicant_json') ?: '{}') + ',' +
                    '"plaid":' + plaidBody + '}'
         execution.setVariable('crm_request_body', body)
       ]]></script>

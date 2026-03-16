@@ -132,6 +132,14 @@ MIGRATIONS = [
     (8, """
         ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS performed_by TEXT;
     """),
+    (9, """
+        ALTER TABLE requests ADD COLUMN IF NOT EXISTS applicant_profile JSONB DEFAULT '{}'::jsonb;
+        ALTER TABLE requests ADD COLUMN IF NOT EXISTS ssn_encrypted TEXT;
+
+        UPDATE requests
+        SET ssn_encrypted = COALESCE(ssn_encrypted, iin_encrypted)
+        WHERE ssn_encrypted IS NULL AND iin_encrypted IS NOT NULL;
+    """),
 ]
 
 
@@ -201,9 +209,8 @@ def seed_defaults(conn):
         cur.execute("INSERT INTO services (id,name,type,base_url,health_path,endpoint_path) VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", s)
 
     rules = [
-        ("SME Loan -> Flowable", 10, "product_type", "eq", "loan", "flowable"),
-        ("Card -> Custom", 20, "product_type", "eq", "card", "custom"),
-        ("Fallback -> Custom", 100, "orchestration_mode", "eq", "custom", "custom"),
+        ("Auto -> Flowable default", 10, "orchestration_mode", "eq", "auto", "flowable"),
+        ("Custom override", 20, "orchestration_mode", "eq", "custom", "custom"),
     ]
     for r in rules:
         cur.execute("SELECT 1 FROM routing_rules WHERE name=%s", (r[0],))
@@ -213,7 +220,7 @@ def seed_defaults(conn):
     stops = [
         ("Min credit score", "post", "field_check", "result.parsed_report.summary.credit_score", "gte", "600", "REJECT", 10),
         ("Minimum linked accounts", "post", "field_check", "result.parsed_report.summary.accounts_found", "gte", "1", "REVIEW", 20),
-        ("Blacklist IIN", "pre", "blacklist", "iin", "not_in", "blacklist", "REJECT", 5),
+        ("Blacklist SSN", "pre", "blacklist", "ssn", "not_in", "blacklist", "REJECT", 5),
     ]
     for s in stops:
         cur.execute("SELECT id FROM stop_factors WHERE name=%s", (s[0],))

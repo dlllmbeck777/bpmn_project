@@ -11,6 +11,13 @@ function ModeBadge({ mode }) {
   return <span className={`badge ${mode === 'flowable' ? 'badge-blue' : 'badge-purple'}`}>{mode}</span>
 }
 
+function applicantName(row) {
+  return row.applicant_name || [
+    row.applicant_profile?.firstName,
+    row.applicant_profile?.lastName,
+  ].filter(Boolean).join(' ') || 'Unknown applicant'
+}
+
 const STEPS = ['Client', 'Gateway', 'Pre check', 'Router', 'Orchestrator', 'Connectors', 'Parser', 'Post check', 'SNP']
 
 export default function Dashboard() {
@@ -83,11 +90,12 @@ export default function Dashboard() {
             <p className="text-muted text-sm">No requests yet</p>
           ) : (
             <table className="tbl">
-              <thead><tr><th>ID</th><th>Mode</th><th>Status</th></tr></thead>
+              <thead><tr><th>ID</th><th>Applicant</th><th>Mode</th><th>Status</th></tr></thead>
               <tbody>
                 {requests.slice(0, 6).map(r => (
                   <tr key={r.request_id}>
                     <td className="mono">{r.request_id}</td>
+                    <td>{applicantName(r)}</td>
                     <td><ModeBadge mode={r.orchestration_mode} /></td>
                     <td><StatusBadge status={r.status} /></td>
                   </tr>

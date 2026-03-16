@@ -10,6 +10,20 @@ function ModeBadge({ mode }) {
   return <span className={`badge ${mode === 'flowable' ? 'badge-blue' : 'badge-purple'}`}>{mode}</span>
 }
 
+function applicantName(row) {
+  return row.applicant_name || [
+    row.applicant_profile?.firstName,
+    row.applicant_profile?.lastName,
+  ].filter(Boolean).join(' ') || 'Unknown applicant'
+}
+
+function applicantLocation(row) {
+  return row.applicant_location || [
+    row.applicant_profile?.city,
+    row.applicant_profile?.state,
+  ].filter(Boolean).join(', ') || '—'
+}
+
 function dotColor(status) {
   if (['COMPLETED', 'PASS', 'OK'].includes(status)) return 'green'
   if (['REJECTED', 'FAILED', 'REJECT', 'UNAVAILABLE'].includes(status)) return 'red'
@@ -93,13 +107,13 @@ export default function RequestsPage() {
 
       <div className="card mb-20">
         <table className="tbl">
-          <thead><tr><th>Request ID</th><th>Customer</th><th>Product</th><th>Mode</th><th>Status</th><th>Time</th><th></th></tr></thead>
+          <thead><tr><th>Request ID</th><th>Applicant</th><th>Location</th><th>Mode</th><th>Status</th><th>Time</th><th></th></tr></thead>
           <tbody>
             {items.map(r => (
               <tr key={r.request_id} data-clickable onClick={() => openDetail(r.request_id)} style={{ cursor: 'pointer' }}>
                 <td className="mono" style={{ fontWeight: 600 }}>{r.request_id}</td>
-                <td className="mono">{r.customer_id}</td>
-                <td>{r.product_type}</td>
+                <td>{applicantName(r)}</td>
+                <td>{applicantLocation(r)}</td>
                 <td><ModeBadge mode={r.orchestration_mode} /></td>
                 <td><StatusBadge status={r.status} /></td>
                 <td className="mono text-sm" style={{ color: 'var(--text-3)' }}>{(r.created_at || '').slice(11, 19)}</td>
@@ -128,10 +142,15 @@ export default function RequestsPage() {
           </div>
 
           <div className="detail-panel mb-16">
-            <div className="kv-row"><span className="kv-key">Customer</span><span className="kv-val">{detail.customer_id}</span></div>
-            <div className="kv-row"><span className="kv-key">Product</span><span className="kv-val">{detail.product_type}</span></div>
+            <div className="kv-row"><span className="kv-key">Applicant</span><span className="kv-val">{applicantName(detail)}</span></div>
+            <div className="kv-row"><span className="kv-key">Location</span><span className="kv-val">{applicantLocation(detail)}</span></div>
             <div className="kv-row"><span className="kv-key">Mode</span><span className="kv-val">{detail.orchestration_mode}</span></div>
-            <div className="kv-row"><span className="kv-key">IIN</span><span className="kv-val">{detail.iin_masked || '***'}</span></div>
+            <div className="kv-row"><span className="kv-key">Address</span><span className="kv-val">{detail.applicant_profile?.address || '—'}</span></div>
+            <div className="kv-row"><span className="kv-key">ZIP</span><span className="kv-val">{detail.applicant_profile?.zipCode || '—'}</span></div>
+            <div className="kv-row"><span className="kv-key">SSN</span><span className="kv-val">{detail.ssn_masked || '***'}</span></div>
+            <div className="kv-row"><span className="kv-key">DOB</span><span className="kv-val">{detail.applicant_profile?.dateOfBirth || '—'}</span></div>
+            <div className="kv-row"><span className="kv-key">Email</span><span className="kv-val">{detail.email_masked || detail.applicant_profile?.email || '—'}</span></div>
+            <div className="kv-row"><span className="kv-key">Phone</span><span className="kv-val">{detail.phone_masked || detail.applicant_profile?.phone || '—'}</span></div>
             <div className="kv-row"><span className="kv-key">Correlation</span><span className="kv-val">{detail.correlation_id}</span></div>
           </div>
 

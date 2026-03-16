@@ -5,7 +5,22 @@ from typing import Any, Dict, Optional
 from shared import get_conn, put_conn
 
 TRACKER_MASK_SUFFIX = 4
-TRACKER_SENSITIVE_KEYS = {"iin", "iin_encrypted", "api_key", "internal_api_key", "password"}
+TRACKER_SENSITIVE_KEYS = {
+    "iin",
+    "iin_encrypted",
+    "ssn",
+    "ssn_encrypted",
+    "dateofbirth",
+    "firstname",
+    "lastname",
+    "address",
+    "zipcode",
+    "email",
+    "phone",
+    "api_key",
+    "internal_api_key",
+    "password",
+}
 
 
 def query(sql: str, params=None, fetch: str = "all"):
@@ -78,7 +93,15 @@ def tracker_payload(payload: Any):
         sanitized = {}
         for key, value in payload.items():
             normalized_key = str(key).lower()
-            if normalized_key in TRACKER_SENSITIVE_KEYS or "iin" in normalized_key or "password" in normalized_key or "api_key" in normalized_key:
+            if (
+                normalized_key in TRACKER_SENSITIVE_KEYS
+                or "iin" in normalized_key
+                or "ssn" in normalized_key
+                or "password" in normalized_key
+                or "api_key" in normalized_key
+                or "email" in normalized_key
+                or "phone" in normalized_key
+            ):
                 sanitized[key] = _mask_sensitive(value)
             else:
                 sanitized[key] = tracker_payload(value)
