@@ -74,6 +74,9 @@ services:
 
   processors:
     ports: !reset []
+    environment:
+      - CONFIG_SERVICE_URL=http://core-api:8000
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY}
     networks: [backend]
     restart: always
     logging: *logging
@@ -89,6 +92,11 @@ services:
 
   orchestrators:
     ports: !reset []
+    environment:
+      - CONFIG_SERVICE_URL=http://core-api:8000
+      - FLOWABLE_PASSWORD=${FLOWABLE_PASSWORD}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY}
+      - FLOWABLE_AUTO_DEPLOY_BPMN=${FLOWABLE_AUTO_DEPLOY_BPMN:-false}
     networks: [backend, flowable]
     restart: always
     logging: *logging

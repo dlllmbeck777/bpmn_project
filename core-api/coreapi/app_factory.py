@@ -23,6 +23,11 @@ log = get_logger(SERVICE_NAME)
 INSECURE_ENCRYPT_KEYS = {"change-me-in-production-32chars!", "default-dev-key-change-in-prod!!", ""}
 
 
+def _config_auth_key(x_api_key: str = "", x_internal_api_key: str = "") -> str:
+    """Prefer the internal service key for config reads when present."""
+    return (x_internal_api_key or x_api_key or "").strip()
+
+
 def _validate_config():
     """Fail fast if critical configuration is missing or insecure."""
     errors = []
@@ -244,8 +249,14 @@ def remove_admin_user(
 
 
 @app.get("/api/v1/services", response_model=ListResponse, tags=["Services"])
-def list_services(type: Optional[str] = Query(None), enabled: Optional[bool] = Query(None), x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
-    require_internal_or_min_role(x_api_key, x_user_role, ROLE_ANALYST)
+def list_services(
+    type: Optional[str] = Query(None),
+    enabled: Optional[bool] = Query(None),
+    x_api_key: str = Header(default=""),
+    x_user_role: str = Header(default=""),
+    x_internal_api_key: str = Header(default=""),
+):
+    require_internal_or_min_role(_config_auth_key(x_api_key, x_internal_api_key), x_user_role, ROLE_ANALYST)
     cache_key = f"services:{type}:{enabled}"
     cached = config_cache.get(cache_key)
     if cached:
@@ -264,8 +275,13 @@ def list_services(type: Optional[str] = Query(None), enabled: Optional[bool] = Q
 
 
 @app.get("/api/v1/services/{sid}", response_model=ServiceOut, tags=["Services"])
-def get_service(sid: str, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
-    require_internal_or_min_role(x_api_key, x_user_role, ROLE_ANALYST)
+def get_service(
+    sid: str,
+    x_api_key: str = Header(default=""),
+    x_user_role: str = Header(default=""),
+    x_internal_api_key: str = Header(default=""),
+):
+    require_internal_or_min_role(_config_auth_key(x_api_key, x_internal_api_key), x_user_role, ROLE_ANALYST)
     cached = config_cache.get(f"svc:{sid}")
     if cached:
         return cached
@@ -361,8 +377,13 @@ def delete_rule(rid: int, x_api_key: str = Header(default=""), x_user_role: str 
 
 
 @app.get("/api/v1/stop-factors", response_model=ListResponse, tags=["Stop Factors"])
-def list_stop_factors(stage: Optional[str] = Query(None), x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
-    require_min_role(x_api_key, x_user_role, ROLE_ANALYST)
+def list_stop_factors(
+    stage: Optional[str] = Query(None),
+    x_api_key: str = Header(default=""),
+    x_user_role: str = Header(default=""),
+    x_internal_api_key: str = Header(default=""),
+):
+    require_internal_or_min_role(_config_auth_key(x_api_key, x_internal_api_key), x_user_role, ROLE_ANALYST)
     cache_key = f"stops:{stage}"
     cached = config_cache.get(cache_key)
     if cached:
@@ -411,8 +432,13 @@ def delete_stop_factor(sfid: int, x_api_key: str = Header(default=""), x_user_ro
 
 
 @app.get("/api/v1/pipeline-steps", response_model=ListResponse, tags=["Pipeline"])
-def list_pipeline_steps(pipeline_name: str = Query("default"), x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
-    require_internal_or_min_role(x_api_key, x_user_role, ROLE_ANALYST)
+def list_pipeline_steps(
+    pipeline_name: str = Query("default"),
+    x_api_key: str = Header(default=""),
+    x_user_role: str = Header(default=""),
+    x_internal_api_key: str = Header(default=""),
+):
+    require_internal_or_min_role(_config_auth_key(x_api_key, x_internal_api_key), x_user_role, ROLE_ANALYST)
     cache_key = f"pipeline:{pipeline_name}"
     cached = config_cache.get(cache_key)
     if cached:

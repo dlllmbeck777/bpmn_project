@@ -68,6 +68,7 @@ services:
       - "8106:8106"
     environment:
       - CONFIG_SERVICE_URL=http://core-api:8000
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
     depends_on:
       core-api:
         condition: service_healthy

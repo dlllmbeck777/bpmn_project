@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 CONFIG_URL = os.getenv("CONFIG_SERVICE_URL", "http://core-api:8000")
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 
 app = FastAPI(title="stop-factor", version="4.0.0")
 
@@ -19,6 +20,13 @@ app = FastAPI(title="stop-factor", version="4.0.0")
 class CheckRequest(BaseModel):
     stage: str = "pre"
     data: Dict[str, Any] = {}
+
+
+def _internal_headers() -> Dict[str, str]:
+    headers: Dict[str, str] = {}
+    if INTERNAL_API_KEY:
+        headers["X-Internal-Api-Key"] = INTERNAL_API_KEY
+    return headers
 
 
 def _resolve(data: dict, path: str):
@@ -57,7 +65,11 @@ def health():
 async def check(body: CheckRequest):
     try:
         async with httpx.AsyncClient(timeout=5.0) as c:
-            resp = await c.get(f"{CONFIG_URL}/api/v1/stop-factors?stage={body.stage}")
+            resp = await c.get(
+                f"{CONFIG_URL}/api/v1/stop-factors?stage={body.stage}",
+                headers=_internal_headers(),
+            )
+            resp.raise_for_status()
             rules = resp.json().get("items", [])
     except Exception:
         return {"decision": "PASS", "reason": "config unavailable"}
