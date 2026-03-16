@@ -446,10 +446,32 @@ async def orchestrate(body: RequestIn, request: Request):
                 headers={"X-Correlation-ID": cid},
             )
         if response.status_code >= 400:
-            return {"status": "ENGINE_ERROR", "adapter": "flowable", "request_id": body.request_id, "error": response.text}
+            response_text = (response.text or "").strip()
+            error_detail = response_text or response.reason_phrase or "empty response body"
+            log.error(
+                f"[{cid}] flowable start failed for {body.request_id}: "
+                f"status={response.status_code}, process_key={process_key}, detail={error_detail[:300]}"
+            )
+            return {
+                "status": "ENGINE_ERROR",
+                "adapter": "flowable",
+                "request_id": body.request_id,
+                "error": error_detail,
+                "status_code": response.status_code,
+                "process_key": process_key,
+                "flowable_url": flowable_url,
+            }
         engine_response = response.json()
     except Exception as exc:
-        return {"status": "ENGINE_UNREACHABLE", "adapter": "flowable", "request_id": body.request_id, "error": str(exc)}
+        log.error(f"[{cid}] flowable engine unreachable for {body.request_id}: process_key={process_key}, error={exc}")
+        return {
+            "status": "ENGINE_UNREACHABLE",
+            "adapter": "flowable",
+            "request_id": body.request_id,
+            "error": str(exc),
+            "process_key": process_key,
+            "flowable_url": flowable_url,
+        }
 
     instance_id = engine_response.get("id")
     completed = False
