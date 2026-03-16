@@ -43,6 +43,7 @@ Russian operational and project documentation:
 - `docs/CONFLUENCE_PASTE_READY_NO_MERMAID_RU.md`
 - `docs/INTEGRATION_SPEC_MOBILE_RU.md`
 - `docs/INTEGRATION_SPEC_SNP_RU.md`
+- `docs/API_CHEATSHEET_RU.md`
 
 ## Stress Test
 
