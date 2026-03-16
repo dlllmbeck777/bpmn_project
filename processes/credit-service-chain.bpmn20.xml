@@ -306,20 +306,147 @@ X-Request-Id: ${request_id}</flowable:expression>
           }
         }
 
+        def pathValue = { root, path ->
+          def current = root
+          for (segment in path) {
+            if (current instanceof Map) {
+              current = current[segment]
+            } else if (current instanceof List && segment instanceof Number && segment < current.size()) {
+              current = current[segment.intValue()]
+            } else {
+              return null
+            }
+          }
+          return current
+        }
+
+        def numberValue = { raw ->
+          if (raw == null) {
+            return null
+          }
+          if (raw instanceof Number) {
+            return new BigDecimal(raw.toString())
+          }
+          def text = raw.toString().trim()
+          if (!text || ['N/A', 'NA', 'NULL', 'null'].contains(text)) {
+            return null
+          }
+          try {
+            return new BigDecimal(text.replace(',', ''))
+          } catch (Exception ignored) {
+            return null
+          }
+        }
+
+        def firstNumericAt = { root, paths ->
+          for (path in paths) {
+            def number = numberValue(pathValue(root, path))
+            if (number != null) {
+              return number
+            }
+          }
+          return null
+        }
+
+        def firstCountAt = { root, paths ->
+          for (path in paths) {
+            def value = pathValue(root, path)
+            if (value instanceof Collection) {
+              return value.size()
+            }
+            def number = numberValue(value)
+            if (number != null) {
+              return number.intValue()
+            }
+          }
+          return null
+        }
+
+        def bureauCollectionTotal = { accounts ->
+          if (!(accounts instanceof Collection)) {
+            return 0
+          }
+          def total = 0
+          accounts.each { account ->
+            if (account instanceof Map) {
+              total += (numberValue(account['30_day_delinquencies']) ?: BigDecimal.ZERO).intValue()
+              total += (numberValue(account['60_day_delinquencies']) ?: BigDecimal.ZERO).intValue()
+              total += (numberValue(account['90_day_delinquencies']) ?: BigDecimal.ZERO).intValue()
+            }
+          }
+          return total
+        }
+
         def isoBody = parseJson(execution.getVariable('isoRawBody'))
         def csBody = parseJson(execution.getVariable('csRawBody'))
         def plaidBody = parseJson(execution.getVariable('plaidRawBody'))
         def crmBody = parseJson(execution.getVariable('crmRawBody'))
 
-        def isoScore = isoBody?.result?.score
-        def plaidAccounts = plaidBody?.result?.accounts_found
+        def isoScore = firstNumericAt(isoBody, [
+          ['creditScore'],
+          ['result', 'creditScore'],
+          ['result', 'credit_score'],
+          ['result', 'score'],
+          ['rawResponse', 'firstScore'],
+          ['rawResponse', 'creditScore'],
+          ['equifaxScore'],
+          ['transunionScore'],
+          ['rawResponse', 'equifaxScore'],
+          ['rawResponse', 'transunionScore'],
+          ['rawResponse', 'reports', 'equifax', 'full_feed', 'credit_score', 'fico_8', 'scoreValue'],
+          ['rawResponse', 'reports', 'equifax', 'full_feed', 'credit_score', 'fico_8', 'score'],
+          ['rawResponse', 'reports', 'transunion', 'full_feed', 'credit_score', 'fico_8', 'scoreValue'],
+          ['rawResponse', 'reports', 'transunion', 'full_feed', 'credit_score', 'fico_8', 'score'],
+          ['rawResponse', 'reports', 'experian', 'full_feed', 'credit_score', 'fico_8', 'scoreValue'],
+          ['rawResponse', 'reports', 'experian', 'full_feed', 'credit_score', 'fico_8', 'score']
+        ])
+
+        def explicitCollectionCount = firstCountAt(isoBody, [
+          ['collectionCount'],
+          ['collection_count'],
+          ['collections'],
+          ['result', 'collectionCount'],
+          ['result', 'collection_count'],
+          ['result', 'collections'],
+          ['rawResponse', 'collectionCount'],
+          ['rawResponse', 'collection_count'],
+          ['rawResponse', 'collections']
+        ])
+        def bureauCollectionCounts = [
+          bureauCollectionTotal(pathValue(isoBody, ['rawResponse', 'reports', 'equifax', 'full_feed', 'trade_accounts'])),
+          bureauCollectionTotal(pathValue(isoBody, ['rawResponse', 'reports', 'transunion', 'full_feed', 'trade_accounts'])),
+          bureauCollectionTotal(pathValue(isoBody, ['rawResponse', 'reports', 'experian', 'full_feed', 'trade_accounts'])),
+          bureauCollectionTotal(pathValue(isoBody, ['rawResponse', 'trade_accounts']))
+        ]
+        def collectionCount = explicitCollectionCount != null ? explicitCollectionCount : (bureauCollectionCounts ? bureauCollectionCounts.max() : 0)
+
+        def creditsafeComplianceAlerts = firstCountAt(csBody, [
+          ['complianceAlertCount'],
+          ['compliance_alert_count'],
+          ['result', 'complianceAlertCount'],
+          ['result', 'compliance_alert_count'],
+          ['rawResponse', 'complianceAlertCount'],
+          ['rawResponse', 'compliance_alert_count'],
+          ['rawResponse', 'complianceAlerts'],
+          ['rawResponse', 'alerts'],
+          ['rawResponse', 'compliance', 'alerts'],
+          ['rawResponse', 'complianceResult', 'alerts'],
+          ['rawResponse', 'bestMatch', 'complianceAlerts']
+        ])
+        if (creditsafeComplianceAlerts == null) {
+          creditsafeComplianceAlerts = firstCountAt(csBody, [
+            ['rawResponse', 'bestMatch', 'company', 'derogatoryCount'],
+            ['rawResponse', 'businessCredit', 'derogatoryCount']
+          ]) ?: 0
+        }
+
         def isoStatus = (execution.getVariable('iso_status') ?: 'UNKNOWN') as String
         def creditsafeStatus = (execution.getVariable('creditsafe_status') ?: 'UNKNOWN') as String
         def plaidStatus = (execution.getVariable('plaid_status') ?: 'UNKNOWN') as String
         def crmStatus = (execution.getVariable('crm_status') ?: 'UNKNOWN') as String
 
         def decisionStatus = 'COMPLETED'
-        def decisionReason = 'Flowable completed connector chain successfully'
+        def decisionReason = 'Flowable completed report-based decision successfully'
 
         def serviceStatuses = [isoStatus, creditsafeStatus, plaidStatus, crmStatus]
         if (serviceStatuses.any { it == 'UNAVAILABLE' }) {
@@ -328,17 +455,25 @@ X-Request-Id: ${request_id}</flowable:expression>
         }
         if (isoScore != null) {
           try {
-            if ((isoScore as BigDecimal) < 600) {
+            if ((isoScore as BigDecimal) < 580) {
               decisionStatus = 'REJECTED'
               decisionReason = 'Credit score below approval threshold'
             }
           } catch (Exception ignored) {}
         }
-        if (decisionStatus == 'COMPLETED' && plaidAccounts != null) {
+        if (decisionStatus != 'REJECTED') {
           try {
-            if ((plaidAccounts as BigDecimal) < 1) {
-              decisionStatus = 'REVIEW'
-              decisionReason = 'No linked accounts were found'
+            if ((collectionCount ?: 0) > 5) {
+              decisionStatus = 'REJECTED'
+              decisionReason = 'Collection count above approval threshold'
+            }
+          } catch (Exception ignored) {}
+        }
+        if (decisionStatus != 'REJECTED') {
+          try {
+            if ((creditsafeComplianceAlerts ?: 0) > 1) {
+              decisionStatus = 'REJECTED'
+              decisionReason = 'Creditsafe compliance alerts above approval threshold'
             }
           } catch (Exception ignored) {}
         }
@@ -347,6 +482,9 @@ X-Request-Id: ${request_id}</flowable:expression>
                       '"route_mode":"' + execution.getVariable('route_mode') + '",' +
                       '"decision_source":"flowable_bpmn",' +
                       '"decision_reason":"' + decisionReason.replace('"', '\\"') + '",' +
+                      '"credit_score":' + (isoScore != null ? isoScore.intValue() : 'null') + ',' +
+                      '"collection_count":' + (collectionCount ?: 0) + ',' +
+                      '"creditsafe_compliance_alert_count":' + (creditsafeComplianceAlerts ?: 0) + ',' +
                       '"iso_status":"' + isoStatus + '",' +
                       '"creditsafe_status":"' + creditsafeStatus + '",' +
                       '"plaid_status":"' + plaidStatus + '",' +
