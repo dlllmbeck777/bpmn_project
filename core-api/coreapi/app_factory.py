@@ -731,7 +731,7 @@ async def create_request(body: RequestIn, request: Request, x_api_key: str = Hea
             request_id,
             "request",
             "STATE",
-            "Request left running for async completion",
+            "Async completion pending",
             status="RUNNING",
             payload={"mode": mode},
             correlation_id=cid,
@@ -778,13 +778,14 @@ async def complete_case(body: Dict[str, Any], x_internal_api_key: str = Header(d
             result = {"raw_result": result}
 
     mode = body.get("mode") or query("SELECT orchestration_mode FROM requests WHERE request_id=%s", (request_id,), "scalar") or "flowable"
+    async_status = result.get("status", "COMPLETED") if isinstance(result, dict) else "COMPLETED"
     track_request_event(
         request_id,
         "orchestrator",
         "IN",
         "Async completion callback received",
         service_id=f"{mode}-adapter",
-        status="COMPLETED",
+        status=async_status,
         payload=result,
         correlation_id=existing.get("correlation_id"),
     )

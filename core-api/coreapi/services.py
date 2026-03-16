@@ -816,13 +816,22 @@ async def finalize_request(request_id: str, mode: str, result: Dict[str, Any], c
     )
     execute("UPDATE requests SET snp_result=%s WHERE request_id=%s", (json.dumps(snp), request_id))
     metrics.inc("requests_completed", f'mode="{mode}",status="{final_status}"')
+    summary = normalized_result.get("summary") if isinstance(normalized_result.get("summary"), dict) else {}
+    decision_reason = normalized_result.get("decision_reason") or summary.get("decision_reason") or sf_post.get("reason")
     track_request_event(
         request_id,
         "request",
         "STATE",
         "Request finalized",
         status=final_status,
-        payload={"mode": mode, "snp_result": snp},
+        payload={
+            "mode": mode,
+            "status": final_status,
+            "decision_reason": decision_reason,
+            "summary": summary,
+            "engine": normalized_result.get("engine", {}),
+            "snp_result": snp,
+        },
         correlation_id=cid,
     )
 

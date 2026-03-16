@@ -37,6 +37,18 @@ function toUtcIso(value) {
   return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString()
 }
 
+function decisionReason(result, fallbackStatus) {
+  if (!result || typeof result !== 'object') return fallbackStatus === 'RUNNING' ? 'Waiting for async completion callback' : '—'
+  return result.decision_reason || result.summary?.decision_reason || result.post_stop_factor?.reason || (fallbackStatus === 'RUNNING' ? 'Waiting for async completion callback' : '—')
+}
+
+function metricValue(result, key) {
+  if (!result || typeof result !== 'object') return '—'
+  const summary = result.summary && typeof result.summary === 'object' ? result.summary : {}
+  const value = summary[key]
+  return value === undefined || value === null || value === '' ? '—' : String(value)
+}
+
 export default function RequestsPage() {
   const [items, setItems] = useState([])
   const [filter, setFilter] = useState('')
@@ -73,6 +85,14 @@ export default function RequestsPage() {
       detailRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   }, [detail])
+
+  useEffect(() => {
+    if (!detail?.request_id || detail.status !== 'RUNNING') return undefined
+    const timer = setInterval(() => {
+      openDetail(detail.request_id)
+    }, 3000)
+    return () => clearInterval(timer)
+  }, [detail?.request_id, detail?.status])
 
   return (
     <>
@@ -152,6 +172,21 @@ export default function RequestsPage() {
             <div className="kv-row"><span className="kv-key">Email</span><span className="kv-val">{detail.email_masked || detail.applicant_profile?.email || '—'}</span></div>
             <div className="kv-row"><span className="kv-key">Phone</span><span className="kv-val">{detail.phone_masked || detail.applicant_profile?.phone || '—'}</span></div>
             <div className="kv-row"><span className="kv-key">Correlation</span><span className="kv-val">{detail.correlation_id}</span></div>
+          </div>
+
+          <div className="grid-2 mb-16">
+            <div className="card">
+              <div className="card-title">Outcome</div>
+              <div className="kv-row"><span className="kv-key">Final status</span><span className="kv-val"><StatusBadge status={detail.status} /></span></div>
+              <div className="kv-row"><span className="kv-key">Decision</span><span className="kv-val">{decisionReason(detail.result, detail.status)}</span></div>
+              <div className="kv-row"><span className="kv-key">Engine instance</span><span className="kv-val">{detail.result?.engine?.instance_id || '—'}</span></div>
+            </div>
+            <div className="card">
+              <div className="card-title">Decision inputs</div>
+              <div className="kv-row"><span className="kv-key">Credit score</span><span className="kv-val">{metricValue(detail.result, 'credit_score')}</span></div>
+              <div className="kv-row"><span className="kv-key">Collections</span><span className="kv-val">{metricValue(detail.result, 'collection_count')}</span></div>
+              <div className="kv-row"><span className="kv-key">Creditsafe alerts</span><span className="kv-val">{metricValue(detail.result, 'creditsafe_compliance_alert_count')}</span></div>
+            </div>
           </div>
 
           {tracker.length === 0 ? (

@@ -30,6 +30,11 @@ function laneOf(ev) {
   return ev.stage
 }
 
+function finalOutcomeEvent(group) {
+  const events = group?.events || []
+  return [...events].reverse().find((ev) => ev.stage === 'request' && ['COMPLETED', 'REVIEW', 'REJECTED', 'FAILED'].includes(ev.status))
+}
+
 export default function ProcessTrackerPage() {
   const [items, setItems] = useState([])
   const [requestId, setRequestId] = useState('')
@@ -62,10 +67,32 @@ export default function ProcessTrackerPage() {
   const filteredGroups = filter ? grouped.filter(g => g.status === filter) : grouped
   const group = selGroup || filteredGroups[0]
 
+  useEffect(() => {
+    if (!group) {
+      setSelEvent(null)
+      return
+    }
+    const next = finalOutcomeEvent(group) || group.events[group.events.length - 1] || null
+    if (!selEvent || !group.events.some((ev) => ev.id === selEvent.id)) {
+      setSelEvent(next)
+    }
+  }, [group?.request_id, items])
+
+  useEffect(() => {
+    if (!group?.request_id || group.status !== 'RUNNING') return undefined
+    const timer = setInterval(() => {
+      load(group.request_id)
+    }, 3000)
+    return () => clearInterval(timer)
+  }, [group?.request_id, group?.status])
+
   const renderWaterfall = () => {
     if (!group) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>Select a request</div>
 
     const evts = group.events
+    const outcome = finalOutcomeEvent(group)
+    const outcomePayload = outcome?.payload && typeof outcome.payload === 'object' ? outcome.payload : {}
+    const outcomeSummary = outcomePayload.summary && typeof outcomePayload.summary === 'object' ? outcomePayload.summary : {}
     // Assign offsets based on index (we don't have real ms, so approximate)
     const withOffsets = evts.map((ev, i) => ({ ...ev, _offset: i * 100, _dur: ev.stage === 'connector' ? 300 : ev.stage === 'parser' ? 80 : ev.stage?.startsWith('stop_factor') ? 40 : 10 }))
     const totalMs = withOffsets.reduce((max, e) => Math.max(max, e._offset + e._dur), 1)
@@ -85,6 +112,14 @@ export default function ProcessTrackerPage() {
 
     return (
       <>
+        <div className="summary-bar">
+          <div className="sum-card"><div className="sum-label">Current status</div><div className="sum-val">{group.status}</div></div>
+          <div className="sum-card"><div className="sum-label">Decision</div><div className="sum-val" style={{ fontSize: 13 }}>{outcomePayload.decision_reason || (group.status === 'RUNNING' ? 'Waiting for async completion callback' : '—')}</div></div>
+          <div className="sum-card"><div className="sum-label">Credit score</div><div className="sum-val">{outcomeSummary.credit_score ?? '—'}</div></div>
+          <div className="sum-card"><div className="sum-label">Collections</div><div className="sum-val">{outcomeSummary.collection_count ?? '—'}</div></div>
+          <div className="sum-card"><div className="sum-label">Creditsafe alerts</div><div className="sum-val">{outcomeSummary.creditsafe_compliance_alert_count ?? '—'}</div></div>
+        </div>
+
         <div className="summary-bar">
           <div className="sum-card"><div className="sum-label">Total latency</div><div className="sum-val">{totalMs}ms</div></div>
           <div className="sum-card"><div className="sum-label">Events</div><div className="sum-val">{evts.length}</div></div>
