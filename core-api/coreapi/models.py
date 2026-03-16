@@ -46,6 +46,14 @@ class FlowableActionIn(BaseModel):
     reason: str = Field("", example="Manual operational action from Flowable Ops")
 
 
+class RequestActionIn(BaseModel):
+    reason: str = Field("", example="Temporary connector outage resolved")
+
+
+class RequestNoteIn(BaseModel):
+    note: str = Field(..., min_length=1, example="Vendor incident acknowledged, retry after 15 minutes")
+
+
 class TrackerEventIn(BaseModel):
     request_id: str = Field(..., example="REQ-2026-0001")
     stage: str = Field(..., example="connector")

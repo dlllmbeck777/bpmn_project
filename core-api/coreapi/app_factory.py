@@ -9,8 +9,8 @@ import psycopg2
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from coreapi.models import AdminUserCreateIn, AdminUserUpdateIn, FlowableActionIn, HealthResponse, ListResponse, LoginIn, LoginResponse, PipelineStepIn, RequestIn, RequestResponse, RuleIn, ServiceIn, ServiceOut, StatusResponse, StopFactorIn, TrackerEventIn
-from coreapi.services import ROLE_ADMIN, ROLE_ANALYST, ROLE_SENIOR_ANALYST, apply_rate_limit, authenticate_ui_login, authorize_request_view, build_request_view, build_requests_list_query, create_admin_user, delete_admin_user, ensure_default_ui_users, finalize_request, get_connector_urls, get_flowable_instance_detail, list_admin_users, list_flowable_instances, normalize_incoming_request, reconcile_flowable_request, require_gateway_auth, require_internal_auth, require_internal_or_min_role, require_min_role, resolve_mode, revoke_admin_user_session, retry_flowable_failed_jobs, run_stop_factor_check, set_flowable_instance_state, terminate_flowable_instance, update_admin_user
+from coreapi.models import AdminUserCreateIn, AdminUserUpdateIn, FlowableActionIn, HealthResponse, ListResponse, LoginIn, LoginResponse, PipelineStepIn, RequestActionIn, RequestIn, RequestNoteIn, RequestResponse, RuleIn, ServiceIn, ServiceOut, StatusResponse, StopFactorIn, TrackerEventIn
+from coreapi.services import ROLE_ADMIN, ROLE_ANALYST, ROLE_SENIOR_ANALYST, add_request_note, apply_rate_limit, authenticate_ui_login, authorize_request_view, build_request_view, build_requests_list_query, clone_request_submission, create_admin_user, delete_admin_user, ensure_default_ui_users, finalize_request, get_connector_urls, get_flowable_instance_detail, list_admin_users, list_flowable_instances, list_request_notes, normalize_incoming_request, reconcile_flowable_request, require_gateway_auth, require_internal_auth, require_internal_or_min_role, require_min_role, resolve_mode, retry_request_as_new, retry_request_flowable_jobs, revoke_admin_user_session, retry_flowable_failed_jobs, run_stop_factor_check, set_flowable_instance_state, set_request_ignored, submit_request_payload, terminate_flowable_instance, update_admin_user
 from coreapi.storage import audit, execute, execute_returning, query, to_json_ready, track_request_event
 from migrations import run_migrations, seed_defaults
 from shared import all_breaker_states, close_pool, config_cache, get_correlation_id, get_conn, get_logger, init_pool, metrics, new_correlation_id, put_conn, resilient_post
@@ -578,12 +578,16 @@ def list_requests(
     status: Optional[str] = Query(None),
     created_from: Optional[datetime] = Query(None),
     created_to: Optional[datetime] = Query(None),
+    needs_action: bool = Query(False),
+    ignored: Optional[bool] = Query(None),
 ):
     authorize_request_view(x_api_key, x_user_role)
     apply_rate_limit(request.client.host if request.client else "unknown")
-    sql, params = build_requests_list_query(limit, status=status, created_from=created_from, created_to=created_to)
-    rows = query(sql, params)
-    return {"items": [build_request_view(to_json_ready(row)) for row in rows]}
+    sql, params = build_requests_list_query(limit, status=status, created_from=created_from, created_to=created_to, ignored=ignored)
+    rows = [build_request_view(to_json_ready(row)) for row in query(sql, params)]
+    if needs_action:
+        rows = [row for row in rows if row.get("needs_operator_action")]
+    return {"items": rows}
 
 
 @app.post("/api/v1/requests", response_model=RequestResponse, tags=["Requests"])
@@ -592,160 +596,10 @@ async def create_request(body: RequestIn, request: Request, x_api_key: str = Hea
     apply_rate_limit(request.client.host if request.client else "unknown")
 
     cid = get_correlation_id()
-    incoming = body.model_dump(exclude_none=True)
-    normalized = normalize_incoming_request(incoming)
-    data = normalized["internal"]
-    request_id = normalized["request_id"]
-    customer_id = normalized["customer_id"]
-    product_type = normalized["product_type"]
-    requested_mode = normalized["orchestration_mode"]
-    applicant_profile = normalized["applicant_profile_encrypted"]
-    ssn_encrypted = normalized["ssn_encrypted"]
-    iin_encrypted = ssn_encrypted
-    metrics.inc("requests_total", f'product="{product_type}"')
-
-    existing = query("SELECT status FROM requests WHERE request_id=%s", (request_id,), "one")
-    if existing:
-        raise HTTPException(409, f"request_id '{request_id}' already exists (status: {existing.get('status')})")
-
-    track_request_event(
-        request_id,
-        "gateway",
-        "IN",
-        "Request received by gateway",
-        status="RECEIVED",
-        payload=incoming,
-        correlation_id=cid,
-    )
-
-    sf_pre = await run_stop_factor_check("pre", data, cid)
-    track_request_event(
-        request_id,
-        "stop_factor_pre",
-        "STATE",
-        "PRE stop factors evaluated",
-        status=sf_pre.get("decision"),
-        payload=sf_pre,
-        correlation_id=cid,
-    )
-    if sf_pre["decision"] == "REJECT":
-        execute(
-            """
-            INSERT INTO requests (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,product_type,orchestration_mode,status,correlation_id,result,post_stop_factor)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """,
-            (
-                request_id,
-                customer_id,
-                iin_encrypted,
-                ssn_encrypted,
-                json.dumps(applicant_profile),
-                product_type,
-                requested_mode,
-                "REJECTED",
-                cid,
-                json.dumps({"status": "REJECTED", "reason": sf_pre.get("reason")}),
-                json.dumps(sf_pre),
-            ),
-        )
-        track_request_event(
-            request_id,
-            "gateway",
-            "STATE",
-            "Request rejected before orchestration",
-            status="REJECTED",
-            payload={"reason": sf_pre.get("reason")},
-            correlation_id=cid,
-        )
-        metrics.inc("requests_rejected")
-        return {"request_id": request_id, "selected_mode": "none", "result": {"status": "REJECTED", "reason": sf_pre.get("reason")}}
-
-    mode = resolve_mode(data)
-    track_request_event(
-        request_id,
-        "routing",
-        "STATE",
-        "Routing mode selected",
-        status=mode.upper(),
-        payload={"selected_mode": mode},
-        correlation_id=cid,
-    )
-    adapter_id = "flowable-adapter" if mode == "flowable" else "custom-adapter"
-    service = to_json_ready(query("SELECT * FROM services WHERE id=%s", (adapter_id,), "one")) or {}
-    base_url = service.get("base_url", "")
-    endpoint_path = service.get("endpoint_path", "/orchestrate")
-    if not base_url:
-        raise HTTPException(503, f"{adapter_id} not configured")
-
-    execute(
-        """
-        INSERT INTO requests (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,product_type,orchestration_mode,status,correlation_id)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        """,
-        (request_id, customer_id, iin_encrypted, ssn_encrypted, json.dumps(applicant_profile), product_type, mode, "SUBMITTED", cid),
-    )
-    track_request_event(
-        request_id,
-        "orchestrator",
-        "OUT",
-        f"Request dispatched to {adapter_id}",
-        service_id=adapter_id,
-        status="SUBMITTED",
-        payload={"mode": mode, "adapter_id": adapter_id},
-        correlation_id=cid,
-    )
-
-    result = await resilient_post(
-        adapter_id,
-        f"{base_url}{endpoint_path}",
-        data,
-        timeout=service.get("timeout_ms", 60000) / 1000,
-        max_retries=service.get("retry_count", 2),
-        cid=cid,
-    )
-    if result.get("status") in ("CIRCUIT_OPEN", "UNAVAILABLE"):
-        execute("UPDATE requests SET status=%s,error=%s,updated_at=NOW() WHERE request_id=%s", ("FAILED", json.dumps(result), request_id))
-        track_request_event(
-            request_id,
-            "orchestrator",
-            "IN",
-            f"{adapter_id} returned failure",
-            service_id=adapter_id,
-            status=result.get("status"),
-            payload=result,
-            correlation_id=cid,
-        )
-        raise HTTPException(502, f"orchestrator failed: {result}")
-
-    normalized_result = dict(result)
-    current_status = normalized_result.get("status", "COMPLETED")
-    execute("UPDATE requests SET status=%s,result=%s,updated_at=NOW() WHERE request_id=%s", (current_status, json.dumps(normalized_result), request_id))
-    track_request_event(
-        request_id,
-        "orchestrator",
-        "IN",
-        f"{adapter_id} returned result",
-        service_id=adapter_id,
-        status=current_status,
-        payload=normalized_result,
-        correlation_id=cid,
-    )
-
-    if current_status == "RUNNING":
-        metrics.inc("requests_running", f'mode="{mode}"')
-        track_request_event(
-            request_id,
-            "request",
-            "STATE",
-            "Async completion pending",
-            status="RUNNING",
-            payload={"mode": mode},
-            correlation_id=cid,
-        )
-        return {"request_id": request_id, "selected_mode": mode, "result": normalized_result}
-
-    finalized = await finalize_request(request_id, mode, normalized_result, cid, request_data=data)
-    return {"request_id": request_id, "selected_mode": mode, "result": finalized["result"]}
+    result = await submit_request_payload(body.model_dump(exclude_none=True), cid)
+    if result.get("http_error"):
+        raise HTTPException(502, result["http_error"])
+    return {"request_id": result["request_id"], "selected_mode": result["selected_mode"], "result": result["result"]}
 
 
 @app.get("/api/v1/requests/{request_id}", tags=["Requests"])
@@ -754,7 +608,50 @@ def get_request_detail(request_id: str, x_api_key: str = Header(default=""), x_u
     row = build_request_view(to_json_ready(query("SELECT * FROM requests WHERE request_id=%s", (request_id,), "one")))
     if not row:
         raise HTTPException(404, "Request not found")
+    row["notes"] = list_request_notes(request_id)
     return row
+
+
+@app.get("/api/v1/requests/{request_id}/notes", response_model=ListResponse, tags=["Requests"])
+def get_request_notes(request_id: str, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+    authorize_request_view(x_api_key, x_user_role)
+    return {"items": list_request_notes(request_id)}
+
+
+@app.post("/api/v1/requests/{request_id}/notes", tags=["Requests"])
+def create_request_note(request_id: str, body: RequestNoteIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""), x_user_name: str = Header(default="")):
+    require_min_role(x_api_key, x_user_role, ROLE_ANALYST)
+    return add_request_note(request_id, body.note, x_user_name)
+
+
+@app.post("/api/v1/requests/{request_id}/retry-as-new", tags=["Requests"])
+async def retry_request(request_id: str, body: RequestActionIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""), x_user_name: str = Header(default="")):
+    role = require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
+    return await retry_request_as_new(request_id, role, body.reason, x_user_name)
+
+
+@app.post("/api/v1/requests/{request_id}/clone", tags=["Requests"])
+async def clone_request(request_id: str, body: RequestActionIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""), x_user_name: str = Header(default="")):
+    role = require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
+    return await clone_request_submission(request_id, role, body.reason, x_user_name)
+
+
+@app.post("/api/v1/requests/{request_id}/ignore", tags=["Requests"])
+def ignore_request(request_id: str, body: RequestActionIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""), x_user_name: str = Header(default="")):
+    role = require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
+    return set_request_ignored(request_id, True, role, body.reason, x_user_name)
+
+
+@app.post("/api/v1/requests/{request_id}/restore", tags=["Requests"])
+def restore_request(request_id: str, body: RequestActionIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""), x_user_name: str = Header(default="")):
+    role = require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
+    return set_request_ignored(request_id, False, role, body.reason, x_user_name)
+
+
+@app.post("/api/v1/requests/{request_id}/flowable/retry-failed-jobs", tags=["Requests"])
+async def retry_request_flowable_jobs_route(request_id: str, body: RequestActionIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+    role = require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
+    return await retry_request_flowable_jobs(request_id, role, body.reason)
 
 
 @app.get("/api/v1/snp-notifications", response_model=ListResponse, tags=["SNP"])

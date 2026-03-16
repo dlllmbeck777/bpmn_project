@@ -148,6 +148,38 @@ class FlowableOpsHelperTests(unittest.TestCase):
         self.assertEqual(services._flowable_engine_status(runtime, None, "ENGINE_ERROR"), "ORPHANED")
         self.assertEqual(services._flowable_engine_status(runtime, None, "RUNNING"), "RUNNING")
 
+    def test_classify_request_error_marks_engine_error_as_technical(self):
+        row = {"status": "ENGINE_ERROR", "ignored": False, "result": {"status": "ENGINE_ERROR"}}
+        self.assertEqual(services.classify_request_error(row), "technical")
+        self.assertTrue(services.request_needs_operator_action(row))
+
+    def test_classify_request_error_marks_connector_failed_as_integration(self):
+        row = {
+            "status": "FAILED",
+            "ignored": False,
+            "result": {
+                "status": "FAILED",
+                "steps": {
+                    "creditsafe": {"status": "UNAVAILABLE"},
+                },
+            },
+        }
+        self.assertEqual(services.classify_request_error(row), "integration")
+        self.assertTrue(services.request_needs_operator_action(row))
+
+    def test_build_request_view_respects_ignored_flag_for_needs_action(self):
+        row = {
+            "request_id": "REQ-1",
+            "status": "ENGINE_UNREACHABLE",
+            "ignored": True,
+            "applicant_profile": {},
+            "result": {"status": "ENGINE_UNREACHABLE"},
+        }
+        view = services.build_request_view(row)
+        self.assertEqual(view["error_class"], "technical")
+        self.assertFalse(view["needs_operator_action"])
+        self.assertTrue(view["ops"]["can_restore"])
+
     def test_build_flowable_result_from_variables_adds_engine_and_steps(self):
         variables = {
             "request_id": "REQ-55",

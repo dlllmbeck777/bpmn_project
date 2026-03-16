@@ -140,6 +140,21 @@ MIGRATIONS = [
         SET ssn_encrypted = COALESCE(ssn_encrypted, iin_encrypted)
         WHERE ssn_encrypted IS NULL AND iin_encrypted IS NOT NULL;
     """),
+    (10, """
+        ALTER TABLE requests ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE requests ADD COLUMN IF NOT EXISTS ignored_reason TEXT;
+        ALTER TABLE requests ADD COLUMN IF NOT EXISTS ignored_at TIMESTAMPTZ;
+        ALTER TABLE requests ADD COLUMN IF NOT EXISTS ignored_by TEXT;
+
+        CREATE TABLE IF NOT EXISTS request_notes (
+            id SERIAL PRIMARY KEY,
+            request_id TEXT NOT NULL REFERENCES requests(request_id) ON DELETE CASCADE,
+            note_text TEXT NOT NULL,
+            created_by TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_request_notes_request_id ON request_notes(request_id, id DESC);
+    """),
 ]
 
 

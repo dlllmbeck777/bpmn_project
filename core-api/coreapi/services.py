@@ -71,6 +71,9 @@ ROLE_HEADERS = {
 FLOWABLE_DEFAULT_URL = "http://flowable-rest:8080/flowable-rest/service"
 FLOWABLE_RUNTIME_FINAL_STATES = {"COMPLETED", "REVIEW", "REJECTED"}
 FLOWABLE_REQUEST_FINAL_STATES = FLOWABLE_RUNTIME_FINAL_STATES | {"FAILED", "ENGINE_ERROR", "ENGINE_UNREACHABLE"}
+REQUEST_BUSINESS_STATUSES = {"COMPLETED", "REVIEW", "REJECTED"}
+REQUEST_TECHNICAL_STATUSES = {"ENGINE_ERROR", "ENGINE_UNREACHABLE"}
+REQUEST_ACTIONABLE_CLASSES = {"technical", "integration"}
 FLOWABLE_STEP_MAP = (
     ("isoftpull", "isoRawBody", "iso_status", "skip_reason_isoftpull"),
     ("creditsafe", "csRawBody", "creditsafe_status", "skip_reason_creditsafe"),
@@ -406,10 +409,102 @@ def build_applicant_location(applicant: Dict[str, Any]) -> str:
     return ", ".join(part for part in (city, state) if part)
 
 
+def _nested_values(value: Any):
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _nested_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _nested_values(item)
+    else:
+        yield value
+
+
+def _normalize_request_error_payload(value: Any):
+    parsed = _parse_embedded_json(value)
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _payload_has_status(payload: Dict[str, Any], statuses: set[str]) -> bool:
+    normalized_statuses = {str(item).upper() for item in statuses}
+    for value in _nested_values(payload):
+        if isinstance(value, str) and value.upper() in normalized_statuses:
+            return True
+    return False
+
+
+def classify_request_error(row: Optional[Dict[str, Any]]) -> str:
+    if not row:
+        return ""
+
+    status = str((row or {}).get("status") or "").upper()
+    if status in REQUEST_BUSINESS_STATUSES:
+        return "business"
+    if status in REQUEST_TECHNICAL_STATUSES:
+        return "technical"
+
+    result = normalize_result_payload((row or {}).get("result") or {}) if isinstance((row or {}).get("result"), dict) else _normalize_request_error_payload((row or {}).get("result"))
+    error_payload = _normalize_request_error_payload((row or {}).get("error"))
+
+    engine_hints = {
+        str(error_payload.get("service") or "").lower(),
+        str(result.get("service") or "").lower(),
+        str(result.get("adapter") or "").lower(),
+        str(result.get("status") or "").upper(),
+    }
+    if status == "FAILED":
+        if any("adapter" in hint or "engine" in hint for hint in engine_hints if hint):
+            return "technical"
+        if _payload_has_status(result, {"FAILED", "UNAVAILABLE", "CIRCUIT_OPEN", "PARSER_ERROR", "PARSER_UNAVAILABLE"}):
+            return "integration"
+        if _payload_has_status(error_payload, {"FAILED", "UNAVAILABLE", "CIRCUIT_OPEN"}):
+            service_hint = str(error_payload.get("service") or "").lower()
+            return "technical" if ("adapter" in service_hint or "engine" in service_hint) else "integration"
+        return "technical"
+
+    if _payload_has_status(result, REQUEST_TECHNICAL_STATUSES) or _payload_has_status(error_payload, REQUEST_TECHNICAL_STATUSES):
+        return "technical"
+    return ""
+
+
+def request_needs_operator_action(row: Optional[Dict[str, Any]]) -> bool:
+    if not row:
+        return False
+    if bool((row or {}).get("ignored")):
+        return False
+    return classify_request_error(row) in REQUEST_ACTIONABLE_CLASSES
+
+
+def build_request_ops(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    item = dict(row or {})
+    error_class = classify_request_error(item)
+    instance_id = extract_flowable_instance_id(item.get("result"))
+    ignored = bool(item.get("ignored"))
+    status = str(item.get("status") or "").upper()
+    return {
+        "error_class": error_class,
+        "needs_operator_action": request_needs_operator_action(item),
+        "instance_id": instance_id,
+        "can_retry_as_new": not ignored and error_class in REQUEST_ACTIONABLE_CLASSES,
+        "can_clone": True,
+        "can_ignore": not ignored and error_class in REQUEST_ACTIONABLE_CLASSES,
+        "can_restore": ignored,
+        "can_reconcile_flowable": item.get("orchestration_mode") == "flowable" and bool(instance_id) and status not in REQUEST_BUSINESS_STATUSES,
+        "can_retry_failed_flowable_jobs": item.get("orchestration_mode") == "flowable" and bool(instance_id) and error_class in REQUEST_ACTIONABLE_CLASSES,
+        "can_add_note": True,
+    }
+
+
 def build_request_view(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not row:
         return row
     item = dict(row)
+    if isinstance(item.get("result"), dict):
+        item["result"] = normalize_result_payload(item.get("result"))
+    if item.get("error"):
+        item["error"] = _normalize_request_error_payload(item.get("error")) or item.get("error")
+    if not item.get("result") and isinstance(item.get("error"), dict):
+        item["result"] = dict(item["error"])
     applicant = item.get("applicant_profile")
     applicant = decrypt_sensitive(applicant) if isinstance(applicant, dict) else {}
     if not applicant and item.get("ssn_encrypted"):
@@ -442,6 +537,10 @@ def build_request_view(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]
     item["iin_masked"] = ssn_masked
     item["email_masked"] = email_masked
     item["phone_masked"] = phone_masked
+    item["ignored"] = bool(item.get("ignored"))
+    item["error_class"] = classify_request_error(item)
+    item["needs_operator_action"] = request_needs_operator_action(item)
+    item["ops"] = build_request_ops(item)
     return item
 
 
@@ -553,7 +652,7 @@ def revoke_admin_user_session(username: str) -> Dict[str, Any]:
     return _safe_user_view(_admin_user_by_username(normalized_username))
 
 
-def build_requests_list_query(limit: int, status: Optional[str] = None, created_from: Optional[datetime] = None, created_to: Optional[datetime] = None):
+def build_requests_list_query(limit: int, status: Optional[str] = None, created_from: Optional[datetime] = None, created_to: Optional[datetime] = None, ignored: Optional[bool] = None):
     sql = "SELECT * FROM requests WHERE TRUE"
     params: List[Any] = []
     if status:
@@ -565,6 +664,9 @@ def build_requests_list_query(limit: int, status: Optional[str] = None, created_
     if created_to:
         sql += " AND created_at <= %s"
         params.append(created_to)
+    if ignored is not None:
+        sql += " AND ignored=%s"
+        params.append(bool(ignored))
     sql += " ORDER BY created_at DESC LIMIT %s"
     params.append(limit)
     return sql, params
@@ -843,6 +945,347 @@ async def finalize_request(request_id: str, mode: str, result: Dict[str, Any], c
         "snp_result": snp,
     }
 
+
+def list_request_notes(request_id: str) -> List[Dict[str, Any]]:
+    rows = query("SELECT * FROM request_notes WHERE request_id=%s ORDER BY id DESC", (request_id,))
+    return [to_json_ready(row) for row in rows]
+
+
+def add_request_note(request_id: str, note_text: str, created_by: str = "") -> Dict[str, Any]:
+    if not (note_text or "").strip():
+        raise HTTPException(400, "note text is required")
+    existing = query("SELECT request_id, correlation_id FROM requests WHERE request_id=%s", (request_id,), "one")
+    if not existing:
+        raise HTTPException(404, "request not found")
+    note_id = execute_returning(
+        """
+        INSERT INTO request_notes (request_id,note_text,created_by)
+        VALUES (%s,%s,%s)
+        RETURNING id
+        """,
+        (request_id, note_text.strip(), (created_by or "").strip()),
+    )
+    audit("request", request_id, "note_added", {"note": note_text.strip()}, performed_by=(created_by or "").strip() or None)
+    track_request_event(
+        request_id,
+        "operations",
+        "STATE",
+        "Operator note added",
+        status="NOTED",
+        payload={"note": note_text.strip(), "created_by": (created_by or "").strip()},
+        correlation_id=(existing or {}).get("correlation_id"),
+    )
+    return to_json_ready(query("SELECT * FROM request_notes WHERE id=%s", (note_id,), "one")) or {}
+
+
+def set_request_ignored(request_id: str, ignored: bool, requested_role: str, reason: str = "", actor_username: str = "") -> Dict[str, Any]:
+    existing = query("SELECT request_id, correlation_id, ignored FROM requests WHERE request_id=%s", (request_id,), "one")
+    if not existing:
+        raise HTTPException(404, "request not found")
+
+    if ignored:
+        execute(
+            """
+            UPDATE requests
+            SET ignored=TRUE, ignored_reason=%s, ignored_at=NOW(), ignored_by=%s, updated_at=NOW()
+            WHERE request_id=%s
+            """,
+            (reason.strip(), (actor_username or "").strip(), request_id),
+        )
+        action = "ignored"
+        title = "Request marked as ignored"
+        status = "IGNORED"
+    else:
+        execute(
+            """
+            UPDATE requests
+            SET ignored=FALSE, ignored_reason=NULL, ignored_at=NULL, ignored_by=NULL, updated_at=NOW()
+            WHERE request_id=%s
+            """,
+            (request_id,),
+        )
+        action = "restored"
+        title = "Ignored request restored"
+        status = "RESTORED"
+
+    audit(
+        "request",
+        request_id,
+        action,
+        {"reason": reason.strip(), "requested_role": requested_role},
+        performed_by=(actor_username or "").strip() or None,
+    )
+    track_request_event(
+        request_id,
+        "operations",
+        "STATE",
+        title,
+        status=status,
+        payload={"reason": reason.strip(), "requested_role": requested_role, "requested_by": (actor_username or "").strip()},
+        correlation_id=(existing or {}).get("correlation_id"),
+    )
+    return build_request_view(to_json_ready(query("SELECT * FROM requests WHERE request_id=%s", (request_id,), "one"))) or {}
+
+
+async def submit_request_payload(
+    incoming: Dict[str, Any],
+    cid: str,
+    *,
+    origin_stage: str = "gateway",
+    origin_title: str = "Request received by gateway",
+    origin_status: str = "RECEIVED",
+    origin_payload: Optional[Dict[str, Any]] = None,
+):
+    normalized = normalize_incoming_request(incoming)
+    data = normalized["internal"]
+    request_id = normalized["request_id"]
+    customer_id = normalized["customer_id"]
+    product_type = normalized["product_type"]
+    requested_mode = normalized["orchestration_mode"]
+    applicant_profile = normalized["applicant_profile_encrypted"]
+    ssn_encrypted = normalized["ssn_encrypted"]
+    iin_encrypted = ssn_encrypted
+    metrics.inc("requests_total", f'product="{product_type}"')
+
+    existing = query("SELECT status FROM requests WHERE request_id=%s", (request_id,), "one")
+    if existing:
+        raise HTTPException(409, f"request_id '{request_id}' already exists (status: {existing.get('status')})")
+
+    track_request_event(
+        request_id,
+        origin_stage,
+        "IN",
+        origin_title,
+        status=origin_status,
+        payload=origin_payload or incoming,
+        correlation_id=cid,
+    )
+
+    sf_pre = await run_stop_factor_check("pre", data, cid)
+    track_request_event(
+        request_id,
+        "stop_factor_pre",
+        "STATE",
+        "PRE stop factors evaluated",
+        status=sf_pre.get("decision"),
+        payload=sf_pre,
+        correlation_id=cid,
+    )
+    if sf_pre["decision"] == "REJECT":
+        execute(
+            """
+            INSERT INTO requests (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,product_type,orchestration_mode,status,correlation_id,result,post_stop_factor)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                request_id,
+                customer_id,
+                iin_encrypted,
+                ssn_encrypted,
+                json.dumps(applicant_profile),
+                product_type,
+                requested_mode,
+                "REJECTED",
+                cid,
+                json.dumps({"status": "REJECTED", "reason": sf_pre.get("reason")}),
+                json.dumps(sf_pre),
+            ),
+        )
+        track_request_event(
+            request_id,
+            origin_stage,
+            "STATE",
+            "Request rejected before orchestration",
+            status="REJECTED",
+            payload={"reason": sf_pre.get("reason")},
+            correlation_id=cid,
+        )
+        metrics.inc("requests_rejected")
+        return {"request_id": request_id, "selected_mode": "none", "result": {"status": "REJECTED", "reason": sf_pre.get("reason")}, "http_error": None}
+
+    mode = resolve_mode(data)
+    track_request_event(
+        request_id,
+        "routing",
+        "STATE",
+        "Routing mode selected",
+        status=mode.upper(),
+        payload={"selected_mode": mode},
+        correlation_id=cid,
+    )
+    adapter_id = "flowable-adapter" if mode == "flowable" else "custom-adapter"
+    service = to_json_ready(query("SELECT * FROM services WHERE id=%s", (adapter_id,), "one")) or {}
+    base_url = service.get("base_url", "")
+    endpoint_path = service.get("endpoint_path", "/orchestrate")
+    if not base_url:
+        raise HTTPException(503, f"{adapter_id} not configured")
+
+    execute(
+        """
+        INSERT INTO requests (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,product_type,orchestration_mode,status,correlation_id)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """,
+        (request_id, customer_id, iin_encrypted, ssn_encrypted, json.dumps(applicant_profile), product_type, mode, "SUBMITTED", cid),
+    )
+    track_request_event(
+        request_id,
+        "orchestrator",
+        "OUT",
+        f"Request dispatched to {adapter_id}",
+        service_id=adapter_id,
+        status="SUBMITTED",
+        payload={"mode": mode, "adapter_id": adapter_id},
+        correlation_id=cid,
+    )
+
+    result = await resilient_post(
+        adapter_id,
+        f"{base_url}{endpoint_path}",
+        data,
+        timeout=service.get("timeout_ms", 60000) / 1000,
+        max_retries=service.get("retry_count", 2),
+        cid=cid,
+    )
+    if result.get("status") in ("CIRCUIT_OPEN", "UNAVAILABLE"):
+        execute("UPDATE requests SET status=%s,error=%s,updated_at=NOW() WHERE request_id=%s", ("FAILED", json.dumps(result), request_id))
+        track_request_event(
+            request_id,
+            "orchestrator",
+            "IN",
+            f"{adapter_id} returned failure",
+            service_id=adapter_id,
+            status=result.get("status"),
+            payload=result,
+            correlation_id=cid,
+        )
+        return {
+            "request_id": request_id,
+            "selected_mode": mode,
+            "result": {"status": "FAILED", "error": result, "adapter": adapter_id, "request_id": request_id},
+            "http_error": f"orchestrator failed: {result}",
+        }
+
+    normalized_result = dict(result)
+    current_status = normalized_result.get("status", "COMPLETED")
+    execute("UPDATE requests SET status=%s,result=%s,updated_at=NOW() WHERE request_id=%s", (current_status, json.dumps(normalized_result), request_id))
+    track_request_event(
+        request_id,
+        "orchestrator",
+        "IN",
+        f"{adapter_id} returned result",
+        service_id=adapter_id,
+        status=current_status,
+        payload=normalized_result,
+        correlation_id=cid,
+    )
+
+    if current_status == "RUNNING":
+        metrics.inc("requests_running", f'mode="{mode}"')
+        track_request_event(
+            request_id,
+            "request",
+            "STATE",
+            "Async completion pending",
+            status="RUNNING",
+            payload={"mode": mode},
+            correlation_id=cid,
+        )
+        return {"request_id": request_id, "selected_mode": mode, "result": normalized_result, "http_error": None}
+
+    finalized = await finalize_request(request_id, mode, normalized_result, cid, request_data=data)
+    return {"request_id": request_id, "selected_mode": mode, "result": finalized["result"], "http_error": None}
+
+
+def _request_retry_input(request_id: str) -> Dict[str, Any]:
+    request_row = to_json_ready(query("SELECT request_id, product_type, orchestration_mode FROM requests WHERE request_id=%s", (request_id,), "one"))
+    if not request_row:
+        raise HTTPException(404, "request not found")
+    context = get_request_context(request_id)
+    applicant = context.get("applicant") or {}
+    if not applicant:
+        raise HTTPException(409, "request does not contain applicant data for retry")
+    return {
+        **applicant,
+        "product_type": request_row.get("product_type") or DEFAULT_PRODUCT_TYPE,
+        "orchestration_mode": request_row.get("orchestration_mode") or DEFAULT_ORCHESTRATION_MODE,
+        "payload": {
+            "operator_action": {
+                "source_request_id": request_id,
+            }
+        },
+    }
+
+
+async def retry_request_as_new(request_id: str, requested_role: str, reason: str = "", actor_username: str = "") -> Dict[str, Any]:
+    request_row = build_request_view(to_json_ready(query("SELECT * FROM requests WHERE request_id=%s", (request_id,), "one")))
+    if not request_row:
+        raise HTTPException(404, "request not found")
+    if request_row.get("error_class") not in REQUEST_ACTIONABLE_CLASSES:
+        raise HTTPException(409, "only technical or integration issues can be retried as new")
+
+    incoming = _request_retry_input(request_id)
+    incoming.setdefault("payload", {}).setdefault("operator_action", {})
+    incoming["payload"]["operator_action"].update({"type": "retry_as_new", "reason": reason.strip()})
+    result = await submit_request_payload(
+        incoming,
+        get_correlation_id(),
+        origin_stage="operations",
+        origin_title="Request retried as new",
+        origin_status="RETRIED",
+        origin_payload={"source_request_id": request_id, "reason": reason.strip(), "requested_role": requested_role, "requested_by": (actor_username or "").strip()},
+    )
+    audit(
+        "request",
+        request_id,
+        "retry_as_new",
+        {"new_request_id": result["request_id"], "reason": reason.strip(), "requested_role": requested_role},
+        performed_by=(actor_username or "").strip() or None,
+    )
+    track_request_event(
+        request_id,
+        "operations",
+        "STATE",
+        "Retry as new requested",
+        status="RETRIED",
+        payload={"new_request_id": result["request_id"], "reason": reason.strip(), "requested_role": requested_role},
+        correlation_id=request_row.get("correlation_id"),
+    )
+    return {**result, "source_request_id": request_id}
+
+
+async def clone_request_submission(request_id: str, requested_role: str, reason: str = "", actor_username: str = "") -> Dict[str, Any]:
+    request_row = build_request_view(to_json_ready(query("SELECT * FROM requests WHERE request_id=%s", (request_id,), "one")))
+    if not request_row:
+        raise HTTPException(404, "request not found")
+
+    incoming = _request_retry_input(request_id)
+    incoming.setdefault("payload", {}).setdefault("operator_action", {})
+    incoming["payload"]["operator_action"].update({"type": "clone", "reason": reason.strip()})
+    result = await submit_request_payload(
+        incoming,
+        get_correlation_id(),
+        origin_stage="operations",
+        origin_title="Request cloned from existing case",
+        origin_status="CLONED",
+        origin_payload={"source_request_id": request_id, "reason": reason.strip(), "requested_role": requested_role, "requested_by": (actor_username or "").strip()},
+    )
+    audit(
+        "request",
+        request_id,
+        "cloned",
+        {"new_request_id": result["request_id"], "reason": reason.strip(), "requested_role": requested_role},
+        performed_by=(actor_username or "").strip() or None,
+    )
+    track_request_event(
+        request_id,
+        "operations",
+        "STATE",
+        "Clone request requested",
+        status="CLONED",
+        payload={"new_request_id": result["request_id"], "reason": reason.strip(), "requested_role": requested_role},
+        correlation_id=request_row.get("correlation_id"),
+    )
+    return {**result, "source_request_id": request_id}
 
 def get_connector_urls():
     cached = config_cache.get("conn_urls")
@@ -1271,6 +1714,18 @@ async def retry_flowable_failed_jobs(instance_id: str, requested_role: str, reas
         )
 
     return {"status": "ok", "action": "retry_failed_jobs", "instance_id": instance_id, "job_ids": executed_job_ids, "request_id": (request_row or {}).get("request_id")}
+
+
+async def retry_request_flowable_jobs(request_id: str, requested_role: str, reason: str = "") -> Dict[str, Any]:
+    request_row = to_json_ready(query("SELECT * FROM requests WHERE request_id=%s", (request_id,), "one"))
+    if not request_row:
+        raise HTTPException(404, "request not found")
+    if request_row.get("orchestration_mode") != "flowable":
+        raise HTTPException(400, "only flowable requests support Flowable job retry")
+    instance_id = extract_flowable_instance_id(request_row.get("result"))
+    if not instance_id:
+        raise HTTPException(409, "flowable instance id not found on request")
+    return await retry_flowable_failed_jobs(instance_id, requested_role, reason)
 
 
 async def terminate_flowable_instance(instance_id: str, requested_role: str, reason: str = "") -> Dict[str, Any]:
