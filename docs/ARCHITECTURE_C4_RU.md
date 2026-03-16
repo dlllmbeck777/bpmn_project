@@ -261,7 +261,8 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    Start["Request with orchestration_mode=auto"] --> Match["Match enabled routing rules by priority"]
+    Start["Applicant Input v2 received"] --> Normalize["Normalize input and set internal orchestration_mode=auto"]
+    Normalize --> Match["Match enabled routing rules by priority"]
     Match --> Canary["Canary rule matched?"]
     Canary -->|No| Next["Check next rule"]
     Canary -->|Yes| Percent["Bucket in sample_percent?"]

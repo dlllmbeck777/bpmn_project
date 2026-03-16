@@ -2,149 +2,121 @@
 
 ## Назначение
 
-Этот документ описывает, как запускать, настраивать и сопровождать платформу в production и test окружениях.
+Документ описывает эксплуатацию production/test окружения после перехода на новый входной контракт `Applicant Input v2`.
 
-Документ рассчитан на:
+Основная идея:
 
-- администратора платформы
-- senior analyst
-- DevOps / backend инженера
-- операционную команду
+- внешняя IT-система передает flat applicant profile;
+- `request_id` генерируется платформой;
+- routing выбирается внутри платформы;
+- stop factors блокируют заявку только при наличии активных правил.
 
 ## Состав системы
 
-Платформа состоит из следующих логических блоков:
+- `admin-ui` — UI управления;
+- `core-api` — публичный API, конфигурация, заявки, audit;
+- `orchestrators` — `custom` и `flowable`;
+- `processors` — parser и stop-factor processor;
+- `connectors` — `isoftpull`, `creditsafe`, `plaid`, `crm`;
+- `flowable-rest` / `flowable-ui` — BPMN runtime и modeler;
+- `config-db` / `flowable-db` — БД платформы и Flowable;
+- `nginx` — production reverse proxy;
+- `prometheus` / `grafana` — мониторинг.
 
-- `admin-ui`
-  интерфейс управления платформой
-- `core-api`
-  центральный API, хранение конфигурации, заявки, аудит, авторизация, routing
-- `orchestrators`
-  адаптеры `flowable` и `custom`
-- `processors`
-  парсер отчета и stop-factor processor
-- `connectors`
-  интеграции `isoftpull`, `creditsafe`, `plaid`, `crm`
-- `flowable-rest`
-  движок BPMN
-- `flowable-ui`
-  Flowable Modeler / Admin / IDM
-- `config-db`
-  основная PostgreSQL БД платформы
-- `flowable-db`
-  отдельная PostgreSQL БД Flowable
-- `nginx`
-  production reverse proxy
-- `prometheus` / `grafana`
-  наблюдаемость
+## Основной эксплуатационный принцип
 
-## Основные бизнес-сценарии
+Внешняя система больше не управляет маршрутом через request body.
 
-### 1. Весь auto-трафик в custom
+Операторы управляют поведением системы через UI:
 
-Используется, когда нужно временно исключить Flowable из обработки, но оставить автоматический путь в собственном адаптере.
+- `Orchestration`
+  - `Routing`
+  - `Stop factors`
+  - `Pipeline`
+- `Services`
+- `Requests`
+- `Process tracker`
+- `Flowable engine`
 
-Что делаем в UI:
+## Routing в UI
 
-1. Открыть `Scenarios`
-2. Нажать `Route all auto traffic to custom`
+Поддерживаются три режима:
 
-Результат:
+### 1. Все auto в custom
 
-- все заявки с `orchestration_mode=auto` идут в `custom`
-- если других активных правил выше по приоритету нет, fallback становится `custom`
+Используется, когда весь поток нужно временно увести из Flowable.
 
-### 2. Custom reports chain
+Ожидаемый результат:
 
-Используется, когда в `custom` нужно запускать только отчеты:
+- все новые заявки идут в `custom`;
+- заявка не зависит от внешнего поля `orchestration_mode`.
 
-- `isoftpull`
-- `creditsafe`
-- `plaid`
+### 2. Все auto в flowable
 
-Что делаем в UI:
+Используется, когда весь поток должен идти через BPMN engine.
 
-1. Открыть `Scenarios`
-2. Нажать `Prepare custom reports chain`
+Ожидаемый результат:
 
-Результат:
+- все новые заявки идут в `flowable`.
 
-- для `custom`-режима включается цепочка отчетных сервисов
-- остальные pipeline steps для `custom` будут `SKIPPED`
+### 3. Rule-based routing
 
-### 3. Flowable canary
+Используется, когда нужен выбор маршрута по правилам.
 
-Используется, когда только часть auto-трафика должна идти в Flowable.
+Ожидаемый результат:
 
-Что делаем в UI:
+- решение принимается по `priority` и условиям правил;
+- fallback rule обязателен.
 
-1. Открыть `Scenarios`
-2. В блоке `Flowable canary` заполнить:
-   - `Percent`
-   - `Sticky field`
-   - `Enabled`
-3. При необходимости включить:
-   - `Daily quota mode`
-   - `Max requests per day`
-4. Нажать `Apply`
+## Stop factors
 
-Результат:
+Базовое правило эксплуатации:
 
-- только заданная доля auto-трафика идет в `flowable`
-- остальной auto-трафик идет в `custom`
-- при включенном `Daily quota mode` Flowable перестает получать заявки после достижения дневного лимита
+- если хотя бы одно активное правило есть, оно участвует в принятии решения;
+- если активных правил нет, заявка проходит дальше автоматически.
 
-### 4. Полное отключение stop factors
+Это означает, что “пустой набор правил” не должен приводить к `REJECTED` или `REVIEW`.
 
-Используется для диагностики маршрута и проверки чистого happy-path без бизнес-блокировок.
+## Pipeline
 
-Что делаем в UI:
+`Pipeline` определяет порядок и состав вызовов сервисов.
 
-1. Открыть `Scenarios`
-2. Нажать `Disable all stop factors`
+Оператор может:
 
-Результат:
+- выключить шаг;
+- включить шаг;
+- настроить skip policy по mode;
+- оставить маршрут живым даже при временно отключенном connector.
 
-- все активные stop factors становятся `disabled`
-- решения `REVIEW` / `REJECTED`, зависящие от них, временно не применяются
+Если сервис или шаг отключен корректно, ожидаемое поведение:
 
-### 5. Управление сервисами
+- шаг помечается как `SKIPPED`;
+- заявка не падает только из-за того, что этот шаг отключен намеренно.
 
-Используется для отключения интеграции, смены URL или корректировки retry/timeout.
+## Services
 
-Что делаем в UI:
+В `Services` можно:
 
-1. Открыть `Services`
-2. Использовать:
-   - `Enable`
-   - `Disable`
-   - `Edit`
+- менять `base_url`;
+- менять `endpoint_path`;
+- менять `timeout_ms`;
+- менять `retry_count`;
+- включать/выключать сервис.
 
-Что можно менять:
+Ожидаемое поведение при disable:
 
-- `base_url`
-- `endpoint_path`
-- `timeout_ms`
-- `retry_count`
-- `enabled`
+- если сервис отключен оператором, orchestrator не должен пытаться его вызвать;
+- tracker должен показать skip / disable причину.
 
 ## Production deployment
 
-### Вариант 1. One-command bootstrap
+### Быстрый запуск
 
 ```bash
 DOMAIN=your-domain.com bash scripts/deploy-prod.sh
 ```
 
-Что делает скрипт:
-
-- создает `.env.prod`, если его нет
-- подставляет `DOMAIN`
-- настраивает `CORS_ORIGINS`
-- генерирует self-signed TLS, если сертификатов нет
-- запускает production stack
-
-### Вариант 2. Ручной запуск
+### Полный production запуск
 
 ```bash
 docker compose \
@@ -154,223 +126,9 @@ docker compose \
   up -d --build
 ```
 
-## Production endpoints
+## Полная пересборка
 
-- `https://YOUR_DOMAIN/`
-  Admin UI
-- `https://YOUR_DOMAIN/api/`
-  Core API
-- `https://YOUR_DOMAIN/flowable-modeler/`
-  Flowable Modeler
-- `https://YOUR_DOMAIN/flowable-admin/`
-  Flowable Admin
-- `https://YOUR_DOMAIN/flowable-idm/`
-  Flowable IDM
-- `https://YOUR_DOMAIN/grafana/`
-  Grafana
-
-## Управление BPMN-моделями
-
-### Источник истины в production
-
-Если в production используется Flowable Modeler как основной редактор:
-
-- `flowable-ui` должен быть включен
-- `FLOWABLE_AUTO_DEPLOY_BPMN=false`
-
-Тогда BPMN-модель редактируется через Flowable UI и хранится в Flowable DB.
-
-### Важно
-
-Если process definition key меняется, orchestrator может перестать корректно запускать нужный процесс.
-
-Рекомендуется:
-
-- сохранять существующий `processDefinitionKey`
-- менять модель через версионирование внутри Flowable
-- фиксировать критичные изменения в Git и release notes
-
-## Пользователи и роли
-
-Поддерживаются роли:
-
-- `analyst`
-- `senior_analyst`
-- `admin`
-
-### Права по умолчанию
-
-- `analyst`
-  просмотр заявок, tracker, flowable engine, audit, dashboard
-- `senior_analyst`
-  все права analyst + изменение routing, pipeline, stop factors, services, scenarios
-- `admin`
-  все права senior analyst + users & access
-
-## Основные страницы UI
-
-### Dashboard
-
-Используется для общего обзора состояния платформы.
-
-### Scenarios
-
-Главная операционная страница для быстрого переключения режимов работы без ручного редактирования нескольких сущностей.
-
-### Services
-
-Используется для управления доступностью и параметрами внешних интеграций.
-
-### Routing rules
-
-Используется для ручного управления маршрутизацией:
-
-- target mode
-- priority
-- condition
-- sample percent
-- sticky field
-- daily quota
-
-### Stop factors
-
-Используется для включения/отключения пред- и пост-проверок.
-
-### Pipeline
-
-Используется для управления порядком и составом шагов pipeline, включая mode-specific skips.
-
-### Requests
-
-Используется для просмотра заявок.
-
-Поддерживает:
-
-- фильтры по статусу
-- фильтры по дате и времени
-- открытие детальной карточки заявки
-
-### Process tracker
-
-Используется для просмотра прохождения заявки по этапам.
-
-### Flowable engine
-
-Используется для просмотра:
-
-- process instances
-- variables
-- jobs
-- engine state
-
-### Audit log
-
-Используется для просмотра изменений конфигурации и действий операторов.
-
-### Users & access
-
-Используется для:
-
-- создания пользователя
-- смены роли
-- смены пароля
-- отключения пользователя
-- ревокации сессии
-
-## Проверка после настройки сценария
-
-Рекомендуемый порядок:
-
-1. Применить сценарий в `Scenarios`
-2. Подождать до 30 секунд или перезапустить `orchestrators`
-3. Отправить тестовую заявку
-4. Проверить:
-   - `selected_mode`
-   - `status`
-   - `Process tracker`
-   - `Flowable engine`, если заявка ушла в Flowable
-
-## Тестовый запрос
-
-```bash
-curl -k -X POST https://YOUR_DOMAIN/api/v1/requests \
-  -H "Content-Type: application/json" \
-  -H "X-Api-Key: YOUR_GATEWAY_API_KEY" \
-  -d '{
-    "request_id": "REQ-TEST-001",
-    "customer_id": "CUST-001",
-    "iin": "900101123456",
-    "product_type": "loan",
-    "orchestration_mode": "auto",
-    "payload": {
-      "amount": 5000,
-      "currency": "USD",
-      "term_months": 12
-    }
-  }'
-```
-
-## Нагрузочное тестирование
-
-Сценарий лежит в:
-
-- `scripts/stress-test-requests.js`
-
-Быстрый запуск:
-
-```bash
-BASE_URL=https://YOUR_DOMAIN \
-GATEWAY_API_KEY=YOUR_GATEWAY_API_KEY \
-VUS=5 \
-DURATION=30s \
-k6 run ./scripts/stress-test-requests.js
-```
-
-Важно:
-
-- тест создает реальные заявки
-- при маленьком `RATE_LIMIT_PER_MIN` большая часть запросов может получить `429`
-
-## Диагностика и troubleshooting
-
-### UI не логинится
-
-Проверить:
-
-- корректный `API Base URL`
-- `ADMIN_LOGIN_PASSWORD`
-- пользователя в `admin_users`
-- `core-api` health
-
-### Заявки идут не в тот режим
-
-Проверить:
-
-- активные `routing_rules`
-- их `priority`
-- включена ли canary rule
-- не достигнут ли daily quota
-- не закэширована ли старая конфигурация в `orchestrators`
-
-### Flowable UI недоступен
-
-Проверить:
-
-- `flowable-db`
-- `flowable-rest`
-- `flowable-ui`
-- `nginx`
-- корректность `FLOWABLE_DB_PASSWORD`
-
-Если Flowable DB была создана с конфликтующим паролем, использовать:
-
-```bash
-bash scripts/reset-flowable.sh
-```
-
-### Нужно полностью пересобрать production
-
-Использовать:
+Если конфигурация и runtime-state разошлись:
 
 ```bash
 bash scripts/rebuild-prod.sh
@@ -378,13 +136,103 @@ bash scripts/rebuild-prod.sh
 
 Важно:
 
-- будет удалено текущее runtime-состояние БД
-- использовать только осознанно
+- будет удалено текущее runtime-состояние БД;
+- использовать осознанно.
 
-## Рекомендации по эксплуатации
+## Flowable modeler
 
-- держать все изменения routing и pipeline под аудитом
-- не редактировать сразу несколько критичных сценариев без тестовой заявки
-- использовать `Scenarios` для типовых режимов, а `Routing rules` и `Pipeline` для точной настройки
-- для production фиксировать изменения в release notes
-- перед повышением canary процента сначала проверять Flowable health и success ratio
+Production endpoint:
+
+- `https://YOUR_DOMAIN/flowable-modeler/`
+
+Рекомендуемый режим:
+
+- `FLOWABLE_AUTO_DEPLOY_BPMN=false`
+
+Тогда BPMN source of truth находится в Flowable DB / Flowable UI.
+
+## Проверка после изменения routing или pipeline
+
+Рекомендуемый порядок:
+
+1. применить изменение в UI;
+2. подождать до 30 секунд или перезапустить `orchestrators`;
+3. отправить новую тестовую заявку;
+4. проверить:
+   - `selected_mode`;
+   - итоговый `status`;
+   - `Requests`;
+   - `Process tracker`;
+   - `Flowable engine`, если маршрут ушел в Flowable.
+
+## Тестовый запрос Applicant Input v2
+
+```bash
+curl -k -X POST https://YOUR_DOMAIN/api/v1/requests \
+  -H "Content-Type: application/json" \
+  -H "X-Api-Key: YOUR_GATEWAY_API_KEY" \
+  -d '{
+    "firstName": "John",
+    "lastName": "Doe",
+    "address": "123 Main Street",
+    "city": "New York",
+    "state": "NY",
+    "zipCode": "10001",
+    "ssn": "123456789",
+    "dateOfBirth": "1985-06-15",
+    "email": "john@example.com",
+    "phone": "555-123-4567"
+  }'
+```
+
+Ожидаемый ответ:
+
+- платформа вернет сгенерированный `request_id`;
+- будет указан `selected_mode`;
+- `result.status` будет либо финальным, либо `RUNNING`.
+
+## Диагностика
+
+### UI не логинится
+
+Проверить:
+
+- корректный `API Base URL`;
+- актуальный пароль admin-user;
+- `core-api` health;
+- устаревший session token в браузере.
+
+### Заявки идут не туда
+
+Проверить:
+
+- активный routing mode;
+- fallback rule;
+- cached config в `orchestrators`;
+- не остались ли старые правила выше по `priority`.
+
+### Flowable дает ENGINE_ERROR
+
+Проверить:
+
+- `flowable-rest` и `flowable-ui`;
+- правильный `FLOWABLE_PASSWORD`;
+- задеплоен ли process definition key;
+- логи `orchestrators` и `flowable-rest`;
+- internal auth между `orchestrators`, `processors` и `core-api`.
+
+### Services пустые в UI
+
+Проверить:
+
+- валидность UI session;
+- корректность пары `X-Api-Key` + `X-User-Role`;
+- не остался ли старый browser storage после rebuild.
+
+## Практические рекомендации
+
+- не менять сразу routing, stop factors и pipeline без тестовой заявки;
+- держать хотя бы одно явное fallback rule;
+- при пустом наборе stop factors считать систему “open flow”, а не “blocked flow”;
+- после rebuild открывать UI в `Incognito` или с `Ctrl+F5`;
+- фиксировать изменения интеграционного контракта в release notes и Confluence.

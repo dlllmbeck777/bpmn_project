@@ -41,6 +41,7 @@ Russian operational and project documentation:
 - `docs/ARCHITECTURE_TECHNICAL_RU.md`
 - `docs/ARCHITECTURE_C4_RU.md`
 - `docs/CONFLUENCE_PASTE_READY_NO_MERMAID_RU.md`
+- `docs/INTEGRATION_SPEC_IT_RU.md`
 - `docs/INTEGRATION_SPEC_MOBILE_RU.md`
 - `docs/INTEGRATION_SPEC_SNP_RU.md`
 - `docs/API_CHEATSHEET_RU.md`
@@ -73,7 +74,7 @@ For production modeling workflows, `flowable-ui` is available behind nginx and `
 
 ## Key Features
 
-- Field-level encryption for sensitive identifiers with legacy decrypt support.
+- Protection of sensitive applicant data and operational masking in UI/logging flows.
 - Role-scoped API keys and UI logins for admin, senior analyst, and analyst flows.
 - Request persistence, audit log, stop factors, routing rules, and configurable pipeline steps.
 - Shared config invalidation, shared rate limiting, and shared circuit breaker state in PostgreSQL.
@@ -82,15 +83,15 @@ For production modeling workflows, `flowable-ui` is available behind nginx and `
 
 ## Default Flow
 
-1. Client submits `/api/v1/requests`.
-2. `core-api` authenticates, rate-limits, encrypts `iin`, and runs PRE stop factors.
-3. Request is routed to `flowable-adapter` or `custom-adapter`.
+1. Client submits `/api/v1/requests` with applicant profile fields.
+2. `core-api` authenticates, validates input, generates internal `request_id`, and runs PRE stop factors.
+3. Request is routed internally to `flowable-adapter` or `custom-adapter`.
 4. Connectors run, parser builds `parsed_report`, and POST stop factors are evaluated.
 5. `core-api` stores the final state and forwards SNP notification if configured.
 
 ## Notes
 
 - `admin-ui` stores API base URL and session data in `localStorage`.
-- Default seeded stop factors target `result.parsed_report.summary.*`.
+- The external input contract is documented as `Applicant Input v2` in `docs/INTEGRATION_SPEC_IT_RU.md`.
 - The Flowable path uses callback completion via `/internal/cases/complete`.
 - For production, use the dedicated UI image in `admin-ui/Dockerfile.prod`.

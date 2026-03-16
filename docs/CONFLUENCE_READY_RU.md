@@ -1,368 +1,84 @@
-# Confluence Package: Credit Platform v5
+# Credit Platform v5: пакет страниц для Confluence
 
-Ниже структура и готовый текст, который можно переносить в Confluence как:
+## Рекомендуемая структура space
 
-- родительскую страницу
-- набор дочерних страниц
-- или одну большую операционную базу знаний
+### 1. Overview
 
----
+- цель платформы;
+- high-level архитектура;
+- ключевые роли;
+- production landscape.
 
-## Структура страниц Confluence
+### 2. Technical Specification
 
-### Родительская страница
+Использовать:
 
-`Credit Platform v5`
+- [TECH_SPECIFICATION_RU.md](./TECH_SPECIFICATION_RU.md)
 
-### Рекомендуемые дочерние страницы
+Главный акцент:
 
-1. `Обзор платформы`
-2. `Архитектура для руководства`
-3. `Техническая архитектура`
-4. `Роли и доступы`
-5. `Операционные сценарии`
-6. `Routing и canary`
-7. `Pipeline и сервисы`
-8. `Flowable UI и BPMN`
-9. `Production deployment`
-10. `Troubleshooting`
-11. `Техническое задание`
-12. `Интеграция с мобильным приложением`
-13. `Интеграция с SNP`
-14. `C4-архитектура`
-15. `Архитектура без Mermaid`
+- внешний контракт `Applicant Input v2`;
+- внутренний `request_id`;
+- routing как внутренняя функция платформы;
+- stop factors с default-pass поведением.
 
----
+### 3. IT Integration
 
-## Готовый текст для страницы "Обзор платформы"
+Использовать:
 
-### Назначение
+- [INTEGRATION_SPEC_IT_RU.md](./INTEGRATION_SPEC_IT_RU.md)
 
-Credit Platform v5 предназначена для оркестрации заявок на кредитную проверку с возможностью гибкого переключения между:
+Ключевой блок для вставки:
 
-- собственным runtime-оркестратором `custom`
-- BPMN-движком `Flowable`
+> Внешняя IT-система передает в платформу только flat applicant profile.  
+> `request_id` не передается снаружи и генерируется платформой.  
+> Routing не задается клиентом и управляется через конфигурацию платформы.
 
-Платформа предоставляет UI для операционного управления без необходимости вручную менять конфигурацию через shell или SQL.
+### 4. SNP Integration
 
-### Ключевые возможности
+Использовать:
 
-- прием заявок через API
-- routing между `custom` и `flowable`
-- canary rollout на Flowable
-- дневной лимит на Flowable-трафик
-- управление stop factors
-- управление pipeline и сервисами
-- request tracking
-- audit log
-- управление пользователями и доступами
-- production deployment через Docker Compose
+- [INTEGRATION_SPEC_SNP_RU.md](./INTEGRATION_SPEC_SNP_RU.md)
 
----
+Ключевой блок для вставки:
 
-## Готовый текст для страницы "Архитектура для руководства"
+> SNP получает финальный результат обработки вместе с внутренним `request_id` и snapshot исходного applicant profile.
 
-Готовая версия хранится в:
+### 5. Operations
 
-- `docs/ARCHITECTURE_EXECUTIVE_RU.md`
+Использовать:
 
-Рекомендуется вставлять как отдельную страницу для:
+- [OPERATIONS_RUNBOOK_RU.md](./OPERATIONS_RUNBOOK_RU.md)
 
-- CEO / COO
-- product leadership
-- delivery managers
-- архитектурного комитета
+### 6. API Quick Reference
 
----
+Использовать:
 
-## Готовый текст для страницы "Техническая архитектура"
+- [API_CHEATSHEET_RU.md](./API_CHEATSHEET_RU.md)
 
-Готовая версия хранится в:
+## Вставка для страницы “Внешний контракт”
 
-- `docs/ARCHITECTURE_TECHNICAL_RU.md`
+### Applicant Input v2
 
-Рекомендуется вставлять как отдельную страницу для:
-
-- backend engineers
-- DevOps
-- техлидов
-- senior analysts
-
----
-
-## Готовый текст для страницы "C4-архитектура"
-
-Полный документ хранится в:
-
-- `docs/ARCHITECTURE_C4_RU.md`
-
-Рекомендуется использовать для:
-
-- design review
-- tech onboarding
-- архитектурной документации уровня platform team
-
----
-
-## Готовый текст для страницы "Архитектура без Mermaid"
-
-Полный документ хранится в:
-
-- `docs/CONFLUENCE_PASTE_READY_NO_MERMAID_RU.md`
-
-Рекомендуется использовать, если:
-
-- Mermaid не поддерживается в Confluence
-- нужен wiki-friendly текст без diagram plugins
-
----
-
-## Готовый текст для страницы "Операционные сценарии"
-
-### Сценарий 1. Весь auto-трафик в custom
-
-Используется, когда нужно полностью исключить Flowable из маршрута обработки новых auto-заявок.
-
-Действия:
-
-1. Открыть `Scenarios`
-2. Нажать `Route all auto traffic to custom`
-
-Ожидаемый результат:
-
-- auto-заявки идут в `custom`
-- fallback rule становится `custom`
-
-### Сценарий 2. Custom reports chain
-
-Используется, когда в `custom` необходимо запускать только отчетные сервисы.
-
-Действия:
-
-1. Открыть `Scenarios`
-2. Нажать `Prepare custom reports chain`
-
-Ожидаемый результат:
-
-- `isoftpull`
-- `creditsafe`
-- `plaid`
-
-остаются в custom chain, остальные шаги для custom пропускаются.
-
-### Сценарий 3. Flowable canary
-
-Используется для частичного включения Flowable на доле трафика.
-
-Поля:
-
-- `Percent`
-- `Sticky field`
-- `Enabled`
-- `Daily quota mode`
-- `Max requests per day`
-
-Поведение:
-
-- при `Enabled=true` заданный процент auto-трафика идет в Flowable
-- sticky field обеспечивает детерминированный выбор
-- если включен `Daily quota mode`, после достижения лимита заявки начинают падать в следующий matching rule, обычно `custom`
-
-### Сценарий 4. Полное отключение stop factors
-
-Используется для диагностики и временного отключения блокирующей бизнес-логики.
-
-Действия:
-
-1. Открыть `Scenarios`
-2. Нажать `Disable all stop factors`
-
----
-
-## Готовый текст для страницы "Routing и canary"
-
-### Общие принципы
-
-Routing работает по набору правил с полями:
-
-- `priority`
-- `condition_field`
-- `condition_op`
-- `condition_value`
-- `target_mode`
-- `enabled`
-- `meta`
-
-### Meta поля canary
-
-- `sample_percent`
-- `sticky_field`
-- `daily_quota_enabled`
-- `daily_quota_max`
-
-### Best practice
-
-- типовые переключения делать через `Scenarios`
-- ручную корректировку делать через `Routing rules`
-- держать `custom` как fallback rule ниже canary rule
-- перед повышением процента canary проверять Flowable health
-
----
-
-## Готовый текст для страницы "Pipeline и сервисы"
-
-### Pipeline
-
-Pipeline определяет порядок вызова сервисов и поддерживает:
-
-- enable/disable шагов
-- `skip_in_custom`
-- `skip_in_flowable`
-
-### Services
-
-Страница `Services` позволяет:
-
-- отключать интеграции
-- менять URL
-- менять timeout
-- менять retry count
-
-### Практика эксплуатации
-
-- при инциденте сначала отключать конкретный проблемный сервис, а не ломать весь маршрут
-- при тестировании custom chain держать активными только нужные connectors
-
----
-
-## Готовый текст для страницы "Flowable UI и BPMN"
-
-### Роль Flowable UI
-
-Flowable UI используется для:
-
-- моделирования BPMN
-- администрирования engine
-- работы с IDM
-
-### Production режим
-
-Рекомендуемый режим:
-
-- `flowable-ui` включен
-- `FLOWABLE_AUTO_DEPLOY_BPMN=false`
-
-В этом случае source of truth для BPMN в production находится в Flowable DB.
-
-### Важно
-
-Если меняется `processDefinitionKey`, orchestrator может перестать находить нужный процесс.
-
----
-
-## Готовый текст для страницы "Production deployment"
-
-### Быстрый запуск
-
-```bash
-DOMAIN=your-domain.com bash scripts/deploy-prod.sh
+```json
+{
+  "firstName": "John",
+  "lastName": "Doe",
+  "address": "123 Main Street",
+  "city": "New York",
+  "state": "NY",
+  "zipCode": "10001",
+  "ssn": "123456789",
+  "dateOfBirth": "1985-06-15",
+  "email": "john@example.com",
+  "phone": "555-123-4567"
+}
 ```
 
-### Полезные скрипты
+### Правила контракта
 
-- `scripts/deploy-prod.sh`
-- `scripts/reset-flowable.sh`
-- `scripts/rebuild-prod.sh`
-
-### Проверка
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod ps
-curl -k https://YOUR_DOMAIN/health
-```
-
----
-
-## Готовый текст для страницы "Troubleshooting"
-
-### Симптом: заявки идут в Flowable вместо custom
-
-Проверить:
-
-- включен ли `Auto -> Custom default`
-- выключен ли canary
-- не истек ли config cache
-- не остался ли старый frontend bundle в браузере
-
-### Симптом: Flowable UI не открывается
-
-Проверить:
-
-- `flowable-db`
-- `flowable-rest`
-- `flowable-ui`
-- `nginx`
-- пароль `FLOWABLE_DB_PASSWORD`
-
-### Симптом: login в UI не работает
-
-Проверить:
-
-- `API Base URL`
-- роль и api key
-- сессионного пользователя в `admin_users`
-
----
-
-## Готовый текст для страницы "Техническое задание"
-
-Полный текст технического задания хранится в:
-
-- `docs/TECH_SPECIFICATION_RU.md`
-
-Операционная инструкция хранится в:
-
-- `docs/OPERATIONS_RUNBOOK_RU.md`
-
----
-
-## Готовый текст для страницы "Интеграция с мобильным приложением"
-
-Полный документ хранится в:
-
-- `docs/INTEGRATION_SPEC_MOBILE_RU.md`
-
-Рекомендуется использовать как отдельное ТЗ для:
-
-- mobile team
-- BFF / gateway team
-- интеграционной команды
-
----
-
-## Готовый текст для страницы "Интеграция с SNP"
-
-Полный документ хранится в:
-
-- `docs/INTEGRATION_SPEC_SNP_RU.md`
-
-Рекомендуется использовать как отдельное ТЗ для:
-
-- команды SNP
-- backend team
-- интеграционной команды
-
----
-
-## Рекомендация по публикации в Confluence
-
-Лучший практический вариант:
-
-1. Создать страницу `Credit Platform v5`
-2. Вставить этот документ как skeleton
-3. Вынести дочерними страницами:
-   - runbook
-   - ТЗ
-   - deployment
-   - troubleshooting
-4. Закрепить ссылку на production URL, репозиторий и ответственную команду
+- внешний клиент не передает `request_id`;
+- внешний клиент не передает `orchestration_mode`;
+- платформа сама генерирует `request_id`;
+- платформа сама выбирает route mode;
+- статус заявки читается по `request_id`, который вернулся в ответе.

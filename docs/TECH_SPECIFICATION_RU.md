@@ -1,278 +1,285 @@
 # Credit Platform v5: Техническое задание
 
-## 1. Общая цель
+## 1. Цель
 
-Разработать и поддерживать кредитную orchestration-платформу, которая:
+Разработать и сопровождать кредитную orchestration-платформу, которая:
 
-- принимает заявки через API
-- маршрутизирует их в `custom` или `flowable`
-- управляет цепочкой внешних сервисов
-- позволяет настраивать поведение через UI
-- обеспечивает аудит, трассировку и операционное сопровождение
+- принимает внешние заявки через публичный API;
+- работает с унифицированным входным профилем заявителя;
+- маршрутизирует заявку во внутренний `custom` или `flowable` контур;
+- позволяет управлять маршрутизацией, stop factors, pipeline и сервисами через UI;
+- сохраняет audit trail, request tracker и итоговый результат для внешних систем.
 
-## 2. Цели системы
+## 2. Новый внешний контракт
 
-- обеспечить управляемую оркестрацию credit check запросов
-- разделить бизнес-конфигурацию и кодовую реализацию
-- дать операционной команде возможность менять маршрутизацию через UI
-- поддержать безопасный canary rollout на Flowable
-- поддержать BPMN lifecycle через Flowable UI
-- обеспечить наблюдаемость и быструю диагностику
+Публичный входной контракт платформы переводится на `Applicant Input v2`.
 
-## 3. Скоуп
+Внешняя IT-система передает в `POST /api/v1/requests` только профиль заявителя:
 
-В скоуп входят:
+```json
+{
+  "firstName": "John",
+  "lastName": "Doe",
+  "address": "123 Main Street",
+  "city": "New York",
+  "state": "NY",
+  "zipCode": "10001",
+  "ssn": "123456789",
+  "dateOfBirth": "1985-06-15",
+  "email": "john@example.com",
+  "phone": "555-123-4567"
+}
+```
 
-- Admin UI
-- Core API
-- Routing rules
-- Pipeline rules
-- Stop factors
-- Services registry
-- Request tracker
-- Flowable operations page
-- Flowable UI/modeler
-- User management
-- Audit log
-- Production deployment
+Ключевые изменения по сравнению с прежним контрактом:
 
-Вне базового скоупа:
+- внешний интегратор больше не передает `request_id`;
+- внешний интегратор больше не передает `customer_id`;
+- внешний интегратор больше не передает `product_type`;
+- внешний интегратор больше не передает `orchestration_mode`;
+- routing и выбор контура становятся внутренней ответственностью платформы.
 
-- внешняя CRM/бюро как реальные enterprise-интеграции
-- финальный decision engine уровня банка
-- ML scoring
-- HA / multi-region deployment
+## 3. Внутренняя нормализация
 
-## 4. Основные роли
+Платформа должна:
+
+- валидировать обязательные поля входного applicant profile;
+- нормализовать строковые поля;
+- генерировать внутренний `request_id`;
+- сохранять исходный applicant snapshot;
+- выставлять внутренний `orchestration_mode=auto` по умолчанию;
+- принимать решение о маршруте по конфигурации, а не по полю клиента.
+
+## 4. Область охвата
+
+В scope входят:
+
+- публичный API приема заявок;
+- Admin UI;
+- Core API;
+- routing rules;
+- stop factors;
+- pipeline rules;
+- services registry;
+- request tracker;
+- Flowable runtime и Flowable UI;
+- SNP outbound integration;
+- audit и user management;
+- production deployment и эксплуатационная документация.
+
+Вне scope:
+
+- кредитная policy-логика банка;
+- enterprise CRM как финальный источник истины;
+- полнофункциональный scoring engine;
+- внешняя KYC/AML-верификация;
+- mobile UX и экранные сценарии клиента.
+
+## 5. Роли
 
 ### Analyst
 
 Может:
 
-- просматривать заявки
-- просматривать tracker
-- просматривать Flowable engine
-- просматривать audit log
+- просматривать заявки;
+- просматривать tracker;
+- просматривать Flowable runtime;
+- просматривать audit log.
 
 ### Senior analyst
 
 Может:
 
-- управлять `Scenarios`
-- управлять `Routing rules`
-- управлять `Pipeline`
-- управлять `Stop factors`
-- управлять `Services`
+- управлять routing;
+- управлять stop factors;
+- управлять pipeline;
+- управлять services registry.
 
 ### Admin
 
 Может:
 
-- выполнять все действия senior analyst
-- создавать и изменять пользователей
-- менять роли и ревокать сессии
+- выполнять все действия senior analyst;
+- управлять пользователями;
+- ревокать сессии;
+- сопровождать production configuration.
 
-## 5. Функциональные требования
+## 6. Функциональные требования
 
-### 5.1 Прием заявки
-
-Система должна:
-
-- принимать `POST /api/v1/requests`
-- аутентифицировать gateway key
-- валидировать payload
-- применять rate limit
-- сохранять заявку в БД
-
-### 5.2 Routing
+### 6.1 Прием заявки
 
 Система должна:
 
-- поддерживать `flowable`, `custom`, `auto`
-- для `auto` выбирать режим по `routing_rules`
-- учитывать `priority`
-- учитывать `condition_field`, `condition_op`, `condition_value`
-- поддерживать canary routing по проценту
-- поддерживать sticky routing
-- поддерживать daily quota для canary
+- принимать `POST /api/v1/requests`;
+- аутентифицировать `GATEWAY_API_KEY`;
+- принимать applicant profile в camelCase;
+- валидировать обязательные поля:
+  - `firstName`
+  - `lastName`
+  - `address`
+  - `city`
+  - `state`
+  - `zipCode`
+  - `ssn`
+  - `dateOfBirth`
+  - `email`
+  - `phone`
+- генерировать внутренний `request_id`;
+- сохранять заявку и applicant snapshot в БД;
+- возвращать клиенту сгенерированный `request_id`.
 
-### 5.3 Stop factors
+### 6.2 Routing
+
+Система должна поддерживать три понятных режима routing через UI:
+
+1. все `auto` заявки направлять в `custom`;
+2. все `auto` заявки направлять в `flowable`;
+3. использовать rule-based routing.
+
+Rule-based routing должен поддерживать:
+
+- `priority`;
+- `condition_field`;
+- `condition_op`;
+- `condition_value`;
+- `target_mode`;
+- `enabled`;
+- fallback-правило.
+
+Внешний клиент не управляет routing через request body.
+
+### 6.3 Stop factors
+
+Система должна применять только активные stop-factor rules.
+
+Правило по умолчанию:
+
+- если активные stop factors есть, система применяет их;
+- если активных stop factors нет, заявка проходит дальше без блокировки.
+
+### 6.4 Pipeline
+
+Pipeline должен:
+
+- хранить шаги вызова сервисов;
+- поддерживать enable/disable шага;
+- поддерживать mode-specific skip policy;
+- позволять безопасно исключать вызовы connectors без изменения кода.
+
+### 6.5 Services registry
+
+Система должна позволять через UI:
+
+- менять `base_url`;
+- менять `endpoint_path`;
+- менять `timeout_ms`;
+- менять `retry_count`;
+- включать и выключать сервис;
+- не терять конфигурацию при временном disable.
+
+### 6.6 Request tracker
+
+Tracker должен:
+
+- фиксировать основные этапы заявки;
+- показывать route selection;
+- показывать stop-factor decisions;
+- показывать outbound и inbound вызовы connectors/processors;
+- показывать final state;
+- поддерживать просмотр по `request_id`.
+
+### 6.7 Flowable
 
 Система должна:
 
-- поддерживать pre-stop и post-stop проверки
-- позволять включать и отключать правила через UI
-- поддерживать bulk-операции
+- поддерживать запуск заявок через Flowable;
+- позволять редактировать BPMN через Flowable UI;
+- хранить BPMN source of truth в Flowable DB при `FLOWABLE_AUTO_DEPLOY_BPMN=false`;
+- обеспечивать безопасный доступ к runtime-данным через `core-api`.
 
-### 5.4 Pipeline
+### 6.8 SNP
 
-Система должна:
+После финализации заявки платформа должна уметь:
 
-- хранить pipeline steps в конфигурации
-- позволять включать и отключать шаги
-- поддерживать `skip_in_custom`
-- поддерживать `skip_in_flowable`
+- формировать outbound payload для SNP;
+- передавать итоговый статус;
+- передавать `request_id`;
+- передавать snapshot исходного applicant profile;
+- передавать финальный нормализованный result.
 
-### 5.5 Управление сервисами
+## 7. Требования к данным
 
-Система должна:
+### 7.1 Applicant Input v2
 
-- хранить registry сервисов
-- позволять менять URL, endpoint, timeout, retries
-- позволять отключать сервис без удаления конфигурации
+| Поле | Обязательность | Назначение |
+| --- | --- | --- |
+| `firstName` | обязательно | имя заявителя |
+| `lastName` | обязательно | фамилия заявителя |
+| `address` | обязательно | адрес |
+| `city` | обязательно | город |
+| `state` | обязательно | штат / регион |
+| `zipCode` | обязательно | почтовый индекс |
+| `ssn` | обязательно | идентификатор заявителя |
+| `dateOfBirth` | обязательно | дата рождения в формате `YYYY-MM-DD` |
+| `email` | обязательно | email |
+| `phone` | обязательно | телефон |
 
-### 5.6 Request tracker
+### 7.2 Чувствительные поля
 
-Система должна:
+К чувствительным полям относятся:
 
-- сохранять события прохождения заявки
-- показывать входящие и исходящие данные
-- отображать статусы шагов
-- поддерживать просмотр истории заявки из UI
+- `ssn`;
+- `dateOfBirth`;
+- `address`;
+- `email`;
+- `phone`.
 
-### 5.7 Flowable operations
+Для них должны быть предусмотрены:
 
-Система должна:
+- masking в UI;
+- ограниченный вывод в audit/tracker;
+- шифрование или иная защита на уровне хранения.
 
-- отображать process instances
-- показывать variables
-- показывать jobs
-- позволять operational view без прямого доступа UI к Flowable REST
+## 8. Нефункциональные требования
 
-### 5.8 BPMN model management
+### 8.1 Безопасность
 
-Система должна:
+- UI не ходит в Flowable REST напрямую;
+- Flowable credentials остаются на сервере;
+- внешняя IT-система использует только `GATEWAY_API_KEY`;
+- admin/internal ключи не используются внешним клиентом;
+- все публичные вызовы идут только по HTTPS.
 
-- поддерживать Flowable UI в production
-- позволять редактировать BPMN через Modeler
-- использовать Flowable DB как source of truth при `FLOWABLE_AUTO_DEPLOY_BPMN=false`
+### 8.2 Наблюдаемость
 
-### 5.9 User management
+- обязательны health endpoints;
+- обязательны metrics;
+- обязательна корреляция по request id / correlation id;
+- tracker должен позволять отследить причину `FAILED`, `REVIEW`, `REJECTED`.
 
-Система должна:
+### 8.3 Эксплуатация
 
-- создавать пользователей в БД
-- хранить пароли в hash
-- поддерживать session-based UI login
-- поддерживать disable/revoke
+- типовые routing-операции должны быть доступны через UI;
+- shell/manual SQL допускаются только как аварийная мера;
+- production deployment должен поддерживать one-command bootstrap и full rebuild.
 
-### 5.10 Audit
-
-Система должна:
-
-- логировать изменения конфигурации
-- логировать управляющие действия по Flowable и пользователям
-- сохранять actor, role, target, action
-
-## 6. Нефункциональные требования
-
-### 6.1 Безопасность
-
-- UI не должен ходить в Flowable REST напрямую
-- секреты не должны утекать в frontend bundle
-- API должен использовать ролевую авторизацию
-- чувствительные данные должны быть зашифрованы или замаскированы
-
-### 6.2 Наблюдаемость
-
-- обязательны health endpoints
-- обязательны metrics
-- обязательна трассировка заявок через tracker
-
-### 6.3 Эксплуатация
-
-- типовые сценарии должны быть доступны через UI
-- ручная shell-настройка допускается только как аварийная мера
-- production deployment должен поддерживать one-command bootstrap
-
-### 6.4 Надежность
-
-- отключенный сервис не должен вызываться оркестратором
-- Flowable canary не должен забирать заявки сверх лимита
-- система должна сохранять корректный fallback на `custom`
-
-## 7. Архитектурные решения
-
-### 7.1 Routing engine
-
-Routing rule содержит:
-
-- `name`
-- `priority`
-- `condition_field`
-- `condition_op`
-- `condition_value`
-- `target_mode`
-- `enabled`
-- `meta`
-
-Поле `meta` используется для:
-
-- `sample_percent`
-- `sticky_field`
-- `daily_quota_enabled`
-- `daily_quota_max`
-
-### 7.2 Canary routing
-
-Canary routing должен:
-
-- работать детерминированно
-- использовать sticky identity
-- распределять трафик по `sample_percent`
-- при исчерпании `daily_quota_max` переключать заявки на следующий matching rule
-
-### 7.3 UI orchestration controls
-
-На странице `Scenarios` должны быть:
-
-- `Route all auto traffic to custom`
-- `Prepare custom reports chain`
-- `Flowable canary`
-  - `Percent`
-  - `Sticky field`
-  - `Enabled`
-  - `Daily quota mode`
-  - `Max requests per day`
-  - `Apply`
-- `Disable all stop factors`
-
-### 7.4 Flowable access model
-
-В production:
-
-- Flowable UI доступен через nginx
-- `flowable-modeler`, `flowable-admin`, `flowable-idm` публикуются под доменом платформы
-- source of truth для BPMN может быть Flowable DB
-
-## 8. Критерии приемки
+## 9. Критерии приемки
 
 Система считается принятой, если:
 
-1. через UI можно перевести весь `auto`-трафик в `custom`
-2. через UI можно включить custom reports chain
-3. через UI можно включить canary с произвольным процентом
-4. через UI можно включить canary с дневным лимитом
-5. через UI можно отключить все stop factors
-6. через UI можно выключить отдельный сервис
-7. заявка корректно отражается в `Requests` и `Process tracker`
-8. Flowable UI открывается и позволяет редактировать BPMN
-9. изменения доступны после production deploy
+1. публичный API принимает applicant profile в новом формате;
+2. внешний клиент не обязан передавать `request_id`;
+3. платформа возвращает сгенерированный `request_id` в ответе;
+4. routing настраивается через UI без изменения request body;
+5. stop factors по умолчанию пропускают заявку, если активных правил нет;
+6. можно отключить сервис и увидеть корректный `SKIPPED`, а не системную ошибку;
+7. request tracker показывает все ключевые этапы по новой модели входных данных;
+8. SNP получает финальный результат и snapshot исходной заявки;
+9. документация для IT и эксплуатации соответствует Applicant Input v2.
 
-## 9. Ограничения и допущения
+## 10. Ограничения и допущения
 
-- daily quota сейчас считается по UTC-суткам
-- распределение canary основано на sticky field, а не на случайном выборе в реальном времени
-- при отсутствии matching routing rules fallback остается `flowable`
-- для production нужен Docker Compose с поддержкой merge features из текущего compose-конфига
-
-## 10. План дальнейшего развития
-
-Следующий этап может включать:
-
-- timezone-aware daily quota
-- quota по календарному дню конкретной business timezone
-- отдельный quota mode `N requests per day` без процентного routing
-- rollback и draft/publish для routing и pipeline
-- расширенный audit для сценариев
-- экспорт Confluence/Word/PDF из репозитория
+- текущая реализация API может еще использовать прежнюю внутреннюю схему, поэтому внешний контракт `Applicant Input v2` должен внедряться синхронно с backend-адаптацией;
+- routing остается внутренним механизмом платформы, даже если внешняя система ожидает “определенный” маршрут;
+- `request_id` является внутренним идентификатором платформы и не должен считаться клиентским business key;
+- для production требуется единая договоренность по masking и retention для `ssn` и персональных данных.

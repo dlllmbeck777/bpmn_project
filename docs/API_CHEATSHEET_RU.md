@@ -1,40 +1,144 @@
-# API Cheatsheet RU
+# Credit Platform v5: API шпаргалка
 
-Короткая практическая шпаргалка для ручной проверки API через `curl`, Postman и для быстрого онбординга команды.
+## 1. Какой ключ использовать
 
-## Базовые правила
+### Gateway-запросы
 
-Есть два разных типа доступа:
+Используются для подачи заявки во внешний публичный API.
 
-1. `Gateway access`
-Используется для подачи заявок в платформу.
+Headers:
 
-- endpoint: `POST /api/v1/requests`
-- header: `X-Api-Key: <GATEWAY_API_KEY>`
-- `X-User-Role` не нужен
+```http
+Content-Type: application/json
+X-Api-Key: <GATEWAY_API_KEY>
+```
 
-2. `Admin / UI access`
-Используется для всех конфигурационных и операционных endpoint'ов:
+### Admin-запросы
 
-- `routing-rules`
-- `stop-factors`
-- `pipeline`
-- `services`
-- `users`
-- `audit`
-- `flowable`
-- `requests` list/detail/tracker из админского контура
+Используются для UI и операторских endpoints.
 
-Для этого используются:
+После `POST /api/v1/auth/login` использовать:
 
-- либо `api_key`, полученный после `POST /api/v1/auth/login`
-- либо постоянный `ADMIN_API_KEY`
+```http
+X-Api-Key: <session token>
+X-User-Role: admin
+```
 
-И обязательно указывается:
+## 2. Создание заявки по Applicant Input v2
 
-- `X-User-Role: admin`
+```bash
+curl -k -X POST https://YOUR_DOMAIN/api/v1/requests \
+  -H "Content-Type: application/json" \
+  -H "X-Api-Key: YOUR_GATEWAY_API_KEY" \
+  -d '{
+    "firstName": "John",
+    "lastName": "Doe",
+    "address": "123 Main Street",
+    "city": "New York",
+    "state": "NY",
+    "zipCode": "10001",
+    "ssn": "123456789",
+    "dateOfBirth": "1985-06-15",
+    "email": "john@example.com",
+    "phone": "555-123-4567"
+  }'
+```
 
-## Частая ошибка
+Важно:
+
+- `request_id` не передается клиентом;
+- `request_id` генерирует платформа;
+- routing выбирается платформой автоматически.
+
+## 3. Пример ответа на создание заявки
+
+```json
+{
+  "request_id": "REQ-2026-000123",
+  "selected_mode": "flowable",
+  "result": {
+    "status": "RUNNING",
+    "adapter": "flowable",
+    "request_id": "REQ-2026-000123"
+  }
+}
+```
+
+## 4. Получить статус заявки
+
+```bash
+curl -k https://YOUR_DOMAIN/api/v1/requests/REQ-2026-000123 \
+  -H "X-Api-Key: YOUR_GATEWAY_API_KEY"
+```
+
+## 5. Логин в админку
+
+```bash
+curl -k https://YOUR_DOMAIN/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"YOUR_ADMIN_PASSWORD"}'
+```
+
+## 6. Получить routing rules
+
+```bash
+curl -k https://YOUR_DOMAIN/api/v1/routing-rules \
+  -H "X-Api-Key: YOUR_SESSION_TOKEN" \
+  -H "X-User-Role: admin"
+```
+
+## 7. Обновить routing rule
+
+```bash
+curl -k -X PUT https://YOUR_DOMAIN/api/v1/routing-rules/4 \
+  -H "Content-Type: application/json" \
+  -H "X-Api-Key: YOUR_SESSION_TOKEN" \
+  -H "X-User-Role: admin" \
+  -d '{
+    "name": "Auto -> Custom default",
+    "priority": 0,
+    "condition_field": "channel",
+    "condition_op": "eq",
+    "condition_value": "default",
+    "target_mode": "custom",
+    "enabled": true,
+    "meta": {}
+  }'
+```
+
+## 8. Получить services
+
+```bash
+curl -k https://YOUR_DOMAIN/api/v1/services \
+  -H "X-Api-Key: YOUR_SESSION_TOKEN" \
+  -H "X-User-Role: admin"
+```
+
+## 9. Получить stop factors
+
+```bash
+curl -k https://YOUR_DOMAIN/api/v1/stop-factors \
+  -H "X-Api-Key: YOUR_SESSION_TOKEN" \
+  -H "X-User-Role: admin"
+```
+
+## 10. Получить pipeline
+
+```bash
+curl -k "https://YOUR_DOMAIN/api/v1/pipeline-steps?pipeline_name=default" \
+  -H "X-Api-Key: YOUR_SESSION_TOKEN" \
+  -H "X-User-Role: admin"
+```
+
+## 11. Получить tracker заявки
+
+```bash
+curl -k https://YOUR_DOMAIN/api/v1/requests/REQ-2026-000123/tracker \
+  -H "X-Api-Key: YOUR_SESSION_TOKEN" \
+  -H "X-User-Role: admin"
+```
+
+## 12. Частая ошибка
 
 Неправильно:
 
@@ -43,189 +147,8 @@ X-Api-Key: <GATEWAY_API_KEY>
 X-User-Role: admin
 ```
 
-Это приводит к ошибке:
+Почему это неверно:
 
-```text
-401 invalid api key for selected role
-```
-
-Причина: `GATEWAY_API_KEY` не является admin-session key и не подходит для UI/config endpoint'ов.
-
-## 1. Логин в админку
-
-```bash
-curl -k https://65.109.174.58/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"YOUR_ADMIN_PASSWORD"}'
-```
-
-Ожидаемый ответ:
-
-```json
-{
-  "status": "ok",
-  "username": "admin",
-  "role": "admin",
-  "api_key": "SESSION_TOKEN_HERE"
-}
-```
-
-Дальше использовать:
-
-- `SESSION_TOKEN_HERE` как `X-Api-Key`
-- `admin` как `X-User-Role`
-
-## 2. Создать заявку
-
-Используется `GATEWAY_API_KEY`.
-
-```bash
-curl -k -X POST https://65.109.174.58/api/v1/requests \
-  -H "Content-Type: application/json" \
-  -H "X-Api-Key: YOUR_GATEWAY_API_KEY" \
-  -d '{
-    "request_id": "REQ-1001",
-    "customer_id": "CUST-001",
-    "iin": "900101123456",
-    "product_type": "loan",
-    "orchestration_mode": "auto",
-    "payload": {
-      "amount": 5000,
-      "currency": "USD",
-      "term_months": 12
-    }
-  }'
-```
-
-## 3. Получить routing rules
-
-Используется admin session token или `ADMIN_API_KEY`.
-
-```bash
-curl -k https://65.109.174.58/api/v1/routing-rules \
-  -H "X-Api-Key: YOUR_SESSION_TOKEN" \
-  -H "X-User-Role: admin"
-```
-
-## 4. Обновить routing rule
-
-Пример: включить `Auto -> Custom default`.
-
-```bash
-curl -k -X PUT https://65.109.174.58/api/v1/routing-rules/4 \
-  -H "Content-Type: application/json" \
-  -H "X-Api-Key: YOUR_SESSION_TOKEN" \
-  -H "X-User-Role: admin" \
-  -d '{
-    "name": "Auto -> Custom default",
-    "priority": 0,
-    "condition_field": "orchestration_mode",
-    "condition_op": "eq",
-    "condition_value": "auto",
-    "target_mode": "custom",
-    "enabled": true,
-    "meta": {}
-  }'
-```
-
-## 5. Получить список заявок
-
-```bash
-curl -k "https://65.109.174.58/api/v1/requests?limit=20" \
-  -H "X-Api-Key: YOUR_SESSION_TOKEN" \
-  -H "X-User-Role: admin"
-```
-
-## 6. Получить карточку заявки
-
-```bash
-curl -k https://65.109.174.58/api/v1/requests/REQ-1001 \
-  -H "X-Api-Key: YOUR_SESSION_TOKEN" \
-  -H "X-User-Role: admin"
-```
-
-## 7. Получить tracker заявки
-
-```bash
-curl -k https://65.109.174.58/api/v1/requests/REQ-1001/tracker \
-  -H "X-Api-Key: YOUR_SESSION_TOKEN" \
-  -H "X-User-Role: admin"
-```
-
-## 8. Получить services
-
-```bash
-curl -k https://65.109.174.58/api/v1/services \
-  -H "X-Api-Key: YOUR_SESSION_TOKEN" \
-  -H "X-User-Role: admin"
-```
-
-## 9. Обновить service
-
-Пример: выключить `creditsafe`.
-
-```bash
-curl -k -X PUT https://65.109.174.58/api/v1/services/creditsafe \
-  -H "Content-Type: application/json" \
-  -H "X-Api-Key: YOUR_SESSION_TOKEN" \
-  -H "X-User-Role: admin" \
-  -d '{
-    "id": "creditsafe",
-    "name": "Creditsafe",
-    "type": "connector",
-    "base_url": "http://creditsafe:8102",
-    "health_path": "/health",
-    "enabled": false,
-    "timeout_ms": 15000,
-    "retry_count": 2,
-    "endpoint_path": "/pull",
-    "meta": {}
-  }'
-```
-
-## 10. Получить stop factors
-
-```bash
-curl -k https://65.109.174.58/api/v1/stop-factors \
-  -H "X-Api-Key: YOUR_SESSION_TOKEN" \
-  -H "X-User-Role: admin"
-```
-
-## 11. Получить pipeline
-
-```bash
-curl -k "https://65.109.174.58/api/v1/pipeline-steps?pipeline_name=default" \
-  -H "X-Api-Key: YOUR_SESSION_TOKEN" \
-  -H "X-User-Role: admin"
-```
-
-## 12. Когда использовать какой ключ
-
-### Для подачи заявок
-
-Использовать:
-
-```text
-X-Api-Key: GATEWAY_API_KEY
-```
-
-### Для конфигурации и операционного управления
-
-Использовать:
-
-```text
-X-Api-Key: SESSION_TOKEN from /api/v1/auth/login
-X-User-Role: admin
-```
-
-или:
-
-```text
-X-Api-Key: ADMIN_API_KEY
-X-User-Role: admin
-```
-
-## 13. Мини-шпаргалка в одной строке
-
-- `POST /api/v1/requests` -> `GATEWAY_API_KEY`
-- всё админское -> `login session token` или `ADMIN_API_KEY` + `X-User-Role`
+- gateway key не является admin session token;
+- backend ждет admin-compatible key;
+- в ответ будет `401 invalid api key for selected role`.

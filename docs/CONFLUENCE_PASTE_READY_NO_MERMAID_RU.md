@@ -196,10 +196,12 @@ flowable-ui
 ### Логика без диаграммы
 
 ```text
-Если orchestration_mode != auto:
+После приема Applicant Input v2 платформа формирует внутреннюю request model.
+
+Если внутренний orchestration_mode != auto:
   использовать переданный режим
 
-Если orchestration_mode = auto:
+Если внутренний orchestration_mode = auto:
   идти по enabled routing rules по priority
   для каждой rule проверить:
     1. condition match

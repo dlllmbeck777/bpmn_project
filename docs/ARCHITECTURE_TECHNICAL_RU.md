@@ -212,7 +212,9 @@ Routing logic находится в `core-api/coreapi/services.py`.
 
 ### Алгоритм
 
-1. Если `orchestration_mode` уже не `auto`, вернуть заданный режим
+Перед routing внешняя заявка нормализуется во внутреннюю модель. Для внешнего контракта `Applicant Input v2` поле `orchestration_mode` клиентом не передается, и платформа выставляет внутреннее значение `auto`.
+
+1. Если во внутренней модели `orchestration_mode` уже не `auto`, вернуть заданный режим
 2. Итерировать `enabled` rules по `priority`
 3. Проверить:
    - condition match
