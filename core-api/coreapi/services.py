@@ -70,6 +70,7 @@ ROLE_HEADERS = {
 }
 FLOWABLE_DEFAULT_URL = "http://flowable-rest:8080/flowable-rest/service"
 FLOWABLE_RUNTIME_FINAL_STATES = {"COMPLETED", "REVIEW", "REJECTED"}
+FLOWABLE_REQUEST_FINAL_STATES = FLOWABLE_RUNTIME_FINAL_STATES | {"FAILED", "ENGINE_ERROR", "ENGINE_UNREACHABLE"}
 FLOWABLE_STEP_MAP = (
     ("isoftpull", "isoRawBody", "iso_status", "skip_reason_isoftpull"),
     ("creditsafe", "csRawBody", "creditsafe_status", "skip_reason_creditsafe"),
@@ -1076,6 +1077,8 @@ async def _load_flowable_bundle(instance_id: str):
 
 def _flowable_engine_status(runtime: Optional[Dict[str, Any]], historic: Optional[Dict[str, Any]], request_status: str) -> str:
     if runtime:
+        if (request_status or "").upper() in FLOWABLE_REQUEST_FINAL_STATES:
+            return "ORPHANED"
         if runtime.get("suspended"):
             return "SUSPENDED"
         return "RUNNING"
@@ -1268,6 +1271,61 @@ async def retry_flowable_failed_jobs(instance_id: str, requested_role: str, reas
         )
 
     return {"status": "ok", "action": "retry_failed_jobs", "instance_id": instance_id, "job_ids": executed_job_ids, "request_id": (request_row or {}).get("request_id")}
+
+
+async def terminate_flowable_instance(instance_id: str, requested_role: str, reason: str = "") -> Dict[str, Any]:
+    runtime = await _flowable_runtime_instance(instance_id)
+    if not runtime:
+        raise HTTPException(409, "flowable process is not running")
+
+    request_row = _find_request_for_flowable_instance(instance_id)
+    request_id = (request_row or {}).get("request_id")
+    correlation_id = (request_row or {}).get("correlation_id") or get_correlation_id()
+
+    await _flowable_call("DELETE", f"/runtime/process-instances/{instance_id}")
+    audit(
+        "flowable_instance",
+        instance_id,
+        "terminate",
+        {"request_id": request_id, "reason": reason, "requested_role": requested_role},
+    )
+
+    if request_id:
+        track_request_event(
+            request_id,
+            "flowable_ops",
+            "STATE",
+            "Flowable runtime terminated",
+            service_id="flowable-rest",
+            status="TERMINATED",
+            payload={"instance_id": instance_id, "reason": reason, "requested_role": requested_role},
+            correlation_id=correlation_id,
+        )
+
+        request_status = (request_row or {}).get("status", "")
+        if request_status.upper() not in FLOWABLE_REQUEST_FINAL_STATES:
+            await finalize_request(
+                request_id,
+                "flowable",
+                {
+                    "status": "FAILED",
+                    "adapter": "flowable",
+                    "request_id": request_id,
+                    "decision_reason": "Flowable runtime instance terminated by operator",
+                    "engine": {
+                        "engine": "flowable",
+                        "instance_id": instance_id,
+                        "terminated": True,
+                    },
+                    "summary": {
+                        "decision_reason": "Flowable runtime instance terminated by operator",
+                    },
+                },
+                correlation_id,
+                request_data=get_request_context(request_id),
+            )
+
+    return {"status": "ok", "action": "terminate", "instance_id": instance_id, "request_id": request_id}
 
 
 async def reconcile_flowable_request(request_id: str, requested_role: str, reason: str = "") -> Dict[str, Any]:

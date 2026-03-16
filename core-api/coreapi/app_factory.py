@@ -10,7 +10,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from coreapi.models import AdminUserCreateIn, AdminUserUpdateIn, FlowableActionIn, HealthResponse, ListResponse, LoginIn, LoginResponse, PipelineStepIn, RequestIn, RequestResponse, RuleIn, ServiceIn, ServiceOut, StatusResponse, StopFactorIn, TrackerEventIn
-from coreapi.services import ROLE_ADMIN, ROLE_ANALYST, ROLE_SENIOR_ANALYST, apply_rate_limit, authenticate_ui_login, authorize_request_view, build_request_view, build_requests_list_query, create_admin_user, delete_admin_user, ensure_default_ui_users, finalize_request, get_connector_urls, get_flowable_instance_detail, list_admin_users, list_flowable_instances, normalize_incoming_request, reconcile_flowable_request, require_gateway_auth, require_internal_auth, require_internal_or_min_role, require_min_role, resolve_mode, revoke_admin_user_session, retry_flowable_failed_jobs, run_stop_factor_check, set_flowable_instance_state, update_admin_user
+from coreapi.services import ROLE_ADMIN, ROLE_ANALYST, ROLE_SENIOR_ANALYST, apply_rate_limit, authenticate_ui_login, authorize_request_view, build_request_view, build_requests_list_query, create_admin_user, delete_admin_user, ensure_default_ui_users, finalize_request, get_connector_urls, get_flowable_instance_detail, list_admin_users, list_flowable_instances, normalize_incoming_request, reconcile_flowable_request, require_gateway_auth, require_internal_auth, require_internal_or_min_role, require_min_role, resolve_mode, revoke_admin_user_session, retry_flowable_failed_jobs, run_stop_factor_check, set_flowable_instance_state, terminate_flowable_instance, update_admin_user
 from coreapi.storage import audit, execute, execute_returning, query, to_json_ready, track_request_event
 from migrations import run_migrations, seed_defaults
 from shared import all_breaker_states, close_pool, config_cache, get_correlation_id, get_conn, get_logger, init_pool, metrics, new_correlation_id, put_conn, resilient_post
@@ -543,6 +543,12 @@ async def activate_flowable_instance(instance_id: str, body: FlowableActionIn, x
 async def retry_flowable_jobs(instance_id: str, body: FlowableActionIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
     role = require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
     return await retry_flowable_failed_jobs(instance_id, role, body.reason)
+
+
+@app.post("/api/v1/flowable/instances/{instance_id}/terminate", tags=["Flowable Ops"])
+async def terminate_flowable_runtime(instance_id: str, body: FlowableActionIn, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+    role = require_min_role(x_api_key, x_user_role, ROLE_SENIOR_ANALYST)
+    return await terminate_flowable_instance(instance_id, role, body.reason)
 
 
 @app.post("/api/v1/flowable/requests/{request_id}/reconcile", tags=["Flowable Ops"])

@@ -142,6 +142,12 @@ class FlowableOpsHelperTests(unittest.TestCase):
             services.FLOWABLE_PASSWORD = original_password
             services.FLOWABLE_PASSWORD_FALLBACKS = original_fallbacks
 
+    def test_flowable_engine_status_marks_finalized_runtime_as_orphaned(self):
+        runtime = {"id": "proc-1", "activityId": "task_init"}
+        self.assertEqual(services._flowable_engine_status(runtime, None, "COMPLETED"), "ORPHANED")
+        self.assertEqual(services._flowable_engine_status(runtime, None, "ENGINE_ERROR"), "ORPHANED")
+        self.assertEqual(services._flowable_engine_status(runtime, None, "RUNNING"), "RUNNING")
+
     def test_build_flowable_result_from_variables_adds_engine_and_steps(self):
         variables = {
             "request_id": "REQ-55",

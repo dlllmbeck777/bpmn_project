@@ -3,7 +3,7 @@ import { get, post } from '../lib/api'
 import { IconBack, IconLayers } from '../components/Icons'
 
 function B({ s }) {
-  const m = { COMPLETED: 'badge-green', RUNNING: 'badge-blue', SUSPENDED: 'badge-amber', FAILED: 'badge-red', CANCELLED: 'badge-red', OK: 'badge-green', PASS: 'badge-green', REJECT: 'badge-red', REJECTED: 'badge-red', SUBMITTED: 'badge-teal', REVIEW: 'badge-amber', PENDING: 'badge-amber', UNAVAILABLE: 'badge-red', STARTED: 'badge-blue', DISPATCHED: 'badge-blue', SKIPPED: 'badge-gray', MISSING_INSTANCE: 'badge-gray', FLOWABLE: 'badge-blue', CUSTOM: 'badge-purple' }
+  const m = { COMPLETED: 'badge-green', RUNNING: 'badge-blue', SUSPENDED: 'badge-amber', FAILED: 'badge-red', CANCELLED: 'badge-red', ORPHANED: 'badge-red', OK: 'badge-green', PASS: 'badge-green', REJECT: 'badge-red', REJECTED: 'badge-red', SUBMITTED: 'badge-teal', REVIEW: 'badge-amber', PENDING: 'badge-amber', UNAVAILABLE: 'badge-red', STARTED: 'badge-blue', DISPATCHED: 'badge-blue', SKIPPED: 'badge-gray', MISSING_INSTANCE: 'badge-gray', FLOWABLE: 'badge-blue', CUSTOM: 'badge-purple', TERMINATED: 'badge-red' }
   return <span className={`badge ${m[s] || 'badge-gray'}`}>{(s || '—').toLowerCase()}</span>
 }
 
@@ -121,6 +121,7 @@ export default function FlowableAdminPage({ canManage }) {
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ width: 130 }}>
           <option value="all">All states</option>
           <option value="running">Running</option>
+          <option value="orphaned">Orphaned</option>
           <option value="suspended">Suspended</option>
           <option value="completed">Completed</option>
           <option value="failed">Failed</option>
@@ -164,6 +165,7 @@ export default function FlowableAdminPage({ canManage }) {
     const canSusp = canManage && ds.engine_status === 'RUNNING'
     const canAct = canManage && ds.engine_status === 'SUSPENDED'
     const canRetry = canManage && failedJobs.length > 0
+    const canTerminate = canManage && ['RUNNING', 'SUSPENDED', 'ORPHANED'].includes(ds.engine_status)
     const canReconcile = canManage && ds.request_id && !['COMPLETED', 'REVIEW', 'REJECTED'].includes(ds.request_status)
 
     const varEntries = Object.entries(vars)
@@ -184,10 +186,17 @@ export default function FlowableAdminPage({ canManage }) {
           <input value={reason} onChange={e => setReason(e.target.value)} placeholder="Reason for audit..." style={{ flex: 1 }} />
           <button className="btn btn-warn btn-sm" disabled={!canSusp} onClick={() => runAction(`/api/v1/flowable/instances/${ds.instance_id}/suspend`)}>Suspend</button>
           <button className="btn btn-success btn-sm" disabled={!canAct} onClick={() => runAction(`/api/v1/flowable/instances/${ds.instance_id}/activate`)}>Activate</button>
+          <button className="btn btn-danger btn-sm" disabled={!canTerminate} onClick={() => runAction(`/api/v1/flowable/instances/${ds.instance_id}/terminate`)}>Terminate runtime</button>
           <span className="toolbar-sep" />
           <button className="btn btn-danger btn-sm" disabled={!canRetry} onClick={() => runAction(`/api/v1/flowable/instances/${ds.instance_id}/retry-failed-jobs`)}>Retry failed jobs</button>
           <button className="btn btn-primary btn-sm" disabled={!canReconcile} onClick={() => runAction(`/api/v1/flowable/requests/${ds.request_id}/reconcile`)}>Reconcile</button>
         </div>
+
+        {ds.engine_status === 'ORPHANED' && (
+          <div className="notice notice-warn mb-16">
+            This runtime instance is still alive in Flowable, but the linked platform request is already finalized. It is safe to terminate the runtime instance after a quick check.
+          </div>
+        )}
 
         {/* Inner tabs */}
         <div className="tab-bar">
