@@ -98,5 +98,6 @@ For production modeling workflows, `flowable-ui` is available behind nginx and `
 - `admin-ui` stores API base URL and session data in `localStorage`.
 - The external input contract is documented as `Applicant Input v2` in `docs/INTEGRATION_SPEC_IT_RU.md`.
 - For leadership demos and connector QA without paid external calls, use the built-in `mock-bureaus` service and switch connectors from `Services` with `Use demo mock connectors`.
+- Locally `mock-bureaus` is available on `http://localhost:8110`; in production use `https://<host>/mock-bureaus` through nginx.
 - The Flowable path uses callback completion via `/internal/cases/complete`.
 - For production, use the dedicated UI image in `admin-ui/Dockerfile.prod`.

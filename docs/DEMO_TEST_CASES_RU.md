@@ -49,7 +49,7 @@ python scripts/run-demo-test-cases.py --list
 ```bash
 python scripts/run-demo-test-cases.py \
   --api-base https://65.109.174.58 \
-  --mock-base http://localhost:8110 \
+  --mock-base https://65.109.174.58/mock-bureaus \
   --gateway-api-key YOUR_GATEWAY_API_KEY \
   --case flowable-reject-score-550 \
   --insecure
@@ -60,7 +60,7 @@ python scripts/run-demo-test-cases.py \
 ```bash
 python scripts/run-demo-test-cases.py \
   --api-base https://65.109.174.58 \
-  --mock-base http://localhost:8110 \
+  --mock-base https://65.109.174.58/mock-bureaus \
   --gateway-api-key YOUR_GATEWAY_API_KEY \
   --insecure
 ```
@@ -70,7 +70,7 @@ python scripts/run-demo-test-cases.py \
 ```bash
 python scripts/run-demo-test-cases.py \
   --api-base https://65.109.174.58 \
-  --mock-base http://localhost:8110 \
+  --mock-base https://65.109.174.58/mock-bureaus \
   --gateway-api-key YOUR_GATEWAY_API_KEY \
   --admin-api-key YOUR_ADMIN_API_KEY \
   --enable-demo-connectors \

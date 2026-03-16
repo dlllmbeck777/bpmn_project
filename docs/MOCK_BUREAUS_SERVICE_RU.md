@@ -30,12 +30,24 @@ docker compose up -d --build
 http://localhost:8110
 ```
 
+Во production через nginx он доступен по внешнему URL:
+
+```text
+https://YOUR_HOST/mock-bureaus
+```
+
 При обычном `docker compose up -d --build` сервис стартует вместе с проектом. Отдельный запуск нужен только если ты поднимаешь один сервис изолированно.
 
 ## Как запустить на сервере
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up -d --build mock-bureaus
+```
+
+После этого проверка снаружи:
+
+```bash
+curl -k https://YOUR_HOST/mock-bureaus/health
 ```
 
 ## Как подключить его к платформе
@@ -174,7 +186,7 @@ POST /api/v1/mock/reset
 Пример:
 
 ```bash
-curl -X PUT http://localhost:8110/api/v1/mock/config/isoftpull \
+curl -k -X PUT https://YOUR_HOST/mock-bureaus/api/v1/mock/config/isoftpull \
   -H "Content-Type: application/json" \
   -d '{
     "scenario": "pass_775",
@@ -196,7 +208,7 @@ curl -X PUT http://localhost:8110/api/v1/mock/config/isoftpull \
 Пример:
 
 ```bash
-curl -X PUT http://localhost:8110/api/v1/mock/config/creditsafe \
+curl -k -X PUT https://YOUR_HOST/mock-bureaus/api/v1/mock/config/creditsafe \
   -H "Content-Type: application/json" \
   -d '{
     "scenario": "clean_72",
@@ -219,7 +231,7 @@ curl -X PUT http://localhost:8110/api/v1/mock/config/creditsafe \
 Пример:
 
 ```bash
-curl -X PUT http://localhost:8110/api/v1/mock/config/plaid \
+curl -k -X PUT https://YOUR_HOST/mock-bureaus/api/v1/mock/config/plaid \
   -H "Content-Type: application/json" \
   -d '{
     "scenario": "accounts_3",

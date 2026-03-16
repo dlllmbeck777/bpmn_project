@@ -154,7 +154,7 @@ services:
 
   mock-bureaus:
     ports: !reset []
-    networks: [backend]
+    networks: [backend, frontend]
     restart: always
     logging: *logging
     healthcheck:

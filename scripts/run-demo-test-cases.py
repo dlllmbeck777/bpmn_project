@@ -136,7 +136,7 @@ def _print_case_result(case: Dict[str, Any], created: Dict[str, Any], final: Dic
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run demo cases against mock-bureaus and Credit Platform.")
     parser.add_argument("--api-base", default="https://65.109.174.58", help="Base URL of platform API")
-    parser.add_argument("--mock-base", default="http://localhost:8110", help="Base URL of mock-bureaus service")
+    parser.add_argument("--mock-base", help="Base URL of mock-bureaus service; defaults to <api-base>/mock-bureaus")
     parser.add_argument("--gateway-api-key", help="Gateway API key for POST/GET requests")
     parser.add_argument("--admin-api-key", help="Admin API key, required only for --enable-demo-connectors or --restore-live-connectors")
     parser.add_argument("--cases-file", default="scripts/demo-test-cases.json", help="Path to JSON case catalog")
@@ -154,7 +154,7 @@ def main() -> int:
     defaults = catalog.get("defaults", {})
     cases = catalog.get("cases", [])
     api_base = _trim_base(args.api_base)
-    mock_base = _trim_base(args.mock_base)
+    mock_base = _trim_base(args.mock_base or f"{api_base}/mock-bureaus")
 
     if args.list:
         print("Available demo cases:")
