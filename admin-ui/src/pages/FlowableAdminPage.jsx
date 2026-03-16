@@ -133,11 +133,14 @@ export default function FlowableAdminPage({ canManage }) {
       </div>
 
       <div className="card">
+        <p className="text-muted text-sm" style={{ padding: '0 16px 12px' }}>
+          Open an instance to see runtime controls. `Terminate runtime` is available inside the instance detail view.
+        </p>
         {items.length === 0 ? (
           <p className="text-muted text-sm" style={{ padding: 16 }}>No Flowable instances found</p>
         ) : (
           <table className="tbl">
-            <thead><tr><th>Request</th><th>Instance</th><th>Engine</th><th>Request status</th><th>Activity</th><th>Jobs</th><th>Start</th><th></th></tr></thead>
+            <thead><tr><th>Request</th><th>Instance</th><th>Engine</th><th>Request status</th><th>Activity</th><th>Jobs</th><th>Start</th><th>Actions</th></tr></thead>
             <tbody>
               {items.map(i => (
                 <tr key={i.instance_id || i.request_id} style={{ cursor: i.instance_id ? 'pointer' : 'default' }} onClick={() => i.instance_id && openDetail(i.instance_id)}>
@@ -148,7 +151,21 @@ export default function FlowableAdminPage({ canManage }) {
                   <td className="text-sm">{i.current_activity || '—'}</td>
                   <td className="mono" style={i.failed_jobs > 0 ? { color: 'var(--red)', fontWeight: 600 } : {}}>{i.failed_jobs}/{i.job_count}</td>
                   <td className="mono text-sm" style={{ color: 'var(--text-3)' }}>{timeFull(i.start_time)}</td>
-                  <td style={{ color: 'var(--text-3)' }}>{i.instance_id ? '›' : ''}</td>
+                  <td>
+                    {i.instance_id ? (
+                      <button
+                        className="btn btn-ghost btn-xs"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          openDetail(i.instance_id)
+                        }}
+                      >
+                        Open
+                      </button>
+                    ) : (
+                      <span style={{ color: 'var(--text-3)' }}>-</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

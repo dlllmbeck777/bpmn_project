@@ -59,7 +59,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
-    networks: [frontend, backend, db]
+    networks: [frontend, backend, db, flowable]
 
   # ── Processors ────────────────────────────────────────
   processors:
