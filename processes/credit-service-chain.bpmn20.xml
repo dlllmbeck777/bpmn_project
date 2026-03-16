@@ -296,13 +296,63 @@ X-Request-Id: ${request_id}</flowable:expression>
     <scriptTask id="task_finalize" name="Finalize result"
                 flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
+        import groovy.json.JsonSlurper
+
+        def parseJson = { rawValue ->
+          try {
+            return new JsonSlurper().parseText((rawValue ?: '{}') as String)
+          } catch (Exception ignored) {
+            return [:]
+          }
+        }
+
+        def isoBody = parseJson(execution.getVariable('isoRawBody'))
+        def csBody = parseJson(execution.getVariable('csRawBody'))
+        def plaidBody = parseJson(execution.getVariable('plaidRawBody'))
+        def crmBody = parseJson(execution.getVariable('crmRawBody'))
+
+        def isoScore = isoBody?.result?.score
+        def plaidAccounts = plaidBody?.result?.accounts_found
+        def isoStatus = (execution.getVariable('iso_status') ?: 'UNKNOWN') as String
+        def creditsafeStatus = (execution.getVariable('creditsafe_status') ?: 'UNKNOWN') as String
+        def plaidStatus = (execution.getVariable('plaid_status') ?: 'UNKNOWN') as String
+        def crmStatus = (execution.getVariable('crm_status') ?: 'UNKNOWN') as String
+
+        def decisionStatus = 'COMPLETED'
+        def decisionReason = 'Flowable completed connector chain successfully'
+
+        def serviceStatuses = [isoStatus, creditsafeStatus, plaidStatus, crmStatus]
+        if (serviceStatuses.any { it == 'UNAVAILABLE' }) {
+          decisionStatus = 'REVIEW'
+          decisionReason = 'One or more connector calls were unavailable'
+        }
+        if (isoScore != null) {
+          try {
+            if ((isoScore as BigDecimal) < 600) {
+              decisionStatus = 'REJECTED'
+              decisionReason = 'Credit score below approval threshold'
+            }
+          } catch (Exception ignored) {}
+        }
+        if (decisionStatus == 'COMPLETED' && plaidAccounts != null) {
+          try {
+            if ((plaidAccounts as BigDecimal) < 1) {
+              decisionStatus = 'REVIEW'
+              decisionReason = 'No linked accounts were found'
+            }
+          } catch (Exception ignored) {}
+        }
+
         def summary = '{"request_id":"' + execution.getVariable('request_id') + '",' +
                       '"route_mode":"' + execution.getVariable('route_mode') + '",' +
-                      '"iso_status":"' + (execution.getVariable('iso_status') ?: 'UNKNOWN') + '",' +
-                      '"creditsafe_status":"' + (execution.getVariable('creditsafe_status') ?: 'UNKNOWN') + '",' +
-                      '"plaid_status":"' + (execution.getVariable('plaid_status') ?: 'UNKNOWN') + '",' +
-                      '"crm_status":"' + (execution.getVariable('crm_status') ?: 'UNKNOWN') + '"}'
-        def flowableResult = '{"status":"COMPLETED","adapter":"flowable","request_id":"' + execution.getVariable('request_id') + '",' +
+                      '"decision_source":"flowable_bpmn",' +
+                      '"decision_reason":"' + decisionReason.replace('"', '\\"') + '",' +
+                      '"iso_status":"' + isoStatus + '",' +
+                      '"creditsafe_status":"' + creditsafeStatus + '",' +
+                      '"plaid_status":"' + plaidStatus + '",' +
+                      '"crm_status":"' + crmStatus + '"}'
+        def flowableResult = '{"status":"' + decisionStatus + '","adapter":"flowable","request_id":"' + execution.getVariable('request_id') + '",' +
+                             '"decision_reason":"' + decisionReason.replace('"', '\\"') + '",' +
                              '"steps":{' +
                                '"isoftpull":' + ((execution.getVariable('isoRawBody') ?: '{}') as String) + ',' +
                                '"creditsafe":' + ((execution.getVariable('csRawBody') ?: '{}') as String) + ',' +
