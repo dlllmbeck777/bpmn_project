@@ -134,7 +134,7 @@ export default function SettingsPage({ onSave, theme, onThemeChange, availablePa
         <div className="card">
           <div className="card-title">How this workspace is organized</div>
           <div className="settings-note-list">
-            <div className="notice">Use <strong>Control center</strong> for scenarios, routing rules, stop factors, and pipeline.</div>
+            <div className="notice">Use <strong>Orchestration</strong> for routing policy, stop factors, and pipeline.</div>
             <div className="notice">Keep <strong>Services</strong> separate for connector URLs, retries, and enable/disable status.</div>
             <div className="notice">Use this page for personal workspace settings, API connectivity, and fast navigation.</div>
           </div>

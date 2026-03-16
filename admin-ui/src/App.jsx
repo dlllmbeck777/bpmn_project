@@ -25,7 +25,7 @@ const sections = [
   {
     group: 'Configuration',
     items: [
-      { id: 'control', label: 'Control center', Icon: IconRoute, minRole: 'senior_analyst' },
+      { id: 'control', label: 'Orchestration', Icon: IconRoute, minRole: 'senior_analyst' },
       { id: 'services', label: 'Services', Icon: IconSettings, minRole: 'senior_analyst' },
       { id: 'users', label: 'Users & access', Icon: IconUsers, minRole: 'admin' },
     ],
@@ -44,7 +44,7 @@ const sections = [
 
 const pageTitle = {
   dashboard: ['Dashboard', 'Platform overview and health status'],
-  control: ['Control center', 'Manage scenarios, routing, stop checks, and pipeline behavior from one place'],
+  control: ['Orchestration', 'Set one routing policy, manage stop factors, and adjust pipeline behavior'],
   services: ['Services', 'Manage service registry, URLs and retries'],
   users: ['Users & access', 'Create users, assign roles, manage sessions'],
   flowable: ['Flowable engine', 'Inspect and manage Flowable instances, jobs and process definitions'],

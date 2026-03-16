@@ -18,6 +18,7 @@ export default function StopFactorsPage({ canEdit }) {
   useEffect(() => { load() }, [filter])
 
   const allLoadedEnabled = useMemo(() => items.length > 0 && items.every((item) => item.enabled), [items])
+  const enabledCount = useMemo(() => items.filter((item) => item.enabled).length, [items])
 
   const save = async () => {
     try {
@@ -61,11 +62,25 @@ export default function StopFactorsPage({ canEdit }) {
   return (
     <>
       {error && <div className="notice notice-error mb-16">{error}</div>}
+      <div className="card mb-16">
+        <div className="card-title">Stop-factor behavior</div>
+        <div className="grid-2">
+          <div className="sum-card">
+            <div className="sum-label">Active rules</div>
+            <div className="sum-val">{enabledCount}</div>
+          </div>
+          <div className="notice">
+            {enabledCount > 0
+              ? 'Active stop-factor rules will be checked in the selected stage.'
+              : 'No active stop-factor rule is configured. By default, requests pass without stop-factor blocking.'}
+          </div>
+        </div>
+      </div>
       <div className="flex-between mb-16">
         <div className="tab-bar" style={{ marginBottom: 0, borderBottom: 'none' }}>
           {['', 'pre', 'post'].map((f) => (
             <button key={f} className={`tab-btn${filter === f ? ' active' : ''}`} onClick={() => setFilter(f)}>
-              {f || 'All'}
+              {f === '' ? 'All rules' : f === 'pre' ? 'Pre-check' : 'Post-check'}
             </button>
           ))}
         </div>

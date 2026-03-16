@@ -1,31 +1,25 @@
 import { useMemo, useState } from 'react'
 
 import { getControlCenterTab, setControlCenterTab } from '../lib/preferences'
-import ScenariosPage from './ScenariosPage'
 import RoutingPage from './RoutingPage'
 import StopFactorsPage from './StopFactorsPage'
 import PipelinePage from './PipelinePage'
 
 const tabs = [
   {
-    id: 'scenarios',
-    label: 'Scenarios',
-    summary: 'Apply ready-made operating modes without visiting four separate pages.',
-  },
-  {
     id: 'routing',
-    label: 'Routing rules',
-    summary: 'Control how auto traffic is split between custom and Flowable.',
+    label: 'Routing',
+    summary: 'Choose one routing policy: all to custom, all to auto / flowable, or rule-based with an explicit fallback.',
   },
   {
     id: 'stopfactors',
     label: 'Stop factors',
-    summary: 'Manage pre and post checks that can reject or review requests.',
+    summary: 'If active stop-factor rules exist, they are applied. If none exist, requests pass by default.',
   },
   {
     id: 'pipeline',
     label: 'Pipeline',
-    summary: 'Adjust connector order and mode-specific skip behavior.',
+    summary: 'Adjust connector order and mode-specific skip behavior without mixing it with routing logic.',
   },
 ]
 
@@ -50,7 +44,7 @@ export default function ControlCenterPage({ canEdit, canAdmin, onNavigate }) {
       case 'pipeline':
         return <PipelinePage canEdit={canEdit} />
       default:
-        return <ScenariosPage canEdit={canEdit} />
+        return <RoutingPage canEdit={canEdit} />
     }
   }, [canEdit, currentTab.id])
 
@@ -59,10 +53,10 @@ export default function ControlCenterPage({ canEdit, canAdmin, onNavigate }) {
       <div className="card mb-16">
         <div className="control-header">
           <div>
-            <div className="card-title">Configuration control center</div>
+            <div className="card-title">Orchestration workspace</div>
             <p className="muted">
-              Keep routing, stop logic, and connector execution in one working area. Services and access stay separate,
-              because they have broader operational impact.
+              Routing, stop logic, and pipeline stay together here. Services and access remain separate so the
+              operational path is simpler and does not duplicate the same controls in multiple places.
             </p>
           </div>
           <div className="control-header-actions">
