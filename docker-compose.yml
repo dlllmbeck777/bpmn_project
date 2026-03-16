@@ -96,6 +96,8 @@ services:
       - FLOWABLE_PASSWORD_FALLBACKS=${FLOWABLE_PASSWORD_FALLBACKS:-test}
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
       - FLOWABLE_AUTO_DEPLOY_BPMN=${FLOWABLE_AUTO_DEPLOY_BPMN:-true}
+      - FLOWABLE_WATCH_TIMEOUT_SECONDS=${FLOWABLE_WATCH_TIMEOUT_SECONDS:-90}
+      - FLOWABLE_WATCH_POLL_SECONDS=${FLOWABLE_WATCH_POLL_SECONDS:-2}
     volumes:
       - ./processes:/processes:ro
     depends_on:
@@ -197,6 +199,7 @@ services:
       - SPRING_DATASOURCE_DRIVER-CLASS-NAME=org.postgresql.Driver
       - FLOWABLE_COMMON_APP_IDM-ADMIN_USER=admin
       - FLOWABLE_COMMON_APP_IDM-ADMIN_PASSWORD=${FLOWABLE_PASSWORD:-test}
+      - FLOWABLE_ASYNC_EXECUTOR_ACTIVATE=true
     depends_on:
       - flowable-db
     restart: unless-stopped
@@ -214,6 +217,7 @@ services:
       - SPRING_DATASOURCE_DRIVER-CLASS-NAME=org.postgresql.Driver
       - FLOWABLE_COMMON_APP_IDM-ADMIN_USER=admin
       - FLOWABLE_COMMON_APP_IDM-ADMIN_PASSWORD=${FLOWABLE_PASSWORD:-test}
+      - FLOWABLE_ASYNC_EXECUTOR_ACTIVATE=true
     depends_on:
       - flowable-db
     restart: unless-stopped

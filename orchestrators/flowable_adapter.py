@@ -28,6 +28,8 @@ FLOWABLE_PASSWORD_FALLBACKS = [
     if item.strip()
 ]
 FLOWABLE_AUTO_DEPLOY_BPMN = os.getenv("FLOWABLE_AUTO_DEPLOY_BPMN", "true").strip().lower() in {"1", "true", "yes", "on"}
+FLOWABLE_WATCH_TIMEOUT_SECONDS = max(15, int((os.getenv("FLOWABLE_WATCH_TIMEOUT_SECONDS", "90") or "90").strip()))
+FLOWABLE_WATCH_POLL_SECONDS = max(1.0, float((os.getenv("FLOWABLE_WATCH_POLL_SECONDS", "2") or "2").strip()))
 CORE_CALLBACK_URL = os.getenv("CORE_CALLBACK_URL", f"{CONFIG_URL}/internal/cases/complete")
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 SERVICE_NAME = "flowable-adapter"
@@ -294,6 +296,94 @@ async def _load_completed_variables(flowable_url: str, instance_id: str) -> Opti
     return {item["name"]: item.get("value") for item in variables_response.json()}
 
 
+async def _load_runtime_snapshot(flowable_url: str, instance_id: str) -> Dict[str, Any]:
+    runtime_response = await _flowable_request(
+        "GET",
+        f"{flowable_url}/runtime/process-instances/{instance_id}",
+        timeout=10.0,
+        retry_attempts=2,
+    )
+    historic_response = await _flowable_request(
+        "GET",
+        f"{flowable_url}/history/historic-process-instances/{instance_id}",
+        timeout=10.0,
+        retry_attempts=2,
+    )
+    jobs_response = await _flowable_request(
+        "GET",
+        f"{flowable_url}/management/jobs",
+        timeout=10.0,
+        retry_attempts=2,
+        params={"processInstanceId": instance_id},
+    )
+
+    runtime = runtime_response.json() if runtime_response.status_code == 200 else {}
+    historic = historic_response.json() if historic_response.status_code == 200 else {}
+    jobs_payload = jobs_response.json() if jobs_response.status_code == 200 else {}
+    jobs = jobs_payload.get("data", []) if isinstance(jobs_payload, dict) else []
+
+    current_activity = ""
+    if isinstance(runtime, dict):
+        current_activity = runtime.get("activityId") or runtime.get("activityName") or ""
+    if not current_activity and isinstance(historic, dict):
+        current_activity = historic.get("endActivityId") or ""
+
+    failed_jobs = [
+        job for job in jobs
+        if isinstance(job, dict) and (job.get("exceptionMessage") or job.get("exceptionStacktrace"))
+    ]
+
+    return {
+        "runtime": runtime if isinstance(runtime, dict) else {},
+        "historic": historic if isinstance(historic, dict) else {},
+        "job_count": len(jobs),
+        "failed_jobs": len(failed_jobs),
+        "current_activity": current_activity or "-",
+        "end_time": historic.get("endTime") if isinstance(historic, dict) else None,
+    }
+
+
+def _build_watch_timeout_result(request_id: str, instance_id: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    current_activity = str(snapshot.get("current_activity") or "-")
+    failed_jobs = int(snapshot.get("failed_jobs") or 0)
+    job_count = int(snapshot.get("job_count") or 0)
+    if failed_jobs > 0:
+        decision_reason = f"Flowable stalled with {failed_jobs} failed job(s)"
+    elif current_activity and current_activity != "-":
+        decision_reason = f"Flowable did not finish before timeout at activity {current_activity}"
+    else:
+        decision_reason = "Flowable did not finish before timeout"
+
+    summary = {
+        "request_id": request_id,
+        "route_mode": "FLOWABLE",
+        "decision_source": "flowable_watchdog",
+        "decision_reason": decision_reason,
+        "engine_status": "RUNNING" if snapshot.get("runtime") else "UNKNOWN",
+        "current_activity": current_activity,
+        "failed_jobs": failed_jobs,
+        "job_count": job_count,
+    }
+    return {
+        "status": "ENGINE_ERROR",
+        "adapter": "flowable",
+        "request_id": request_id,
+        "decision_reason": decision_reason,
+        "error": decision_reason,
+        "engine": {
+            "engine": "flowable",
+            "started": True,
+            "instance_id": instance_id,
+            "completed": False,
+            "timed_out": True,
+            "current_activity": current_activity,
+            "failed_jobs": failed_jobs,
+            "job_count": job_count,
+        },
+        "summary": summary,
+    }
+
+
 async def _build_result_payload(body: "RequestIn", instance_id: str, process_variables: Dict[str, Any], connector_urls: Dict[str, str], cid: str):
     steps = _build_steps(process_variables)
     parsed_report = await _parsed_report(body.request_id, steps, cid)
@@ -387,8 +477,9 @@ async def _notify_core(request_id: str, result: Dict[str, Any], cid: str):
 
 
 async def _watch_process_completion(flowable_url: str, instance_id: str, body: "RequestIn", cid: str, connector_urls: Dict[str, str]):
-    for _ in range(60):
-        await asyncio.sleep(2)
+    iterations = max(1, int(FLOWABLE_WATCH_TIMEOUT_SECONDS / FLOWABLE_WATCH_POLL_SECONDS))
+    for _ in range(iterations):
+        await asyncio.sleep(FLOWABLE_WATCH_POLL_SECONDS)
         try:
             process_variables = await _load_completed_variables(flowable_url, instance_id)
         except Exception as exc:
@@ -406,7 +497,44 @@ async def _watch_process_completion(flowable_url: str, instance_id: str, body: "
             log.error(f"[{cid}] completion push failed for {body.request_id}: {exc}")
         return
 
-    log.error(f"[{cid}] flowable instance {instance_id} did not finish before watcher timeout")
+    try:
+        snapshot = await _load_runtime_snapshot(flowable_url, instance_id)
+    except Exception as exc:
+        snapshot = {
+            "current_activity": "-",
+            "failed_jobs": 0,
+            "job_count": 0,
+            "runtime": {},
+            "historic": {},
+            "watch_error": str(exc),
+        }
+
+    result = _build_watch_timeout_result(body.request_id, instance_id, snapshot)
+    await _track(
+        body.request_id,
+        "flowable",
+        "IN",
+        "Flowable completion timed out",
+        cid=cid,
+        service_id="flowable-rest",
+        status="ENGINE_ERROR",
+        payload={
+            "instance_id": instance_id,
+            "flowable_url": flowable_url,
+            "watch_timeout_seconds": FLOWABLE_WATCH_TIMEOUT_SECONDS,
+            **snapshot,
+        },
+    )
+    try:
+        await _notify_core(body.request_id, result, cid)
+    except Exception as exc:
+        log.error(f"[{cid}] timeout callback failed for {body.request_id}: {exc}")
+        return
+
+    log.error(
+        f"[{cid}] flowable instance {instance_id} did not finish within "
+        f"{FLOWABLE_WATCH_TIMEOUT_SECONDS}s; finalized as ENGINE_ERROR"
+    )
 
 
 @app.on_event("startup")
@@ -506,7 +634,7 @@ async def orchestrate(body: RequestIn, request: Request):
         response = await _flowable_request(
             "POST",
             f"{flowable_url}/runtime/process-instances",
-            timeout=15.0,
+            timeout=60.0,
             retry_attempts=3,
             json={"processDefinitionKey": process_key, "variables": variables},
             headers={"X-Correlation-ID": cid},

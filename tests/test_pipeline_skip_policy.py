@@ -55,6 +55,13 @@ class _DummyFastAPI:
         return decorator
 
 
+class _DummyHTTPException(Exception):
+    def __init__(self, status_code, detail):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
 class _DummyBaseModel:
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
@@ -70,7 +77,7 @@ def _dummy_field(default=None, **kwargs):
     return default
 
 
-sys.modules['fastapi'] = SimpleNamespace(FastAPI=_DummyFastAPI, Request=object)
+sys.modules['fastapi'] = SimpleNamespace(FastAPI=_DummyFastAPI, Request=object, HTTPException=_DummyHTTPException)
 sys.modules['fastapi.middleware'] = SimpleNamespace()
 sys.modules['fastapi.middleware.cors'] = SimpleNamespace(CORSMiddleware=object)
 sys.modules['pydantic'] = SimpleNamespace(BaseModel=_DummyBaseModel, Field=_dummy_field)
@@ -123,6 +130,37 @@ class PipelineSkipPolicyTests(unittest.TestCase):
             self.assertEqual(policies["isoftpull"]["source"], "service")
         finally:
             flowable_adapter._acfg = original_acfg
+
+    def test_build_watch_timeout_result_marks_running_instance_as_engine_error(self):
+        result = flowable_adapter._build_watch_timeout_result(
+            "REQ-1",
+            "inst-1",
+            {
+                "runtime": {"id": "inst-1"},
+                "current_activity": "task_init",
+                "failed_jobs": 0,
+                "job_count": 1,
+            },
+        )
+        self.assertEqual(result["status"], "ENGINE_ERROR")
+        self.assertTrue(result["engine"]["timed_out"])
+        self.assertEqual(result["engine"]["current_activity"], "task_init")
+        self.assertIn("task_init", result["decision_reason"])
+
+    def test_build_watch_timeout_result_mentions_failed_jobs(self):
+        result = flowable_adapter._build_watch_timeout_result(
+            "REQ-2",
+            "inst-2",
+            {
+                "runtime": {"id": "inst-2"},
+                "current_activity": "task_plaid",
+                "failed_jobs": 2,
+                "job_count": 2,
+            },
+        )
+        self.assertEqual(result["status"], "ENGINE_ERROR")
+        self.assertIn("failed job", result["decision_reason"].lower())
+        self.assertEqual(result["summary"]["failed_jobs"], 2)
 
 
 if __name__ == '__main__':

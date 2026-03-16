@@ -89,9 +89,9 @@ class FlowableOpsHelperTests(unittest.TestCase):
                 "enabled": False,
                 "password_hash": "stored",
             }
-            with self.assertRaises(_DummyHTTPException) as ctx:
+            with self.assertRaises(Exception) as ctx:
                 services.authenticate_ui_login("analyst", "anything")
-            self.assertEqual(ctx.exception.status_code, 403)
+            self.assertEqual(getattr(ctx.exception, "status_code", None), 403)
         finally:
             services._admin_user_by_username = original_lookup
 

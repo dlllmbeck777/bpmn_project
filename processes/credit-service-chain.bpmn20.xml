@@ -17,7 +17,7 @@
     <sequenceFlow id="flow_start_to_init" sourceRef="startEvent" targetRef="task_init"/>
 
     <scriptTask id="task_init" name="Initialize context"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         execution.setVariable('route_mode', execution.getVariable('route_mode') ?: 'FLOWABLE')
         execution.setVariable('request_id', execution.getVariable('request_id') ?: '')
@@ -35,7 +35,7 @@
     <sequenceFlow id="flow_iso_gate_to_call" sourceRef="gateway_iso" targetRef="task_isoftpull"/>
 
     <scriptTask id="task_iso_skip" name="Skip iSoftPull"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def reason = ((execution.getVariable('skip_reason_isoftpull') ?: 'pipeline step skipped by policy') as String).replace('"', '\\"')
         execution.setVariable('isoRawBody', '{"status":"SKIPPED","reason":"' + reason + '"}')
@@ -45,7 +45,7 @@
     <sequenceFlow id="flow_iso_skip_to_prep_cs" sourceRef="task_iso_skip" targetRef="task_prepare_creditsafe_body"/>
 
     <serviceTask id="task_isoftpull" name="Call iSoftPull"
-                 flowable:async="true" flowable:exclusive="false" flowable:type="http">
+                 flowable:exclusive="false" flowable:type="http">
       <extensionElements>
         <flowable:failedJobRetryTimeCycle>R2/PT5S</flowable:failedJobRetryTimeCycle>
         <flowable:field name="requestMethod"><flowable:string>POST</flowable:string></flowable:field>
@@ -66,7 +66,7 @@ X-Request-Id: ${request_id}</flowable:expression>
       <errorEventDefinition errorRef="serviceError"/>
     </boundaryEvent>
     <scriptTask id="task_iso_degrade" name="iSoftPull degrade"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         execution.setVariable('isoRawBody', '{}')
         execution.setVariable('iso_status', 'UNAVAILABLE')
@@ -76,7 +76,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_iso_deg_to_prep_cs" sourceRef="task_iso_degrade" targetRef="task_prepare_creditsafe_body"/>
 
     <scriptTask id="task_parse_iso" name="Parse iSoftPull"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def raw = (execution.getVariable('isoRawBody') ?: '{}') as String
         def mv = raw =~ /"status"\s*:\s*"([^"]+)"/
@@ -87,7 +87,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_parse_iso_to_prep_cs" sourceRef="task_parse_iso" targetRef="task_prepare_creditsafe_body"/>
 
     <scriptTask id="task_prepare_creditsafe_body" name="Prepare Creditsafe body"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def isoBody = (execution.getVariable('isoRawBody') ?: '{}') as String
         def body = '{"request_id":"' + execution.getVariable('request_id') + '",' +
@@ -106,7 +106,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_cs_gate_to_call" sourceRef="gateway_cs" targetRef="task_creditsafe"/>
 
     <scriptTask id="task_cs_skip" name="Skip Creditsafe"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def reason = ((execution.getVariable('skip_reason_creditsafe') ?: 'pipeline step skipped by policy') as String).replace('"', '\\"')
         execution.setVariable('csRawBody', '{"status":"SKIPPED","reason":"' + reason + '"}')
@@ -116,7 +116,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_cs_skip_to_prep_plaid" sourceRef="task_cs_skip" targetRef="task_prepare_plaid_body"/>
 
     <serviceTask id="task_creditsafe" name="Call Creditsafe"
-                 flowable:async="true" flowable:exclusive="false" flowable:type="http">
+                 flowable:exclusive="false" flowable:type="http">
       <extensionElements>
         <flowable:failedJobRetryTimeCycle>R2/PT5S</flowable:failedJobRetryTimeCycle>
         <flowable:field name="requestMethod"><flowable:string>POST</flowable:string></flowable:field>
@@ -135,7 +135,7 @@ X-Request-Id: ${request_id}</flowable:expression>
       <errorEventDefinition errorRef="serviceError"/>
     </boundaryEvent>
     <scriptTask id="task_cs_degrade" name="Creditsafe degrade"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         execution.setVariable('csRawBody', '{}')
         execution.setVariable('creditsafe_status', 'UNAVAILABLE')
@@ -145,7 +145,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_cs_deg_to_prep_plaid" sourceRef="task_cs_degrade" targetRef="task_prepare_plaid_body"/>
 
     <scriptTask id="task_parse_cs" name="Parse Creditsafe"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def raw = (execution.getVariable('csRawBody') ?: '{}') as String
         def mv = raw =~ /"status"\s*:\s*"([^"]+)"/
@@ -156,7 +156,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_parse_cs_to_prep_plaid" sourceRef="task_parse_cs" targetRef="task_prepare_plaid_body"/>
 
     <scriptTask id="task_prepare_plaid_body" name="Prepare Plaid body"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def csBody = (execution.getVariable('csRawBody') ?: '{}') as String
         def body = '{"request_id":"' + execution.getVariable('request_id') + '",' +
@@ -175,7 +175,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_plaid_gate_to_call" sourceRef="gateway_plaid" targetRef="task_plaid"/>
 
     <scriptTask id="task_plaid_skip" name="Skip Plaid"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def reason = ((execution.getVariable('skip_reason_plaid') ?: 'pipeline step skipped by policy') as String).replace('"', '\\"')
         execution.setVariable('plaidRawBody', '{"status":"SKIPPED","reason":"' + reason + '"}')
@@ -185,7 +185,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_plaid_skip_to_prep_crm" sourceRef="task_plaid_skip" targetRef="task_prepare_crm_body"/>
 
     <serviceTask id="task_plaid" name="Call Plaid"
-                 flowable:async="true" flowable:exclusive="false" flowable:type="http">
+                 flowable:exclusive="false" flowable:type="http">
       <extensionElements>
         <flowable:failedJobRetryTimeCycle>R2/PT5S</flowable:failedJobRetryTimeCycle>
         <flowable:field name="requestMethod"><flowable:string>POST</flowable:string></flowable:field>
@@ -204,7 +204,7 @@ X-Request-Id: ${request_id}</flowable:expression>
       <errorEventDefinition errorRef="serviceError"/>
     </boundaryEvent>
     <scriptTask id="task_plaid_degrade" name="Plaid degrade"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         execution.setVariable('plaidRawBody', '{}')
         execution.setVariable('plaid_status', 'UNAVAILABLE')
@@ -214,7 +214,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_plaid_deg_to_prep_crm" sourceRef="task_plaid_degrade" targetRef="task_prepare_crm_body"/>
 
     <scriptTask id="task_parse_plaid" name="Parse Plaid"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def raw = (execution.getVariable('plaidRawBody') ?: '{}') as String
         def mv = raw =~ /"status"\s*:\s*"([^"]+)"/
@@ -225,7 +225,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_parse_plaid_to_prep_crm" sourceRef="task_parse_plaid" targetRef="task_prepare_crm_body"/>
 
     <scriptTask id="task_prepare_crm_body" name="Prepare CRM body"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def plaidBody = (execution.getVariable('plaidRawBody') ?: '{}') as String
         def body = '{"request_id":"' + execution.getVariable('request_id') + '",' +
@@ -244,7 +244,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_crm_gate_to_call" sourceRef="gateway_crm" targetRef="task_crm"/>
 
     <scriptTask id="task_crm_skip" name="Skip CRM"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def reason = ((execution.getVariable('skip_reason_crm') ?: 'pipeline step skipped by policy') as String).replace('"', '\\"')
         execution.setVariable('crmRawBody', '{"status":"SKIPPED","reason":"' + reason + '"}')
@@ -254,7 +254,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_crm_skip_to_finalize" sourceRef="task_crm_skip" targetRef="task_finalize"/>
 
     <serviceTask id="task_crm" name="Call CRM"
-                 flowable:async="true" flowable:exclusive="false" flowable:type="http">
+                 flowable:exclusive="false" flowable:type="http">
       <extensionElements>
         <flowable:failedJobRetryTimeCycle>R2/PT5S</flowable:failedJobRetryTimeCycle>
         <flowable:field name="requestMethod"><flowable:string>POST</flowable:string></flowable:field>
@@ -273,7 +273,7 @@ X-Request-Id: ${request_id}</flowable:expression>
       <errorEventDefinition errorRef="serviceError"/>
     </boundaryEvent>
     <scriptTask id="task_crm_degrade" name="CRM degrade"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         execution.setVariable('crmRawBody', '{}')
         execution.setVariable('crm_status', 'UNAVAILABLE')
@@ -283,7 +283,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_crm_deg_to_finalize" sourceRef="task_crm_degrade" targetRef="task_finalize"/>
 
     <scriptTask id="task_parse_crm" name="Parse CRM"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def raw = (execution.getVariable('crmRawBody') ?: '{}') as String
         def mv = raw =~ /"status"\s*:\s*"([^"]+)"/
@@ -294,7 +294,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_parse_crm_to_finalize" sourceRef="task_parse_crm" targetRef="task_finalize"/>
 
     <scriptTask id="task_finalize" name="Finalize result"
-                flowable:async="true" scriptFormat="groovy" flowable:autoStoreVariables="false">
+                scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         import groovy.json.JsonSlurper
 
