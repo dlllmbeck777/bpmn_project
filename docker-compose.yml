@@ -150,6 +150,20 @@ services:
       retries: 3
 
   # ── Flowable Engine ───────────────────────────────────
+  mock-bureaus:
+    build: ./connectors/mock-bureaus
+    container_name: mock-bureaus
+    profiles: ["mock"]
+    ports:
+      - "8110:8110"
+    restart: unless-stopped
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8110/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
   flowable-db:
     image: postgres:15
     container_name: flowable-db

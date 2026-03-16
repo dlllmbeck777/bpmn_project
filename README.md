@@ -45,6 +45,8 @@ Russian operational and project documentation:
 - `docs/INTEGRATION_SPEC_MOBILE_RU.md`
 - `docs/INTEGRATION_SPEC_SNP_RU.md`
 - `docs/API_CHEATSHEET_RU.md`
+- `docs/MOCK_BUREAUS_SERVICE_RU.md`
+- `docs/TEST_SPEC_MOCK_CONNECTORS_RU.md`
 
 ## Stress Test
 
@@ -53,7 +55,7 @@ Detailed steps are in `docs/STRESS_TEST.md`.
 
 For production modeling workflows, `flowable-ui` is available behind nginx and `FLOWABLE_AUTO_DEPLOY_BPMN=false` is recommended so BPMN definitions edited in Flowable Modeler are not overwritten by file-based auto-deploy on restart.
 
-## Services (14)
+## Services (15, including optional mock)
 
 | Service | Port | Purpose |
 | --- | --- | --- |
@@ -64,6 +66,7 @@ For production modeling workflows, `flowable-ui` is available behind nginx and `
 | `isoftpull` | 8101 | Mock bureau connector |
 | `creditsafe` | 8102 | Mock company score connector |
 | `plaid` | 8103 | Mock accounts connector |
+| `mock-bureaus` | 8110 | Optional test double for iSoftPull, Creditsafe, and Plaid |
 | `crm` | 8104 | Mock CRM connector |
 | `flowable-db` | 5434 | PostgreSQL for Flowable |
 | `flowable-rest` | 8085 | Flowable REST engine |
@@ -93,5 +96,6 @@ For production modeling workflows, `flowable-ui` is available behind nginx and `
 
 - `admin-ui` stores API base URL and session data in `localStorage`.
 - The external input contract is documented as `Applicant Input v2` in `docs/INTEGRATION_SPEC_IT_RU.md`.
+- For connector QA without external dependencies, use `mock-bureaus` and the docs `docs/MOCK_BUREAUS_SERVICE_RU.md` and `docs/TEST_SPEC_MOCK_CONNECTORS_RU.md`.
 - The Flowable path uses callback completion via `/internal/cases/complete`.
 - For production, use the dedicated UI image in `admin-ui/Dockerfile.prod`.
