@@ -10,7 +10,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from coreapi.models import AdminUserCreateIn, AdminUserUpdateIn, FlowableActionIn, HealthResponse, ListResponse, LoginIn, LoginResponse, PipelineStepIn, RequestActionIn, RequestIn, RequestNoteIn, RequestResponse, RuleIn, ServiceIn, ServiceOut, StatusResponse, StopFactorIn, TrackerEventIn
-from coreapi.services import ROLE_ADMIN, ROLE_ANALYST, ROLE_SENIOR_ANALYST, add_request_note, apply_rate_limit, authenticate_ui_login, authorize_request_view, build_request_view, build_requests_list_query, clone_request_submission, create_admin_user, delete_admin_user, ensure_default_ui_users, finalize_request, get_connector_urls, get_flowable_instance_detail, list_admin_users, list_flowable_instances, list_request_notes, normalize_incoming_request, reconcile_flowable_request, require_gateway_auth, require_internal_auth, require_internal_or_min_role, require_min_role, resolve_mode, retry_request_as_new, retry_request_flowable_jobs, revoke_admin_user_session, retry_flowable_failed_jobs, run_stop_factor_check, set_flowable_instance_state, set_request_ignored, submit_request_payload, terminate_flowable_instance, update_admin_user
+from coreapi.services import ROLE_ADMIN, ROLE_ANALYST, ROLE_SENIOR_ANALYST, add_request_note, apply_rate_limit, authenticate_ui_login, authorize_request_view, build_request_view, build_requests_list_query, clone_request_submission, create_admin_user, delete_admin_user, ensure_default_ui_users, finalize_request, get_connector_urls, get_flowable_instance_detail, get_request_detail_view, list_admin_users, list_flowable_instances, list_request_notes, normalize_incoming_request, reconcile_flowable_request, require_gateway_auth, require_internal_auth, require_internal_or_min_role, require_min_role, resolve_mode, retry_request_as_new, retry_request_flowable_jobs, revoke_admin_user_session, retry_flowable_failed_jobs, run_stop_factor_check, set_flowable_instance_state, set_request_ignored, submit_request_payload, terminate_flowable_instance, update_admin_user
 from coreapi.storage import audit, execute, execute_returning, query, to_json_ready, track_request_event
 from migrations import run_migrations, seed_defaults
 from shared import all_breaker_states, close_pool, config_cache, get_correlation_id, get_conn, get_logger, init_pool, metrics, new_correlation_id, put_conn, resilient_post
@@ -603,13 +603,9 @@ async def create_request(body: RequestIn, request: Request, x_api_key: str = Hea
 
 
 @app.get("/api/v1/requests/{request_id}", tags=["Requests"])
-def get_request_detail(request_id: str, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+async def get_request_detail(request_id: str, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
     authorize_request_view(x_api_key, x_user_role)
-    row = build_request_view(to_json_ready(query("SELECT * FROM requests WHERE request_id=%s", (request_id,), "one")))
-    if not row:
-        raise HTTPException(404, "Request not found")
-    row["notes"] = list_request_notes(request_id)
-    return row
+    return await get_request_detail_view(request_id)
 
 
 @app.get("/api/v1/requests/{request_id}/notes", response_model=ListResponse, tags=["Requests"])

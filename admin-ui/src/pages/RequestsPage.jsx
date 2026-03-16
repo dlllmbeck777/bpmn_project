@@ -11,6 +11,9 @@ function StatusBadge({ status }) {
     SUBMITTED: 'badge-blue',
     ENGINE_ERROR: 'badge-red',
     ENGINE_UNREACHABLE: 'badge-red',
+    ORPHANED: 'badge-red',
+    UNAVAILABLE: 'badge-red',
+    SUSPENDED: 'badge-amber',
     RETRIED: 'badge-blue',
     CLONED: 'badge-purple',
     NOTED: 'badge-amber',
@@ -72,6 +75,11 @@ function metricValue(result, key) {
 
 function noteTime(value) {
   return value ? String(value).slice(0, 19).replace('T', ' ') : '-'
+}
+
+function engineHint(detail) {
+  if (detail?.flowable_live_state?.hint) return detail.flowable_live_state.hint
+  return decisionReason(detail?.result, detail?.status)
 }
 
 export default function RequestsPage() {
@@ -305,8 +313,15 @@ export default function RequestsPage() {
             <div className="card">
               <div className="card-title">Outcome</div>
               <div className="kv-row"><span className="kv-key">Final status</span><span className="kv-val"><StatusBadge status={detail.status} /></span></div>
-              <div className="kv-row"><span className="kv-key">Decision</span><span className="kv-val">{decisionReason(detail.result, detail.status)}</span></div>
+              <div className="kv-row"><span className="kv-key">Decision</span><span className="kv-val">{engineHint(detail)}</span></div>
               <div className="kv-row"><span className="kv-key">Engine instance</span><span className="kv-val">{detail.result?.engine?.instance_id || '-'}</span></div>
+              {detail.flowable_live_state && (
+                <>
+                  <div className="kv-row"><span className="kv-key">Engine state</span><span className="kv-val"><StatusBadge status={detail.flowable_live_state.engine_status} /></span></div>
+                  <div className="kv-row"><span className="kv-key">Current activity</span><span className="kv-val">{detail.flowable_live_state.current_activity || '-'}</span></div>
+                  <div className="kv-row"><span className="kv-key">Jobs</span><span className="kv-val">{`${detail.flowable_live_state.failed_jobs || 0}/${detail.flowable_live_state.job_count || 0} failed`}</span></div>
+                </>
+              )}
             </div>
             <div className="card">
               <div className="card-title">Decision inputs</div>

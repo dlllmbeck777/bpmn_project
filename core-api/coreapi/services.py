@@ -1570,6 +1570,28 @@ def _flowable_summary_from_bundle(request_row: Optional[Dict[str, Any]], instanc
     }
 
 
+def _flowable_operator_hint(summary: Dict[str, Any]) -> str:
+    engine_status = str(summary.get("engine_status") or "").upper()
+    current_activity = str(summary.get("current_activity") or "").strip() or "-"
+    failed_jobs = int(summary.get("failed_jobs") or 0)
+    request_status = str(summary.get("request_status") or "").upper()
+    if engine_status == "RUNNING":
+        if failed_jobs > 0:
+            return f"Flowable is running with {failed_jobs} failed job(s). Open Flowable engine and retry jobs."
+        if current_activity and current_activity != "-":
+            return f"Flowable is still executing at activity: {current_activity}."
+        return "Flowable is still running. Wait for async completion or inspect the instance in Flowable engine."
+    if engine_status == "ORPHANED":
+        return "The platform request is already finalized, but the Flowable runtime instance is still alive."
+    if engine_status == "SUSPENDED":
+        return "The Flowable instance is suspended and needs operator action."
+    if engine_status == "FAILED":
+        return "Flowable instance details could not be loaded. Check Flowable engine connectivity and logs."
+    if engine_status == "COMPLETED" and request_status == "RUNNING":
+        return "Flowable has completed, but the platform request has not been reconciled yet."
+    return ""
+
+
 def _flowable_status_matches(item: Dict[str, Any], status: str) -> bool:
     normalized = (status or "all").strip().lower()
     if normalized in ("", "all"):
@@ -1653,6 +1675,45 @@ async def get_flowable_instance_detail(instance_id: str) -> Dict[str, Any]:
         "history_raw": tracker_payload(bundle.get("historic") or {}),
         "tracker": [to_json_ready(item) for item in tracker_items],
     }
+
+
+async def get_request_detail_view(request_id: str) -> Dict[str, Any]:
+    request_row = build_request_view(to_json_ready(query("SELECT * FROM requests WHERE request_id=%s", (request_id,), "one")))
+    if not request_row:
+        raise HTTPException(404, "Request not found")
+
+    request_row["notes"] = list_request_notes(request_id)
+    if request_row.get("orchestration_mode") != "flowable":
+        return request_row
+
+    instance_id = extract_flowable_instance_id(request_row.get("result"))
+    if not instance_id:
+        return request_row
+
+    try:
+        bundle = await _load_flowable_bundle(instance_id)
+        summary = _flowable_summary_from_bundle(request_row, instance_id, bundle)
+        request_row["flowable_live_state"] = {
+            "instance_id": summary.get("instance_id"),
+            "engine_status": summary.get("engine_status"),
+            "current_activity": summary.get("current_activity"),
+            "failed_jobs": summary.get("failed_jobs"),
+            "job_count": summary.get("job_count"),
+            "start_time": summary.get("start_time"),
+            "end_time": summary.get("end_time"),
+            "hint": _flowable_operator_hint(summary),
+        }
+    except HTTPException as exc:
+        request_row["flowable_live_state"] = {
+            "instance_id": instance_id,
+            "engine_status": "UNAVAILABLE",
+            "current_activity": "-",
+            "failed_jobs": 0,
+            "job_count": 0,
+            "hint": exc.detail,
+            "error": exc.detail,
+        }
+    return request_row
 
 
 async def set_flowable_instance_state(instance_id: str, action: str, requested_role: str, reason: str = "") -> Dict[str, Any]:

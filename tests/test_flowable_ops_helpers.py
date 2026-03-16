@@ -180,6 +180,15 @@ class FlowableOpsHelperTests(unittest.TestCase):
         self.assertFalse(view["needs_operator_action"])
         self.assertTrue(view["ops"]["can_restore"])
 
+    def test_flowable_operator_hint_explains_running_activity(self):
+        summary = {
+            "engine_status": "RUNNING",
+            "current_activity": "task_parse_plaid",
+            "failed_jobs": 0,
+            "request_status": "RUNNING",
+        }
+        self.assertIn("task_parse_plaid", services._flowable_operator_hint(summary))
+
     def test_build_flowable_result_from_variables_adds_engine_and_steps(self):
         variables = {
             "request_id": "REQ-55",
