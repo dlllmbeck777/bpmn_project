@@ -22,6 +22,11 @@ CONFIG_URL = os.getenv("CONFIG_SERVICE_URL", "http://core-api:8000")
 BPMN_PATH = os.getenv("BPMN_PATH", "/processes/credit-service-chain.bpmn20.xml")
 FLOWABLE_USER = os.getenv("FLOWABLE_USER", "admin")
 FLOWABLE_PASSWORD = os.getenv("FLOWABLE_PASSWORD", "test")
+FLOWABLE_PASSWORD_FALLBACKS = [
+    item.strip()
+    for item in os.getenv("FLOWABLE_PASSWORD_FALLBACKS", "test").split(",")
+    if item.strip()
+]
 FLOWABLE_AUTO_DEPLOY_BPMN = os.getenv("FLOWABLE_AUTO_DEPLOY_BPMN", "true").strip().lower() in {"1", "true", "yes", "on"}
 CORE_CALLBACK_URL = os.getenv("CORE_CALLBACK_URL", f"{CONFIG_URL}/internal/cases/complete")
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
@@ -53,6 +58,56 @@ _background_tasks = set()
 
 def _auth():
     return (FLOWABLE_USER, FLOWABLE_PASSWORD)
+
+
+def _flowable_auth_candidates():
+    candidates = []
+    seen = set()
+    for password in [FLOWABLE_PASSWORD, *FLOWABLE_PASSWORD_FALLBACKS]:
+        password = (password or "").strip()
+        if not password:
+            continue
+        candidate = (FLOWABLE_USER, password)
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        candidates.append(candidate)
+    return candidates or [(FLOWABLE_USER, "test")]
+
+
+async def _flowable_request(method: str, url: str, *, timeout: float = 15.0, retry_attempts: int = 3, **kwargs):
+    last_response = None
+    last_error = None
+    auth_candidates = _flowable_auth_candidates()
+
+    for attempt in range(retry_attempts):
+        for index, auth in enumerate(auth_candidates):
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await client.request(method, url, auth=auth, **kwargs)
+            except Exception as exc:
+                last_error = exc
+                break
+
+            if response.status_code == 401 and index < len(auth_candidates) - 1:
+                last_response = response
+                continue
+
+            if index > 0 and response.status_code < 400:
+                log.warning("Flowable auth fallback credential accepted")
+
+            if response.status_code >= 500 and attempt < retry_attempts - 1:
+                last_response = response
+                break
+
+            return response
+
+        if attempt < retry_attempts - 1:
+            await asyncio.sleep(min(1.5 * (attempt + 1), 3.0))
+
+    if last_response is not None:
+        return last_response
+    raise last_error or RuntimeError("flowable request failed without response")
 
 
 def _internal_headers(cid: str = ""):
@@ -217,22 +272,25 @@ async def _pipeline_skip_flags(connector_urls: Dict[str, str]):
 
 
 async def _load_completed_variables(flowable_url: str, instance_id: str) -> Optional[Dict[str, Any]]:
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        history = await client.get(
-            f"{flowable_url}/history/historic-process-instances/{instance_id}",
-            auth=_auth(),
-        )
-        if history.status_code != 200:
-            return None
-        if not history.json().get("endTime"):
-            return None
+    history = await _flowable_request(
+        "GET",
+        f"{flowable_url}/history/historic-process-instances/{instance_id}",
+        timeout=10.0,
+        retry_attempts=2,
+    )
+    if history.status_code != 200:
+        return None
+    if not history.json().get("endTime"):
+        return None
 
-        variables_response = await client.get(
-            f"{flowable_url}/history/historic-process-instances/{instance_id}/variables",
-            auth=_auth(),
-        )
-        if variables_response.status_code != 200:
-            return {}
+    variables_response = await _flowable_request(
+        "GET",
+        f"{flowable_url}/history/historic-process-instances/{instance_id}/variables",
+        timeout=10.0,
+        retry_attempts=2,
+    )
+    if variables_response.status_code != 200:
+        return {}
     return {item["name"]: item.get("value") for item in variables_response.json()}
 
 
@@ -364,18 +422,19 @@ async def auto_deploy_bpmn():
 
     for attempt in range(10):
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                with open(BPMN_PATH, "rb") as bpm_file:
-                    response = await client.post(
-                        f"{flowable_url}/repository/deployments",
-                        files={"file": ("process.bpmn20.xml", bpm_file, "application/xml")},
-                        data={"tenantId": ""},
-                        auth=_auth(),
-                    )
-                if response.status_code < 400:
-                    log.info(f"BPMN deployed: {response.json().get('id', 'ok')}")
-                    return
-                log.warning(f"BPMN deploy attempt {attempt + 1}: {response.status_code}")
+            with open(BPMN_PATH, "rb") as bpm_file:
+                response = await _flowable_request(
+                    "POST",
+                    f"{flowable_url}/repository/deployments",
+                    timeout=10.0,
+                    retry_attempts=1,
+                    files={"file": ("process.bpmn20.xml", bpm_file, "application/xml")},
+                    data={"tenantId": ""},
+                )
+            if response.status_code < 400:
+                log.info(f"BPMN deployed: {response.json().get('id', 'ok')}")
+                return
+            log.warning(f"BPMN deploy attempt {attempt + 1}: {response.status_code}")
         except Exception as exc:
             log.warning(f"BPMN deploy attempt {attempt + 1}: {exc}")
         await asyncio.sleep(5)
@@ -444,13 +503,14 @@ async def orchestrate(body: RequestIn, request: Request):
     )
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(
-                f"{flowable_url}/runtime/process-instances",
-                json={"processDefinitionKey": process_key, "variables": variables},
-                auth=_auth(),
-                headers={"X-Correlation-ID": cid},
-            )
+        response = await _flowable_request(
+            "POST",
+            f"{flowable_url}/runtime/process-instances",
+            timeout=15.0,
+            retry_attempts=3,
+            json={"processDefinitionKey": process_key, "variables": variables},
+            headers={"X-Correlation-ID": cid},
+        )
         if response.status_code >= 400:
             response_text = (response.text or "").strip()
             error_detail = response_text or response.reason_phrase or "empty response body"

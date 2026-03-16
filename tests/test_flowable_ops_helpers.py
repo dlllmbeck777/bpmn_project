@@ -125,6 +125,23 @@ class FlowableOpsHelperTests(unittest.TestCase):
         self.assertEqual(steps["isoftpull"]["status"], "SKIPPED")
         self.assertEqual(steps["isoftpull"]["reason"], "pipeline step bypassed for flowable mode")
 
+    def test_flowable_auth_candidates_prefer_configured_password_and_keep_test_fallback(self):
+        original_password = services.FLOWABLE_PASSWORD
+        original_fallbacks = services.FLOWABLE_PASSWORD_FALLBACKS
+        original_user = services.FLOWABLE_USER
+        try:
+            services.FLOWABLE_USER = "admin"
+            services.FLOWABLE_PASSWORD = "secret-1"
+            services.FLOWABLE_PASSWORD_FALLBACKS = ["test", "secret-1", "legacy-pass"]
+            self.assertEqual(
+                services._flowable_auth_candidates(),
+                [("admin", "secret-1"), ("admin", "test"), ("admin", "legacy-pass")],
+            )
+        finally:
+            services.FLOWABLE_USER = original_user
+            services.FLOWABLE_PASSWORD = original_password
+            services.FLOWABLE_PASSWORD_FALLBACKS = original_fallbacks
+
     def test_build_flowable_result_from_variables_adds_engine_and_steps(self):
         variables = {
             "request_id": "REQ-55",

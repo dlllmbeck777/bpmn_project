@@ -38,6 +38,7 @@ ANALYST_API_KEY=$(openssl rand -hex 32)
 INTERNAL_API_KEY=$(openssl rand -hex 32)
 
 FLOWABLE_PASSWORD=$(openssl rand -base64 18)
+FLOWABLE_PASSWORD_FALLBACKS=test
 FLOWABLE_AUTO_DEPLOY_BPMN=false
 GRAFANA_PASSWORD=$(openssl rand -base64 18)
 

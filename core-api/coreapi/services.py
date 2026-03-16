@@ -21,6 +21,11 @@ ANALYST_API_KEY = os.getenv("ANALYST_API_KEY", SENIOR_ANALYST_API_KEY)
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 FLOWABLE_USER = os.getenv("FLOWABLE_USER", "admin")
 FLOWABLE_PASSWORD = os.getenv("FLOWABLE_PASSWORD", "test")
+FLOWABLE_PASSWORD_FALLBACKS = [
+    item.strip()
+    for item in os.getenv("FLOWABLE_PASSWORD_FALLBACKS", "test").split(",")
+    if item.strip()
+]
 ADMIN_LOGIN_USERNAME = os.getenv("ADMIN_LOGIN_USERNAME", "admin")
 ADMIN_LOGIN_PASSWORD = os.getenv("ADMIN_LOGIN_PASSWORD", "admin")
 SENIOR_ANALYST_LOGIN_USERNAME = os.getenv("SENIOR_ANALYST_LOGIN_USERNAME", "senior")
@@ -909,6 +914,57 @@ def _flowable_auth():
     return (FLOWABLE_USER, FLOWABLE_PASSWORD)
 
 
+def _flowable_auth_candidates():
+    candidates = []
+    seen = set()
+    for password in [FLOWABLE_PASSWORD, *FLOWABLE_PASSWORD_FALLBACKS]:
+        password = (password or "").strip()
+        if not password:
+            continue
+        candidate = (FLOWABLE_USER, password)
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        candidates.append(candidate)
+    return candidates or [(FLOWABLE_USER, "test")]
+
+
+async def _flowable_request(method: str, url: str, *, params: Optional[Dict[str, Any]] = None, body: Optional[Dict[str, Any]] = None, retry_attempts: int = 3):
+    last_response = None
+    last_error = None
+    auth_candidates = _flowable_auth_candidates()
+    headers = {"X-Correlation-ID": get_correlation_id()}
+
+    for attempt in range(retry_attempts):
+        for index, auth in enumerate(auth_candidates):
+            try:
+                async with httpx.AsyncClient(timeout=20.0) as client:
+                    response = await client.request(method, url, params=params, json=body, auth=auth, headers=headers)
+            except Exception as exc:
+                last_error = exc
+                break
+
+            if response.status_code == 401 and index < len(auth_candidates) - 1:
+                last_response = response
+                continue
+
+            if index > 0 and response.status_code < 400:
+                log.warning("Flowable auth fallback credential accepted in core-api")
+
+            if response.status_code >= 500 and attempt < retry_attempts - 1:
+                last_response = response
+                break
+
+            return response
+
+        if attempt < retry_attempts - 1:
+            await asyncio.sleep(min(1.5 * (attempt + 1), 3.0))
+
+    if last_response is not None:
+        return last_response
+    raise last_error or RuntimeError("flowable request failed without response")
+
+
 def _flowable_base_url() -> str:
     service = to_json_ready(query("SELECT * FROM services WHERE id=%s", ("flowable-rest",), "one")) or {}
     return (service.get("base_url") or FLOWABLE_DEFAULT_URL).rstrip("/")
@@ -953,10 +1009,8 @@ def _flowable_request_for_list(limit: int, request_id: Optional[str] = None):
 
 async def _flowable_call(method: str, path: str, *, params: Optional[Dict[str, Any]] = None, body: Optional[Dict[str, Any]] = None, allow_404: bool = False):
     url = f"{_flowable_base_url()}{path}"
-    headers = {"X-Correlation-ID": get_correlation_id()}
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.request(method, url, params=params, json=body, auth=_flowable_auth(), headers=headers)
+        response = await _flowable_request(method, url, params=params, body=body, retry_attempts=3)
     except Exception as exc:
         raise HTTPException(502, f"flowable unavailable: {exc}")
 
