@@ -429,11 +429,13 @@ async def orchestrate(body: RequestIn, request: Request):
         body.request_id,
         "flowable",
         "OUT",
-        "Flowable process started",
+        "Flowable start requested",
         cid=cid,
         service_id="flowable-rest",
-        status="STARTED",
+        status="SUBMITTED",
         payload={
+            "process_key": process_key,
+            "flowable_url": flowable_url,
             "connector_urls": connector_urls,
             "skip_flags": skip_flags,
             "skip_policies": skip_policies,
@@ -456,6 +458,21 @@ async def orchestrate(body: RequestIn, request: Request):
                 f"[{cid}] flowable start failed for {body.request_id}: "
                 f"status={response.status_code}, process_key={process_key}, detail={error_detail[:300]}"
             )
+            await _track(
+                body.request_id,
+                "flowable",
+                "IN",
+                "Flowable start failed",
+                cid=cid,
+                service_id="flowable-rest",
+                status="ENGINE_ERROR",
+                payload={
+                    "status_code": response.status_code,
+                    "process_key": process_key,
+                    "flowable_url": flowable_url,
+                    "error": error_detail,
+                },
+            )
             return {
                 "status": "ENGINE_ERROR",
                 "adapter": "flowable",
@@ -468,6 +485,20 @@ async def orchestrate(body: RequestIn, request: Request):
         engine_response = response.json()
     except Exception as exc:
         log.error(f"[{cid}] flowable engine unreachable for {body.request_id}: process_key={process_key}, error={exc}")
+        await _track(
+            body.request_id,
+            "flowable",
+            "IN",
+            "Flowable engine unreachable",
+            cid=cid,
+            service_id="flowable-rest",
+            status="ENGINE_UNREACHABLE",
+            payload={
+                "process_key": process_key,
+                "flowable_url": flowable_url,
+                "error": str(exc),
+            },
+        )
         return {
             "status": "ENGINE_UNREACHABLE",
             "adapter": "flowable",
@@ -478,6 +509,20 @@ async def orchestrate(body: RequestIn, request: Request):
         }
 
     instance_id = engine_response.get("id")
+    await _track(
+        body.request_id,
+        "flowable",
+        "IN",
+        "Flowable process started",
+        cid=cid,
+        service_id="flowable-rest",
+        status="STARTED",
+        payload={
+            "instance_id": instance_id,
+            "process_key": process_key,
+            "flowable_url": flowable_url,
+        },
+    )
     completed = False
     process_variables = {}
     for wait_seconds in [0.3, 0.5, 1.0, 1.5]:
