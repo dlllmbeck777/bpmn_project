@@ -47,6 +47,7 @@ Russian operational and project documentation:
 - `docs/API_CHEATSHEET_RU.md`
 - `docs/MOCK_BUREAUS_SERVICE_RU.md`
 - `docs/TEST_SPEC_MOCK_CONNECTORS_RU.md`
+- `docs/DEMO_TEST_CASES_RU.md`
 
 ## Stress Test
 

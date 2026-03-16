@@ -1,0 +1,215 @@
+{
+  "defaults": {
+    "api_payload": {
+      "firstName": "John",
+      "lastName": "Smith",
+      "address": "456 Oak Avenue",
+      "city": "Los Angeles",
+      "state": "CA",
+      "zipCode": "90001",
+      "ssn": "123456789",
+      "dateOfBirth": "1985-06-15",
+      "email": "john.smith@example.com",
+      "phone": "555-123-4567"
+    },
+    "mock": {
+      "isoftpull": {
+        "scenario": "pass_775"
+      },
+      "creditsafe": {
+        "scenario": "clean_72"
+      },
+      "plaid": {
+        "scenario": "accounts_3"
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "flowable-clean-completed",
+      "title": "Flowable happy path",
+      "description": "Чистый проходной кейс: высокий score, нет collections, нет alerts, есть accounts.",
+      "request": {
+        "orchestration_mode": "flowable"
+      },
+      "expected": {
+        "selected_mode": "flowable",
+        "final_status": "COMPLETED",
+        "decision_reason_contains": "Flowable completed report-based decision successfully"
+      }
+    },
+    {
+      "id": "flowable-reject-score-550",
+      "title": "Flowable reject by score",
+      "description": "Score ниже 580 должен привести к REJECTED.",
+      "request": {
+        "orchestration_mode": "flowable"
+      },
+      "mock": {
+        "isoftpull": {
+          "scenario": "reject_score_550"
+        }
+      },
+      "expected": {
+        "selected_mode": "flowable",
+        "final_status": "REJECTED",
+        "decision_reason_contains": "Credit score below approval threshold"
+      }
+    },
+    {
+      "id": "flowable-boundary-score-580",
+      "title": "Flowable score boundary 580",
+      "description": "Граница правила: score = 580 не должен отклоняться в Flowable.",
+      "request": {
+        "orchestration_mode": "flowable"
+      },
+      "mock": {
+        "isoftpull": {
+          "scenario": "pass_775",
+          "controls": {
+            "creditScore": 580,
+            "collectionCount": 0
+          }
+        }
+      },
+      "expected": {
+        "selected_mode": "flowable",
+        "final_status": "COMPLETED"
+      }
+    },
+    {
+      "id": "flowable-reject-collections-6",
+      "title": "Flowable reject by collections",
+      "description": "Collection count 6 должен привести к REJECTED.",
+      "request": {
+        "orchestration_mode": "flowable"
+      },
+      "mock": {
+        "isoftpull": {
+          "scenario": "reject_collections_6"
+        }
+      },
+      "expected": {
+        "selected_mode": "flowable",
+        "final_status": "REJECTED",
+        "decision_reason_contains": "Collection count above approval threshold"
+      }
+    },
+    {
+      "id": "flowable-boundary-collections-5",
+      "title": "Flowable collections boundary 5",
+      "description": "Граница правила: collection_count = 5 не должен отклоняться.",
+      "request": {
+        "orchestration_mode": "flowable"
+      },
+      "mock": {
+        "isoftpull": {
+          "scenario": "pass_775",
+          "controls": {
+            "creditScore": 720,
+            "collectionCount": 5
+          }
+        }
+      },
+      "expected": {
+        "selected_mode": "flowable",
+        "final_status": "COMPLETED"
+      }
+    },
+    {
+      "id": "flowable-reject-creditsafe-alerts-2",
+      "title": "Flowable reject by Creditsafe alerts",
+      "description": "Compliance alerts > 1 должны привести к REJECTED.",
+      "request": {
+        "orchestration_mode": "flowable"
+      },
+      "mock": {
+        "creditsafe": {
+          "scenario": "reject_alerts_2"
+        }
+      },
+      "expected": {
+        "selected_mode": "flowable",
+        "final_status": "REJECTED",
+        "decision_reason_contains": "Creditsafe compliance alerts above approval threshold"
+      }
+    },
+    {
+      "id": "flowable-boundary-creditsafe-alerts-1",
+      "title": "Flowable Creditsafe boundary 1",
+      "description": "Граница правила: compliance alerts = 1 не должны отклонять заявку.",
+      "request": {
+        "orchestration_mode": "flowable"
+      },
+      "mock": {
+        "creditsafe": {
+          "scenario": "clean_72",
+          "controls": {
+            "complianceAlertCount": 1,
+            "derogatoryCount": 1
+          }
+        }
+      },
+      "expected": {
+        "selected_mode": "flowable",
+        "final_status": "COMPLETED"
+      }
+    },
+    {
+      "id": "custom-reject-score-590-stop-factor",
+      "title": "Custom rejects at 590",
+      "description": "Кейс для демонстрации различия режимов: custom отсекается stop factor при score 590, а Flowable нет.",
+      "request": {
+        "orchestration_mode": "custom"
+      },
+      "mock": {
+        "isoftpull": {
+          "scenario": "pass_775",
+          "controls": {
+            "creditScore": 590,
+            "collectionCount": 0
+          }
+        }
+      },
+      "expected": {
+        "selected_mode": "custom",
+        "final_status": "REJECTED"
+      }
+    },
+    {
+      "id": "custom-review-no-accounts",
+      "title": "Custom review when no accounts",
+      "description": "В custom режиме отсутствие банковских аккаунтов должно давать REVIEW через post stop factor.",
+      "request": {
+        "orchestration_mode": "custom"
+      },
+      "mock": {
+        "plaid": {
+          "scenario": "no_accounts"
+        }
+      },
+      "expected": {
+        "selected_mode": "custom",
+        "final_status": "REVIEW"
+      }
+    },
+    {
+      "id": "flowable-pending-plaid-link",
+      "title": "Flowable with pending Plaid link",
+      "description": "Демонстрация pending Link flow: Plaid возвращает trackingUrl/reportUrl, а Flowable принимает решение по bureau данным.",
+      "request": {
+        "orchestration_mode": "flowable"
+      },
+      "mock": {
+        "plaid": {
+          "scenario": "pending_link"
+        }
+      },
+      "expected": {
+        "selected_mode": "flowable",
+        "final_status": "COMPLETED",
+        "notes": "Проверь trackingUrl/reportUrl и pending payload у Plaid в tracker."
+      }
+    }
+  ]
+}
