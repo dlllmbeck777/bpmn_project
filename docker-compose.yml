@@ -203,7 +203,7 @@ services:
     depends_on:
       - flowable-db
     restart: unless-stopped
-    networks: [flowable]
+    networks: [flowable, backend]
 
   flowable-ui:
     image: flowable/flowable-ui:6.8.0

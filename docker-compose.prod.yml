@@ -208,7 +208,7 @@ services:
       - FLOWABLE_COMMON_APP_IDM-ADMIN_USER=admin
       - FLOWABLE_COMMON_APP_IDM-ADMIN_PASSWORD=${FLOWABLE_PASSWORD}
       - FLOWABLE_ASYNC_EXECUTOR_ACTIVATE=true
-    networks: [flowable]
+    networks: [flowable, backend]
     restart: always
     logging: *logging
     deploy:
