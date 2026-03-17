@@ -24,6 +24,7 @@ export default function StopFactorsPage({
   intro,
   showStageTabs = true,
   stageOptions = ['', 'pre', 'decision', 'post'],
+  excludeStages = [],
   addLabel = '+ Add factor',
   fieldPathPlaceholder = 'result.parsed_report.summary.credit_score',
 }) {
@@ -33,10 +34,23 @@ export default function StopFactorsPage({
   const [error, setError] = useState('')
   const [bulkBusy, setBulkBusy] = useState(false)
   const activeStage = forcedStage || filter
+  const visibleStageOptions = useMemo(
+    () => (stageOptions || []).filter((stage) => !excludeStages.includes(stage)),
+    [excludeStages, stageOptions],
+  )
+  const editableStageOptions = useMemo(
+    () => visibleStageOptions.filter((stage) => stage),
+    [visibleStageOptions],
+  )
+
+  const filterVisibleItems = (loadedItems) =>
+    (loadedItems || []).filter((item) => !excludeStages.includes(item.stage))
 
   const load = () => {
     const q = activeStage ? `?stage=${activeStage}` : ''
-    get(`/api/v1/stop-factors${q}`).then((d) => setItems(d.items || [])).catch((e) => setError(e.message))
+    get(`/api/v1/stop-factors${q}`)
+      .then((d) => setItems(filterVisibleItems(d.items || [])))
+      .catch((e) => setError(e.message))
   }
   useEffect(() => { load() }, [activeStage])
   useEffect(() => {
@@ -109,7 +123,7 @@ export default function StopFactorsPage({
       <div className="flex-between mb-16">
         {showStageTabs ? (
           <div className="tab-bar" style={{ marginBottom: 0, borderBottom: 'none' }}>
-            {stageOptions.map((f) => (
+            {visibleStageOptions.map((f) => (
               <button key={f} className={`tab-btn${filter === f ? ' active' : ''}`} onClick={() => setFilter(f)}>
                 {f === '' ? 'All rules' : stageLabel(f)}
               </button>
@@ -123,7 +137,7 @@ export default function StopFactorsPage({
         <div className="form-actions">
           {canEdit && <button className="btn btn-ghost btn-sm" disabled={bulkBusy || allLoadedEnabled} onClick={() => applyBulkState(true)}>Enable visible rules</button>}
           {canEdit && <button className="btn btn-ghost btn-sm" disabled={bulkBusy || !items.some((item) => item.enabled)} onClick={() => applyBulkState(false)}>Disable visible rules</button>}
-          {canEdit && <button className="btn btn-primary btn-sm" onClick={() => setEditing({ ...empty, stage: forcedStage || activeStage || 'pre' })}>{addLabel}</button>}
+          {canEdit && <button className="btn btn-primary btn-sm" onClick={() => setEditing({ ...empty, stage: forcedStage || activeStage || editableStageOptions[0] || 'pre' })}>{addLabel}</button>}
         </div>
       </div>
       <div className="card">
@@ -160,7 +174,7 @@ export default function StopFactorsPage({
                 <div className="notice" style={{ marginTop: 0 }}>{stageLabel(forcedStage)}</div>
               </div>
             ) : (
-              <div className="form-row"><label>Stage</label><select value={editing.stage} onChange={(e) => setEditing({ ...editing, stage: e.target.value })}><option value="pre">pre</option><option value="decision">decision</option><option value="post">post</option></select></div>
+              <div className="form-row"><label>Stage</label><select value={editing.stage} onChange={(e) => setEditing({ ...editing, stage: e.target.value })}>{editableStageOptions.map((stage) => <option key={stage} value={stage}>{stage}</option>)}</select></div>
             )}
             <div className="form-row"><label>Priority</label><input type="number" value={editing.priority} onChange={(e) => setEditing({ ...editing, priority: +e.target.value })} /></div>
           </div>

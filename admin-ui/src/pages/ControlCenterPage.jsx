@@ -46,7 +46,7 @@ export default function ControlCenterPage({ canEdit, canAdmin, onNavigate }) {
       case 'routing':
         return <RoutingPage canEdit={canEdit} />
       case 'stopfactors':
-        return <StopFactorsPage canEdit={canEdit} stageOptions={['', 'pre', 'post']} />
+        return <StopFactorsPage canEdit={canEdit} stageOptions={['', 'pre', 'post']} excludeStages={['decision']} />
       case 'decisionrules':
         return <DecisionRulesPage canEdit={canEdit} />
       case 'pipeline':
