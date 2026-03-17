@@ -116,6 +116,16 @@ class FlowableOpsHelperTests(unittest.TestCase):
         self.assertEqual(normalized["request_id"], "REQ-42")
         self.assertEqual(normalized["isoRawBody"]["score"], 712)
 
+    def test_normalize_flowable_variables_supports_response_body_aliases(self):
+        variables = [
+            {"name": "request_id", "value": "REQ-42"},
+            {"name": "isoRawResponseBody", "value": '{"service":"isoftpull","result":{"score":712}}'},
+            {"name": "decisionRawResponseBody", "value": '{"status":"COMPLETED","decision":"APPROVED"}'},
+        ]
+        normalized = services.normalize_flowable_variables(variables)
+        self.assertEqual(normalized["isoRawBody"]["result"]["score"], 712)
+        self.assertEqual(normalized["decisionRawBody"]["decision"], "APPROVED")
+
     def test_build_flowable_steps_includes_skip_reason(self):
         variables = {
             "iso_status": "SKIPPED",
@@ -296,6 +306,29 @@ class FlowableOpsHelperTests(unittest.TestCase):
         self.assertEqual(result["decision"], "PASS TO CUSTOM")
         self.assertEqual(result["decision_source"], "flowable-fallback")
         self.assertEqual(result["decision_reason"], "Flowable completed without a decision result")
+
+    def test_build_flowable_result_from_variables_supports_response_body_aliases(self):
+        variables = {
+            "request_id": "REQ-58",
+            "route_mode": "FLOWABLE",
+            "isoRawResponseBody": {"service": "isoftpull", "result": {"bureau_hit": True, "score": 712}},
+            "iso_status": "OK",
+            "decisionRawResponseBody": {
+                "status": "COMPLETED",
+                "decision": "APPROVED",
+                "decision_reason": "Decision rules passed",
+                "decision_source": "decision-service",
+                "summary": {
+                    "decision": "APPROVED",
+                    "decision_reason": "Decision rules passed",
+                },
+            },
+        }
+        result = services.build_flowable_result_from_variables("REQ-58", "instance-58", variables)
+        self.assertEqual(result["decision"], "APPROVED")
+        self.assertEqual(result["decision_source"], "decision-service")
+        self.assertEqual(result["steps"]["isoftpull"]["result"]["score"], 712)
+        self.assertEqual(result["steps"]["isoftpull"]["status"], "OK")
 
     def test_resolve_orchestrator_call_settings_disables_flowable_retries(self):
         settings = services.resolve_orchestrator_call_settings(

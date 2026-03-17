@@ -42,6 +42,12 @@ FLOWABLE_STEPS = (
     {"service_id": "creditsafe", "raw_key": "csRawBody", "status_key": "creditsafe_status", "request_key": "creditsafe_request_body", "skip_key": "skip_creditsafe", "reason_key": "skip_reason_creditsafe"},
     {"service_id": "plaid", "raw_key": "plaidRawBody", "status_key": "plaid_status", "request_key": "plaid_request_body", "skip_key": "skip_plaid", "reason_key": "skip_reason_plaid"},
 )
+FLOWABLE_VARIABLE_ALIASES = {
+    "isoRawBody": ("isoRawResponseBody",),
+    "csRawBody": ("csRawResponseBody",),
+    "plaidRawBody": ("plaidRawResponseBody",),
+    "decisionRawBody": ("decisionRawResponseBody",),
+}
 
 
 class JsonFormatter(logging.Formatter):
@@ -170,6 +176,24 @@ def _parse_jsonish(value: Any):
     return value
 
 
+def _canonicalize_flowable_variables(process_variables: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = {
+        str(key): _parse_jsonish(value)
+        for key, value in (process_variables or {}).items()
+    }
+    for canonical_key, aliases in FLOWABLE_VARIABLE_ALIASES.items():
+        current_value = normalized.get(canonical_key)
+        if current_value not in (None, "", {}, []):
+            continue
+        for alias in aliases:
+            alias_value = normalized.get(alias)
+            if alias_value in (None, "", {}, []):
+                continue
+            normalized[canonical_key] = alias_value
+            break
+    return normalized
+
+
 def _step_meta(step: Dict[str, Any]) -> Dict[str, Any]:
     meta = step.get("meta")
     return meta if isinstance(meta, dict) else {}
@@ -224,6 +248,7 @@ async def _acfg(path, ttl=30):
 
 
 def _build_steps(process_variables: Dict[str, Any]):
+    process_variables = _canonicalize_flowable_variables(process_variables)
     raw_map = {
         "isoftpull": ("isoRawBody", "iso_status"),
         "creditsafe": ("csRawBody", "creditsafe_status"),
@@ -233,7 +258,10 @@ def _build_steps(process_variables: Dict[str, Any]):
     for service_id, (raw_key, status_key) in raw_map.items():
         raw_value = _parse_jsonish(process_variables.get(raw_key, {}))
         if isinstance(raw_value, dict) and raw_value:
-            steps[service_id] = raw_value
+            step_payload = dict(raw_value)
+            step_payload.setdefault("service", service_id)
+            step_payload.setdefault("status", process_variables.get(status_key, "UNKNOWN"))
+            steps[service_id] = step_payload
         else:
             steps[service_id] = {"service": service_id, "status": process_variables.get(status_key, "UNAVAILABLE")}
     return steps
@@ -327,6 +355,7 @@ def _extract_summary(process_variables: Dict[str, Any]):
 
 
 def _extract_decision_payload(process_variables: Dict[str, Any]):
+    process_variables = _canonicalize_flowable_variables(process_variables)
     orchestration_result = _parse_jsonish(process_variables.get("orchestration_result", {}))
     if isinstance(orchestration_result, dict) and orchestration_result:
         return orchestration_result
@@ -398,24 +427,41 @@ async def _pipeline_skip_flags(connector_urls: Dict[str, str]):
 async def _load_completed_variables(flowable_url: str, instance_id: str) -> Optional[Dict[str, Any]]:
     history = await _flowable_request(
         "GET",
-        f"{flowable_url}/history/historic-process-instances/{instance_id}",
+        f"{flowable_url}/history/historic-process-instances",
         timeout=10.0,
         retry_attempts=2,
+        params={"processInstanceId": instance_id, "includeProcessVariables": "true"},
     )
     if history.status_code != 200:
         return None
-    if not history.json().get("endTime"):
+    history_payload = history.json() if history.content else {}
+    items = history_payload.get("data", []) if isinstance(history_payload, dict) else []
+    historic = items[0] if items else {}
+    if not historic.get("endTime"):
         return None
+    variables = historic.get("variables") or historic.get("processVariables") or []
+    if variables:
+        return _canonicalize_flowable_variables({item["name"]: item.get("value") for item in variables if item.get("name")})
 
     variables_response = await _flowable_request(
         "GET",
-        f"{flowable_url}/history/historic-process-instances/{instance_id}/variables",
+        f"{flowable_url}/history/historic-variable-instances",
         timeout=10.0,
         retry_attempts=2,
+        params={"processInstanceId": instance_id},
     )
     if variables_response.status_code != 200:
         return {}
-    return {item["name"]: item.get("value") for item in variables_response.json()}
+    variable_payload = variables_response.json() if variables_response.content else {}
+    variable_items = variable_payload.get("data", []) if isinstance(variable_payload, dict) else []
+    normalized = {}
+    for item in variable_items:
+        variable = item.get("variable") if isinstance(item, dict) else None
+        if isinstance(variable, dict) and variable.get("name"):
+            normalized[variable["name"]] = variable.get("value")
+        elif isinstance(item, dict) and item.get("name"):
+            normalized[item["name"]] = item.get("value")
+    return _canonicalize_flowable_variables(normalized)
 
 
 async def _load_runtime_snapshot(flowable_url: str, instance_id: str) -> Dict[str, Any]:
@@ -507,20 +553,26 @@ def _build_watch_timeout_result(request_id: str, instance_id: str, snapshot: Dic
 
 
 async def _build_result_payload(body: "RequestIn", instance_id: str, process_variables: Dict[str, Any], connector_urls: Dict[str, str], cid: str):
+    process_variables = _canonicalize_flowable_variables(process_variables)
     runtime_steps = _build_steps(process_variables)
     decision_payload = _extract_decision_payload(process_variables)
     steps = _merge_step_payloads(runtime_steps, decision_payload.get("steps"))
-    parsed_report = decision_payload.get("parsed_report") if isinstance(decision_payload.get("parsed_report"), dict) else None
-    if not parsed_report:
-        parsed_report = await _parsed_report(body.request_id, steps, cid)
-    summary = decision_payload.get("summary") if isinstance(decision_payload.get("summary"), dict) else {}
-    if not summary and isinstance(parsed_report, dict):
-        parsed_summary = parsed_report.get("summary")
-        if isinstance(parsed_summary, dict):
-            summary = parsed_summary
+    embedded_parsed_report = decision_payload.get("parsed_report") if isinstance(decision_payload.get("parsed_report"), dict) else None
+    parsed_report = await _parsed_report(body.request_id, steps, cid) if steps else embedded_parsed_report
+    if not isinstance(parsed_report, dict) or parsed_report.get("status") in {"PARSER_ERROR", "PARSER_UNAVAILABLE", "PARSER_NOT_CONFIGURED"}:
+        parsed_report = embedded_parsed_report or parsed_report
+
+    decision_summary = decision_payload.get("summary") if isinstance(decision_payload.get("summary"), dict) else {}
+    parsed_summary = parsed_report.get("summary") if isinstance(parsed_report, dict) and isinstance(parsed_report.get("summary"), dict) else {}
+    summary = {**decision_summary, **parsed_summary} if (decision_summary or parsed_summary) else {}
     if not summary:
         summary = _extract_summary(process_variables)
-    external_reports = decision_payload.get("external_reports") if isinstance(decision_payload.get("external_reports"), dict) else steps
+    for key in ("decision", "decision_reason", "decision_source", "matched_rule"):
+        if decision_payload.get(key) is not None and key not in summary:
+            summary[key] = decision_payload.get(key)
+    external_reports = _merge_step_payloads(runtime_steps, decision_payload.get("external_reports"))
+    if not external_reports:
+        external_reports = steps
     step_statuses = decision_payload.get("step_statuses") if isinstance(decision_payload.get("step_statuses"), dict) else {
         service_id: payload.get("status", "UNKNOWN") if isinstance(payload, dict) else "UNKNOWN"
         for service_id, payload in steps.items()
@@ -553,6 +605,7 @@ async def _build_result_payload(body: "RequestIn", instance_id: str, process_var
 
 
 async def _emit_flowable_trace(body: "RequestIn", process_variables: Dict[str, Any], parsed_report: Dict[str, Any], cid: str):
+    process_variables = _canonicalize_flowable_variables(process_variables)
     for step in FLOWABLE_STEPS:
         service_id = step["service_id"]
         status = process_variables.get(step["status_key"], "UNKNOWN")
@@ -610,7 +663,7 @@ async def _emit_flowable_trace(body: "RequestIn", process_variables: Dict[str, A
         status=parsed_report.get("status", "OK"),
         payload=parsed_report,
     )
-    decision_payload = _parse_jsonish(process_variables.get("decisionRawBody", {}))
+    decision_payload = _extract_decision_payload(process_variables)
     if isinstance(decision_payload, dict) and decision_payload:
         await _track(
             body.request_id,

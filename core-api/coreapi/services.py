@@ -82,6 +82,12 @@ FLOWABLE_STEP_MAP = (
     ("creditsafe", "csRawBody", "creditsafe_status", "skip_reason_creditsafe"),
     ("plaid", "plaidRawBody", "plaid_status", "skip_reason_plaid"),
 )
+FLOWABLE_VARIABLE_ALIASES = {
+    "isoRawBody": ("isoRawResponseBody",),
+    "csRawBody": ("csRawResponseBody",),
+    "plaidRawBody": ("plaidRawResponseBody",),
+    "decisionRawBody": ("decisionRawResponseBody",),
+}
 PASSWORD_SCHEME = "pbkdf2_sha256"
 PASSWORD_ITERATIONS = 480_000
 
@@ -931,10 +937,26 @@ def _parse_embedded_json(value: Any):
     return value
 
 
+def _canonicalize_flowable_variables(items: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = {
+        str(key): _parse_embedded_json(value)
+        for key, value in (items or {}).items()
+    }
+    for canonical_key, aliases in FLOWABLE_VARIABLE_ALIASES.items():
+        current_value = normalized.get(canonical_key)
+        if current_value not in (None, "", {}, []):
+            continue
+        for alias in aliases:
+            alias_value = normalized.get(alias)
+            if alias_value in (None, "", {}, []):
+                continue
+            normalized[canonical_key] = alias_value
+            break
+    return normalized
+
+
 def normalize_result_payload(result: Dict[str, Any]):
-    normalized = dict(result or {})
-    for key, value in list(normalized.items()):
-        normalized[key] = _parse_embedded_json(value)
+    normalized = _canonicalize_flowable_variables(result or {})
 
     decision_payload = normalized.get("decisionRawBody")
     decision_payload = decision_payload if isinstance(decision_payload, dict) else {}
@@ -1693,15 +1715,16 @@ def extract_flowable_instance_id(result: Any) -> str:
 
 def normalize_flowable_variables(items: Any) -> Dict[str, Any]:
     if isinstance(items, dict):
-        return {str(key): _parse_embedded_json(value) for key, value in items.items()}
+        return _canonicalize_flowable_variables(items)
     normalized = {}
     for item in items or []:
         if isinstance(item, dict) and item.get("name"):
             normalized[str(item["name"])] = _parse_embedded_json(item.get("value"))
-    return normalized
+    return _canonicalize_flowable_variables(normalized)
 
 
 def build_flowable_steps(process_variables: Dict[str, Any]) -> Dict[str, Any]:
+    process_variables = _canonicalize_flowable_variables(process_variables)
     steps = {}
     for service_id, raw_key, status_key, reason_key in FLOWABLE_STEP_MAP:
         raw_value = _parse_embedded_json(process_variables.get(raw_key, {}))
@@ -1709,6 +1732,7 @@ def build_flowable_steps(process_variables: Dict[str, Any]) -> Dict[str, Any]:
         reason = process_variables.get(reason_key)
         if isinstance(raw_value, dict) and raw_value:
             step_payload = dict(raw_value)
+            step_payload.setdefault("service", service_id)
             step_payload.setdefault("status", status)
             if reason and "reason" not in step_payload:
                 step_payload["reason"] = reason
@@ -1723,6 +1747,7 @@ def build_flowable_steps(process_variables: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def build_flowable_summary(process_variables: Dict[str, Any]) -> Dict[str, Any]:
+    process_variables = _canonicalize_flowable_variables(process_variables)
     decision_payload = _parse_embedded_json(process_variables.get("orchestration_result", {}))
     if not isinstance(decision_payload, dict) or not decision_payload:
         decision_payload = _parse_embedded_json(process_variables.get("decisionRawBody", {}))

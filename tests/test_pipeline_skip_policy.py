@@ -248,6 +248,17 @@ class PipelineSkipPolicyTests(unittest.TestCase):
         self.assertEqual(payload["status"], "COMPLETED")
         self.assertEqual(payload["summary"]["credit_score"], 775)
 
+    def test_extract_decision_payload_supports_decision_raw_response_body(self):
+        payload = flowable_adapter._extract_decision_payload({
+            "decisionRawResponseBody": {
+                "status": "COMPLETED",
+                "decision": "APPROVED",
+                "decision_reason": "Decision rules passed",
+            }
+        })
+        self.assertEqual(payload["status"], "COMPLETED")
+        self.assertEqual(payload["decision"], "APPROVED")
+
     def test_flowable_result_falls_back_to_pass_to_custom_when_decision_missing(self):
         result = flowable_adapter._ensure_flowable_decision_payload({
             "status": "COMPLETED",
@@ -297,6 +308,98 @@ class PipelineSkipPolicyTests(unittest.TestCase):
             flowable_adapter._orchestrate_once = original_once
             flowable_adapter._orchestrate_cache.clear()
             flowable_adapter._orchestrate_inflight.clear()
+
+    def test_load_completed_variables_reads_historic_query_payload(self):
+        original_request = flowable_adapter._flowable_request
+        try:
+            def _response(payload):
+                return SimpleNamespace(status_code=200, json=lambda: payload, content=b"{}")
+
+            async def fake_request(method, url, **kwargs):
+                self.assertIn("/history/historic-process-instances", url)
+                self.assertEqual(kwargs.get("params", {}).get("processInstanceId"), "instance-1")
+                return _response({
+                    "data": [
+                        {
+                            "id": "instance-1",
+                            "endTime": "2026-03-18T10:00:00Z",
+                            "variables": [
+                                {"name": "isoRawResponseBody", "value": '{"service":"isoftpull","result":{"score":712}}'},
+                                {"name": "decisionRawResponseBody", "value": '{"status":"COMPLETED","decision":"APPROVED"}'},
+                            ],
+                        }
+                    ]
+                })
+
+            flowable_adapter._flowable_request = fake_request
+            variables = asyncio.run(flowable_adapter._load_completed_variables("http://flowable-rest:8080/flowable-rest/service", "instance-1"))
+            self.assertEqual(variables["isoRawBody"]["result"]["score"], 712)
+            self.assertEqual(variables["decisionRawBody"]["decision"], "APPROVED")
+        finally:
+            flowable_adapter._flowable_request = original_request
+
+    def test_build_result_payload_prefers_reparsed_runtime_steps(self):
+        original_parsed_report = flowable_adapter._parsed_report
+        try:
+            async def fake_parsed_report(request_id, steps, cid):
+                self.assertEqual(steps["isoftpull"]["result"]["score"], 712)
+                self.assertEqual(steps["plaid"]["result"]["accounts_found"], 3)
+                return {
+                    "status": "OK",
+                    "summary": {
+                        "credit_score": 712,
+                        "accounts_found": 3,
+                        "iso_status": "OK",
+                        "plaid_status": "OK",
+                    },
+                }
+
+            flowable_adapter._parsed_report = fake_parsed_report
+            body = flowable_adapter.RequestIn(
+                request_id="REQ-RESP-1",
+                customer_id="CUST-1",
+                iin="123456789",
+                external_applicant_id="42",
+                product_type="loan",
+                applicant={"firstName": "John"},
+            )
+            result = asyncio.run(flowable_adapter._build_result_payload(
+                body,
+                "instance-1",
+                {
+                    "iso_status": "OK",
+                    "plaid_status": "OK",
+                    "creditsafe_status": "OK",
+                    "isoRawResponseBody": {"service": "isoftpull", "result": {"bureau_hit": True, "score": 712}},
+                    "plaidRawResponseBody": {"service": "plaid", "result": {"accounts_found": 3, "cashflow_stability": "GOOD"}},
+                    "csRawResponseBody": {"service": "creditsafe", "result": {"company_score": "A", "risk_band": "LOW"}},
+                    "decisionRawResponseBody": {
+                        "status": "COMPLETED",
+                        "decision": "APPROVED",
+                        "decision_reason": "Decision rules passed",
+                        "decision_source": "decision-service",
+                        "summary": {
+                            "credit_score": None,
+                            "accounts_found": 0,
+                            "iso_status": "NO_HIT",
+                            "plaid_status": "NO_ACCOUNTS",
+                        },
+                    },
+                },
+                {
+                    "isoftpull": "http://isoftpull:8101/api/pull",
+                    "creditsafe": "http://creditsafe:8102/api/report",
+                    "plaid": "http://plaid:8103/api/accounts",
+                },
+                "cid-1",
+            ))
+            self.assertEqual(result["decision"], "APPROVED")
+            self.assertEqual(result["summary"]["credit_score"], 712)
+            self.assertEqual(result["summary"]["accounts_found"], 3)
+            self.assertEqual(result["summary"]["iso_status"], "OK")
+            self.assertEqual(result["summary"]["plaid_status"], "OK")
+        finally:
+            flowable_adapter._parsed_report = original_parsed_report
 
 
 if __name__ == '__main__':
