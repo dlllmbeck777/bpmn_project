@@ -283,6 +283,36 @@ class FlowableOpsHelperTests(unittest.TestCase):
         self.assertEqual(result["request_context"]["external_applicant_id"], "57")
         self.assertEqual(result["step_statuses"]["isoftpull"], "OK")
 
+    def test_build_flowable_result_from_variables_assigns_pass_to_custom_when_decision_missing(self):
+        variables = {
+            "request_id": "REQ-57",
+            "route_mode": "FLOWABLE",
+            "iso_status": "OK",
+            "creditsafe_status": "OK",
+            "plaid_status": "OK",
+        }
+        result = services.build_flowable_result_from_variables("REQ-57", "instance-57", variables)
+        self.assertEqual(result["status"], "COMPLETED")
+        self.assertEqual(result["decision"], "PASS TO CUSTOM")
+        self.assertEqual(result["decision_source"], "flowable-fallback")
+        self.assertEqual(result["decision_reason"], "Flowable completed without a decision result")
+
+    def test_resolve_orchestrator_call_settings_disables_flowable_retries(self):
+        settings = services.resolve_orchestrator_call_settings(
+            "flowable-adapter",
+            {"timeout_ms": 10000, "retry_count": 2},
+        )
+        self.assertEqual(settings["max_retries"], 0)
+        self.assertGreaterEqual(settings["timeout"], 45.0)
+
+    def test_resolve_orchestrator_call_settings_keeps_custom_retries(self):
+        settings = services.resolve_orchestrator_call_settings(
+            "custom-adapter",
+            {"timeout_ms": 12000, "retry_count": 2},
+        )
+        self.assertEqual(settings["max_retries"], 2)
+        self.assertEqual(settings["timeout"], 12.0)
+
     def test_resolve_mode_supports_deterministic_canary_rules(self):
         original_query = services.query
         try:

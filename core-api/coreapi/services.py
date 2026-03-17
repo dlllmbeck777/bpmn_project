@@ -996,6 +996,61 @@ def normalize_result_payload(result: Dict[str, Any]):
     return normalized
 
 
+def ensure_flowable_decision_payload(result: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = normalize_result_payload(result)
+    if normalized.get("decision"):
+        return normalized
+
+    summary = normalized.get("summary") if isinstance(normalized.get("summary"), dict) else {}
+    status = str(normalized.get("status") or "").upper()
+    source = _clean_text(normalized.get("decision_source"))
+    inferred = None
+
+    if source == "decision-service":
+        if status == "REJECTED":
+            inferred = "REJECTED"
+        elif status == "COMPLETED":
+            inferred = "APPROVED"
+        elif status == "REVIEW":
+            inferred = "PASS TO CUSTOM"
+    else:
+        if status == "REJECTED":
+            inferred = "REJECTED"
+        elif status in {"COMPLETED", "REVIEW"}:
+            inferred = "PASS TO CUSTOM"
+
+    if not inferred:
+        return normalized
+
+    normalized["decision"] = inferred
+    if summary and not summary.get("decision"):
+        summary["decision"] = inferred
+        normalized["summary"] = summary
+
+    if not source:
+        normalized["decision_source"] = "flowable-fallback"
+        if summary and not summary.get("decision_source"):
+            summary["decision_source"] = "flowable-fallback"
+            normalized["summary"] = summary
+
+    if inferred == "PASS TO CUSTOM" and not normalized.get("decision_reason"):
+        normalized["decision_reason"] = "Flowable completed without a decision result"
+        if summary and not summary.get("decision_reason"):
+            summary["decision_reason"] = normalized["decision_reason"]
+            normalized["summary"] = summary
+
+    return normalized
+
+
+def resolve_orchestrator_call_settings(adapter_id: str, service: Dict[str, Any]) -> Dict[str, Any]:
+    timeout_seconds = max(5.0, float(service.get("timeout_ms", 60000) or 60000) / 1000.0)
+    max_retries = max(0, int(service.get("retry_count", 2) or 0))
+    if adapter_id == "flowable-adapter":
+        timeout_seconds = max(timeout_seconds, 45.0)
+        max_retries = 0
+    return {"timeout": timeout_seconds, "max_retries": max_retries}
+
+
 def get_request_context(request_id: str):
     row = query(
         """
@@ -1083,6 +1138,8 @@ async def notify_snp(envelope: Dict[str, Any]):
 
 async def finalize_request(request_id: str, mode: str, result: Dict[str, Any], cid: str, request_data: Optional[Dict[str, Any]] = None):
     normalized_result = await ensure_parsed_report(request_id, result, cid)
+    if mode == "flowable":
+        normalized_result = ensure_flowable_decision_payload(normalized_result)
     context = dict(request_data or {})
     if not context:
         context = get_request_context(request_id)
@@ -1462,12 +1519,13 @@ async def submit_request_payload(
         correlation_id=cid,
     )
 
+    delivery = resolve_orchestrator_call_settings(adapter_id, service)
     result = await resilient_post(
         adapter_id,
         f"{base_url}{endpoint_path}",
         data,
-        timeout=service.get("timeout_ms", 60000) / 1000,
-        max_retries=service.get("retry_count", 2),
+        timeout=delivery["timeout"],
+        max_retries=delivery["max_retries"],
         cid=cid,
     )
     if result.get("status") in ("CIRCUIT_OPEN", "UNAVAILABLE"):
@@ -1490,6 +1548,8 @@ async def submit_request_payload(
         }
 
     normalized_result = dict(result)
+    if mode == "flowable":
+        normalized_result = ensure_flowable_decision_payload(normalized_result)
     if external_applicant_id:
         normalized_result.setdefault("external_applicant_id", external_applicant_id)
     current_status = normalized_result.get("status", "COMPLETED")
@@ -1699,7 +1759,7 @@ def build_flowable_result_from_variables(request_id: str, instance_id: str, proc
     orchestration_result = _parse_embedded_json(normalized_variables.get("orchestration_result", {}))
     if not isinstance(orchestration_result, dict) or not orchestration_result:
         orchestration_result = _parse_embedded_json(normalized_variables.get("decisionRawBody", {}))
-    result = normalize_result_payload(orchestration_result) if isinstance(orchestration_result, dict) else {}
+    result = ensure_flowable_decision_payload(orchestration_result) if isinstance(orchestration_result, dict) else {}
     result.setdefault("status", "COMPLETED")
     result["adapter"] = "flowable"
     result["request_id"] = request_id
@@ -1714,7 +1774,7 @@ def build_flowable_result_from_variables(request_id: str, instance_id: str, proc
             for service_id, payload in result["steps"].items()
         }
     result["summary"] = result.get("summary") if isinstance(result.get("summary"), dict) else build_flowable_summary(normalized_variables)
-    return result
+    return ensure_flowable_decision_payload(result)
 
 
 def _flowable_auth():

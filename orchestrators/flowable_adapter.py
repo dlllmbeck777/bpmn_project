@@ -6,6 +6,7 @@ Flowable adapter:
   - normalizes Flowable variables into the same result shape as custom mode
 """
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -55,6 +56,13 @@ app = FastAPI(title=SERVICE_NAME, version="5.1.0")
 
 _cache: Dict[str, tuple] = {}
 _background_tasks = set()
+_orchestrate_cache: Dict[str, tuple] = {}
+_orchestrate_inflight: Dict[str, asyncio.Future] = {}
+_orchestrate_lock = asyncio.Lock()
+FLOWABLE_ORCHESTRATE_CACHE_TTL_SECONDS = max(
+    60,
+    int((os.getenv("FLOWABLE_ORCHESTRATE_CACHE_TTL_SECONDS", "600") or "600").strip()),
+)
 
 
 def _auth():
@@ -210,6 +218,69 @@ def _merge_step_payloads(runtime_steps: Dict[str, Any], embedded_steps: Any):
             elif service_id not in merged:
                 merged[service_id] = payload
     return merged
+
+
+def _copy_jsonish(value: Any):
+    return copy.deepcopy(value)
+
+
+def _read_orchestrate_cache(request_id: str):
+    cached = _orchestrate_cache.get(request_id)
+    if not cached:
+        return None
+    value, expires_at = cached
+    if time.time() >= expires_at:
+        _orchestrate_cache.pop(request_id, None)
+        return None
+    return _copy_jsonish(value)
+
+
+def _write_orchestrate_cache(request_id: str, result: Dict[str, Any]):
+    _orchestrate_cache[request_id] = (_copy_jsonish(result), time.time() + FLOWABLE_ORCHESTRATE_CACHE_TTL_SECONDS)
+
+
+def _ensure_flowable_decision_payload(result_payload: Dict[str, Any]):
+    payload = dict(result_payload or {})
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    if payload.get("decision"):
+        return payload
+
+    status = str(payload.get("status") or "").upper()
+    source = str(payload.get("decision_source") or "").strip()
+    inferred = None
+    if source == "decision-service":
+        if status == "REJECTED":
+            inferred = "REJECTED"
+        elif status == "COMPLETED":
+            inferred = "APPROVED"
+        elif status == "REVIEW":
+            inferred = "PASS TO CUSTOM"
+    else:
+        if status == "REJECTED":
+            inferred = "REJECTED"
+        elif status in {"COMPLETED", "REVIEW"}:
+            inferred = "PASS TO CUSTOM"
+
+    if not inferred:
+        return payload
+
+    payload["decision"] = inferred
+    if summary and not summary.get("decision"):
+        summary["decision"] = inferred
+        payload["summary"] = summary
+
+    if not source:
+        payload["decision_source"] = "flowable-fallback"
+        if summary and not summary.get("decision_source"):
+            summary["decision_source"] = "flowable-fallback"
+            payload["summary"] = summary
+
+    if inferred == "PASS TO CUSTOM" and not payload.get("decision_reason"):
+        payload["decision_reason"] = "Flowable completed without a decision result"
+        if summary and not summary.get("decision_reason"):
+            summary["decision_reason"] = payload["decision_reason"]
+            payload["summary"] = summary
+    return payload
 
 
 def _track_task(task: asyncio.Task):
@@ -428,7 +499,7 @@ async def _build_result_payload(body: "RequestIn", instance_id: str, process_var
         "route_mode": "FLOWABLE",
         "external_applicant_id": body.external_applicant_id or "",
     }
-    return {
+    result = {
         "status": decision_payload.get("status", "COMPLETED"),
         "adapter": "flowable",
         "request_id": body.request_id,
@@ -447,6 +518,7 @@ async def _build_result_payload(body: "RequestIn", instance_id: str, process_var
         "parsed_report": parsed_report,
         "summary": summary,
     }
+    return _ensure_flowable_decision_payload(result)
 
 
 async def _emit_flowable_trace(body: "RequestIn", process_variables: Dict[str, Any], parsed_report: Dict[str, Any], cid: str):
@@ -689,9 +761,7 @@ def health():
     return {"status": "ok", "service": SERVICE_NAME}
 
 
-@app.post("/orchestrate")
-async def orchestrate(body: RequestIn, request: Request):
-    cid = request.headers.get("X-Correlation-ID", "")
+async def _orchestrate_once(body: RequestIn, cid: str):
     log.info(f"[{cid}] orchestrate {body.request_id}")
 
     flowable_cfg = await _acfg("/api/v1/services/flowable-rest")
@@ -737,7 +807,8 @@ async def orchestrate(body: RequestIn, request: Request):
             "POST",
             f"{flowable_url}/runtime/process-instances",
             timeout=60.0,
-            retry_attempts=3,
+            # Starting a process instance is not a safe operation to retry blindly.
+            retry_attempts=1,
             json={"processDefinitionKey": process_key, "variables": variables},
             headers={"X-Correlation-ID": cid},
         )
@@ -841,3 +912,46 @@ async def orchestrate(body: RequestIn, request: Request):
     result = await _build_result_payload(body, instance_id, process_variables, flowable_connector_urls, cid)
     await _emit_flowable_trace(body, process_variables, result.get("parsed_report", {}), cid)
     return result
+
+
+@app.post("/orchestrate")
+async def orchestrate(body: RequestIn, request: Request):
+    cid = request.headers.get("X-Correlation-ID", "")
+
+    async with _orchestrate_lock:
+        cached = _read_orchestrate_cache(body.request_id)
+        if cached is not None:
+            log.info(f"[{cid}] dedupe cache hit for {body.request_id}")
+            return cached
+
+        in_flight = _orchestrate_inflight.get(body.request_id)
+        if in_flight is None:
+            in_flight = asyncio.get_running_loop().create_future()
+            _orchestrate_inflight[body.request_id] = in_flight
+            owner = True
+        else:
+            owner = False
+
+    if not owner:
+        log.info(f"[{cid}] dedupe waiting on in-flight orchestration for {body.request_id}")
+        try:
+            result = await asyncio.shield(in_flight)
+        except Exception:
+            raise
+        return _copy_jsonish(result)
+
+    try:
+        result = await _orchestrate_once(body, cid)
+        _write_orchestrate_cache(body.request_id, result)
+        if not in_flight.done():
+            in_flight.set_result(_copy_jsonish(result))
+        return _copy_jsonish(result)
+    except Exception as exc:
+        if not in_flight.done():
+            in_flight.set_exception(exc)
+        raise
+    finally:
+        async with _orchestrate_lock:
+            current = _orchestrate_inflight.get(body.request_id)
+            if current is in_flight:
+                _orchestrate_inflight.pop(body.request_id, None)

@@ -231,6 +231,56 @@ class PipelineSkipPolicyTests(unittest.TestCase):
         self.assertEqual(payload["status"], "COMPLETED")
         self.assertEqual(payload["summary"]["credit_score"], 775)
 
+    def test_flowable_result_falls_back_to_pass_to_custom_when_decision_missing(self):
+        result = flowable_adapter._ensure_flowable_decision_payload({
+            "status": "COMPLETED",
+            "summary": {"credit_score": 775},
+        })
+        self.assertEqual(result["decision"], "PASS TO CUSTOM")
+        self.assertEqual(result["decision_source"], "flowable-fallback")
+        self.assertEqual(result["decision_reason"], "Flowable completed without a decision result")
+
+    def test_flowable_orchestrate_collapses_duplicate_request_ids(self):
+        original_once = flowable_adapter._orchestrate_once
+        try:
+            flowable_adapter._orchestrate_cache.clear()
+            flowable_adapter._orchestrate_inflight.clear()
+            calls = []
+            started = asyncio.Event()
+            release = asyncio.Event()
+
+            async def fake_once(body, cid):
+                calls.append(body.request_id)
+                started.set()
+                await release.wait()
+                return {"status": "RUNNING", "adapter": "flowable", "request_id": body.request_id}
+
+            flowable_adapter._orchestrate_once = fake_once
+            body = flowable_adapter.RequestIn(
+                request_id="REQ-FLOW-DEDUP-1",
+                customer_id="CUST-1",
+                iin="IIN-1",
+                product_type="loan",
+                orchestration_mode="flowable",
+            )
+
+            async def run():
+                first = asyncio.create_task(flowable_adapter.orchestrate(body, SimpleNamespace(headers={})))
+                await started.wait()
+                second = asyncio.create_task(flowable_adapter.orchestrate(body, SimpleNamespace(headers={})))
+                await asyncio.sleep(0)
+                release.set()
+                return await asyncio.gather(first, second)
+
+            first_result, second_result = asyncio.run(run())
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(first_result["request_id"], "REQ-FLOW-DEDUP-1")
+            self.assertEqual(second_result["request_id"], "REQ-FLOW-DEDUP-1")
+        finally:
+            flowable_adapter._orchestrate_once = original_once
+            flowable_adapter._orchestrate_cache.clear()
+            flowable_adapter._orchestrate_inflight.clear()
+
 
 if __name__ == '__main__':
     unittest.main()
