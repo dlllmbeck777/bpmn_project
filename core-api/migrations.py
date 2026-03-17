@@ -2,6 +2,8 @@
 migrations.py — Version-based database migrations.
 Each migration is a (version, sql) tuple. Runs in order, skips already-applied.
 """
+import json
+
 MIGRATIONS = [
     (1, """
         CREATE TABLE IF NOT EXISTS _schema_version (version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ DEFAULT NOW());
@@ -174,6 +176,124 @@ MIGRATIONS = [
         )
         ON CONFLICT (id) DO NOTHING;
     """),
+    (12, """
+        DELETE FROM pipeline_steps WHERE service_id='crm';
+        DELETE FROM services WHERE id='crm';
+
+        INSERT INTO services (
+            id,name,type,base_url,health_path,enabled,timeout_ms,retry_count,endpoint_path,meta
+        )
+        VALUES (
+            'decision-service',
+            'Decision Service',
+            'processor',
+            'http://processors:8107',
+            '/health',
+            TRUE,
+            10000,
+            1,
+            '/api/v1/decide',
+            '{"owner":"processors","editable_rules":"stop_factors.stage=decision"}'::jsonb
+        )
+        ON CONFLICT (id) DO UPDATE SET
+            name=EXCLUDED.name,
+            type=EXCLUDED.type,
+            base_url=EXCLUDED.base_url,
+            health_path=EXCLUDED.health_path,
+            endpoint_path=EXCLUDED.endpoint_path,
+            meta=EXCLUDED.meta,
+            updated_at=NOW();
+
+        UPDATE pipeline_steps
+        SET step_order=1, meta=COALESCE(meta, '{}'::jsonb) - 'skip_in_flowable', updated_at=NOW()
+        WHERE pipeline_name='default' AND service_id='isoftpull';
+
+        UPDATE pipeline_steps
+        SET step_order=2, meta=COALESCE(meta, '{}'::jsonb) - 'skip_in_flowable', updated_at=NOW()
+        WHERE pipeline_name='default' AND service_id='creditsafe';
+
+        UPDATE pipeline_steps
+        SET step_order=3, meta=COALESCE(meta, '{}'::jsonb) || '{"skip_in_flowable": true}'::jsonb, updated_at=NOW()
+        WHERE pipeline_name='default' AND service_id='plaid';
+
+        INSERT INTO pipeline_steps (pipeline_name, step_order, service_id, enabled, meta)
+        SELECT 'default', 1, 'isoftpull', TRUE, '{}'::jsonb
+        WHERE NOT EXISTS (
+            SELECT 1 FROM pipeline_steps WHERE pipeline_name='default' AND service_id='isoftpull'
+        );
+
+        INSERT INTO pipeline_steps (pipeline_name, step_order, service_id, enabled, meta)
+        SELECT 'default', 2, 'creditsafe', TRUE, '{}'::jsonb
+        WHERE NOT EXISTS (
+            SELECT 1 FROM pipeline_steps WHERE pipeline_name='default' AND service_id='creditsafe'
+        );
+
+        INSERT INTO pipeline_steps (pipeline_name, step_order, service_id, enabled, meta)
+        SELECT 'default', 3, 'plaid', TRUE, '{"skip_in_flowable": true}'::jsonb
+        WHERE NOT EXISTS (
+            SELECT 1 FROM pipeline_steps WHERE pipeline_name='default' AND service_id='plaid'
+        );
+
+        UPDATE stop_factors
+        SET stage='decision',
+            field_path='result.parsed_report.summary.credit_score',
+            operator='gte',
+            threshold='580',
+            action_on_fail='REJECT',
+            priority=10,
+            updated_at=NOW()
+        WHERE name='Min credit score';
+
+        DELETE FROM stop_factors WHERE name='Minimum linked accounts';
+
+        INSERT INTO stop_factors (name, stage, check_type, field_path, operator, threshold, action_on_fail, enabled, priority, meta)
+        SELECT 'Required reports available', 'decision', 'field_check', 'result.parsed_report.summary.required_reports_available', 'eq', 'true', 'REVIEW', TRUE, 5, '{"decision_rule":true}'::jsonb
+        WHERE NOT EXISTS (SELECT 1 FROM stop_factors WHERE name='Required reports available');
+
+        INSERT INTO stop_factors (name, stage, check_type, field_path, operator, threshold, action_on_fail, enabled, priority, meta)
+        SELECT 'Max collection count 5', 'decision', 'field_check', 'result.parsed_report.summary.collection_count', 'lte', '5', 'REJECT', TRUE, 20, '{"decision_rule":true}'::jsonb
+        WHERE NOT EXISTS (SELECT 1 FROM stop_factors WHERE name='Max collection count 5');
+
+        INSERT INTO stop_factors (name, stage, check_type, field_path, operator, threshold, action_on_fail, enabled, priority, meta)
+        SELECT 'Max Creditsafe alerts 1', 'decision', 'field_check', 'result.parsed_report.summary.creditsafe_compliance_alert_count', 'lte', '1', 'REJECT', TRUE, 30, '{"decision_rule":true}'::jsonb
+        WHERE NOT EXISTS (SELECT 1 FROM stop_factors WHERE name='Max Creditsafe alerts 1');
+
+        UPDATE stop_factors
+        SET stage='decision',
+            check_type='field_check',
+            field_path='result.parsed_report.summary.required_reports_available',
+            operator='eq',
+            threshold='true',
+            action_on_fail='REVIEW',
+            priority=5,
+            meta=COALESCE(meta, '{}'::jsonb) || '{"decision_rule":true}'::jsonb,
+            updated_at=NOW()
+        WHERE name='Required reports available';
+
+        UPDATE stop_factors
+        SET stage='decision',
+            check_type='field_check',
+            field_path='result.parsed_report.summary.collection_count',
+            operator='lte',
+            threshold='5',
+            action_on_fail='REJECT',
+            priority=20,
+            meta=COALESCE(meta, '{}'::jsonb) || '{"decision_rule":true}'::jsonb,
+            updated_at=NOW()
+        WHERE name='Max collection count 5';
+
+        UPDATE stop_factors
+        SET stage='decision',
+            check_type='field_check',
+            field_path='result.parsed_report.summary.creditsafe_compliance_alert_count',
+            operator='lte',
+            threshold='1',
+            action_on_fail='REJECT',
+            priority=30,
+            meta=COALESCE(meta, '{}'::jsonb) || '{"decision_rule":true}'::jsonb,
+            updated_at=NOW()
+        WHERE name='Max Creditsafe alerts 1';
+    """),
 ]
 
 
@@ -236,9 +356,9 @@ def seed_defaults(conn):
         ("isoftpull", "iSoftPull", "connector", "http://isoftpull:8101", "/health", "/api/pull"),
         ("creditsafe", "Creditsafe", "connector", "http://creditsafe:8102", "/health", "/api/report"),
         ("plaid", "Plaid", "connector", "http://plaid:8103", "/health", "/api/accounts"),
-        ("crm", "CRM", "connector", "http://crm:8104", "/health", "/api/update"),
         ("report-parser", "Report Parser", "processor", "http://processors:8105", "/health", "/api/v1/parse"),
         ("stop-factor", "Stop Factor", "processor", "http://processors:8106", "/health", "/api/v1/check"),
+        ("decision-service", "Decision Service", "processor", "http://processors:8107", "/health", "/api/v1/decide"),
     ]
     for s in svcs:
         cur.execute("INSERT INTO services (id,name,type,base_url,health_path,endpoint_path) VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", s)
@@ -253,9 +373,11 @@ def seed_defaults(conn):
             cur.execute("INSERT INTO routing_rules (name,priority,condition_field,condition_op,condition_value,target_mode) VALUES (%s,%s,%s,%s,%s,%s)", r)
 
     stops = [
-        ("Min credit score", "post", "field_check", "result.parsed_report.summary.credit_score", "gte", "600", "REJECT", 10),
-        ("Minimum linked accounts", "post", "field_check", "result.parsed_report.summary.accounts_found", "gte", "1", "REVIEW", 20),
         ("Blacklist SSN", "pre", "blacklist", "ssn", "not_in", "blacklist", "REJECT", 5),
+        ("Required reports available", "decision", "field_check", "result.parsed_report.summary.required_reports_available", "eq", "true", "REVIEW", 5),
+        ("Min credit score", "decision", "field_check", "result.parsed_report.summary.credit_score", "gte", "580", "REJECT", 10),
+        ("Max collection count 5", "decision", "field_check", "result.parsed_report.summary.collection_count", "lte", "5", "REJECT", 20),
+        ("Max Creditsafe alerts 1", "decision", "field_check", "result.parsed_report.summary.creditsafe_compliance_alert_count", "lte", "1", "REJECT", 30),
     ]
     for s in stops:
         cur.execute("SELECT id FROM stop_factors WHERE name=%s", (s[0],))
@@ -268,11 +390,24 @@ def seed_defaults(conn):
         else:
             cur.execute("INSERT INTO stop_factors (name,stage,check_type,field_path,operator,threshold,action_on_fail,priority) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", s)
 
-    steps = [("default", 1, "isoftpull"), ("default", 2, "creditsafe"), ("default", 3, "plaid"), ("default", 4, "crm")]
-    for s in steps:
-        cur.execute("SELECT 1 FROM pipeline_steps WHERE pipeline_name=%s AND step_order=%s AND service_id=%s", s)
-        if not cur.fetchone():
-            cur.execute("INSERT INTO pipeline_steps (pipeline_name,step_order,service_id) VALUES (%s,%s,%s)", s)
+    steps = [
+        {"pipeline_name": "default", "step_order": 1, "service_id": "isoftpull", "meta": {}},
+        {"pipeline_name": "default", "step_order": 2, "service_id": "creditsafe", "meta": {}},
+        {"pipeline_name": "default", "step_order": 3, "service_id": "plaid", "meta": {"skip_in_flowable": True}},
+    ]
+    for step in steps:
+        cur.execute("SELECT id FROM pipeline_steps WHERE pipeline_name=%s AND service_id=%s", (step["pipeline_name"], step["service_id"]))
+        row = cur.fetchone()
+        if row:
+            cur.execute(
+                "UPDATE pipeline_steps SET step_order=%s, enabled=TRUE, meta=%s, updated_at=NOW() WHERE id=%s",
+                (step["step_order"], json.dumps(step["meta"]), row[0]),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO pipeline_steps (pipeline_name,step_order,service_id,meta) VALUES (%s,%s,%s,%s)",
+                (step["pipeline_name"], step["step_order"], step["service_id"], json.dumps(step["meta"])),
+            )
 
     cur.execute("INSERT INTO system_state (key, value_text) VALUES ('config_version', '1') ON CONFLICT (key) DO NOTHING")
     cur.execute("INSERT INTO system_state (key, value_text) VALUES ('seed_completed', 'true') ON CONFLICT (key) DO UPDATE SET value_text='true'")

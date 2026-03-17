@@ -25,6 +25,7 @@ function laneOf(ev) {
   if (ev.stage === 'stop_factor_pre') return 'Pre checks'
   if (ev.stage === 'connector') return 'Connectors'
   if (ev.stage === 'parser') return 'Parser'
+  if (ev.stage === 'decision') return 'Decision'
   if (ev.stage === 'stop_factor_post') return 'Post checks'
   if (ev.stage === 'request') return 'Finalization'
   return ev.stage
@@ -32,7 +33,7 @@ function laneOf(ev) {
 
 function finalOutcomeEvent(group) {
   const events = group?.events || []
-  return [...events].reverse().find((ev) => ev.stage === 'request' && ['COMPLETED', 'REVIEW', 'REJECTED', 'FAILED'].includes(ev.status))
+  return [...events].reverse().find((ev) => ev.stage === 'request' && ['COMPLETED', 'REVIEW', 'REJECTED', 'FAILED', 'ENGINE_ERROR', 'ENGINE_UNREACHABLE'].includes(ev.status))
 }
 
 export default function ProcessTrackerPage() {
@@ -98,7 +99,7 @@ export default function ProcessTrackerPage() {
     const totalMs = withOffsets.reduce((max, e) => Math.max(max, e._offset + e._dur), 1)
 
     // Group by lane
-    const laneOrder = ['Gateway & routing', 'Pre checks', 'Connectors', 'Parser', 'Post checks', 'Finalization']
+    const laneOrder = ['Gateway & routing', 'Pre checks', 'Connectors', 'Parser', 'Decision', 'Post checks', 'Finalization']
     const lanes = new Map()
     for (const ev of withOffsets) {
       const lane = laneOf(ev)

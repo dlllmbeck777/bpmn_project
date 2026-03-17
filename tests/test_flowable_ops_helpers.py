@@ -202,8 +202,10 @@ class FlowableOpsHelperTests(unittest.TestCase):
             "iso_status": "OK",
             "creditsafe_status": "SKIPPED",
             "skip_reason_creditsafe": "pipeline step bypassed for flowable mode",
+            "orchestration_result": {"status": "REJECTED", "decision_reason": "Decision rule failed: Min credit score 580", "summary": {"request_id": "REQ-55"}},
         }
         result = services.build_flowable_result_from_variables("REQ-55", "instance-55", variables)
+        self.assertEqual(result["status"], "REJECTED")
         self.assertEqual(result["engine"]["instance_id"], "instance-55")
         self.assertEqual(result["steps"]["isoftpull"]["bureau"], "isoftpull")
         self.assertEqual(result["steps"]["creditsafe"]["status"], "SKIPPED")

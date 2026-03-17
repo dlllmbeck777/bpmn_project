@@ -31,7 +31,7 @@ flowchart TB
     Mobile["Мобильное приложение"]:::user
     Ops["Операторы / аналитики"]:::user
     Platform["Credit Platform v5"]:::system
-    Bureaus["Внешние источники данных<br/>isoftpull / creditsafe / plaid / crm"]:::ext
+    Bureaus["Внешние источники данных<br/>isoftpull / creditsafe / plaid"]:::ext
     Snp["SNP"]:::ext
     FlowableActor["Flowable modelers / BPMN operators"]:::user
 
@@ -75,7 +75,7 @@ flowchart LR
     FlowUi["flowable-ui"]:::proc
     ConfigDb["config-db"]:::data
     FlowDb["flowable-db"]:::data
-    Connectors["connectors<br/>isoftpull / creditsafe / plaid / crm"]:::ext
+    Connectors["connectors<br/>isoftpull / creditsafe / plaid"]:::ext
     Obs["prometheus / grafana"]:::obs
 
     Internet --> Nginx

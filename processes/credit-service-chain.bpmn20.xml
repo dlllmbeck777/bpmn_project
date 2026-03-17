@@ -16,8 +16,7 @@
     <startEvent id="startEvent" name="Request received"/>
     <sequenceFlow id="flow_start_to_init" sourceRef="startEvent" targetRef="task_init"/>
 
-    <scriptTask id="task_init" name="Initialize context"
-                scriptFormat="groovy" flowable:autoStoreVariables="false">
+    <scriptTask id="task_init" name="Initialize context" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         execution.setVariable('route_mode', execution.getVariable('route_mode') ?: 'FLOWABLE')
         execution.setVariable('request_id', execution.getVariable('request_id') ?: '')
@@ -28,6 +27,7 @@
         execution.setVariable('applicant_json', execution.getVariable('applicant_json') ?: '{}')
       ]]></script>
     </scriptTask>
+
     <exclusiveGateway id="gateway_iso" name="Skip iSoftPull?"/>
     <sequenceFlow id="flow_init_to_iso" sourceRef="task_init" targetRef="gateway_iso"/>
     <sequenceFlow id="flow_iso_gate_to_skip" sourceRef="gateway_iso" targetRef="task_iso_skip">
@@ -35,8 +35,7 @@
     </sequenceFlow>
     <sequenceFlow id="flow_iso_gate_to_call" sourceRef="gateway_iso" targetRef="task_isoftpull"/>
 
-    <scriptTask id="task_iso_skip" name="Skip iSoftPull"
-                scriptFormat="groovy" flowable:autoStoreVariables="false">
+    <scriptTask id="task_iso_skip" name="Skip iSoftPull" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def reason = ((execution.getVariable('skip_reason_isoftpull') ?: 'pipeline step skipped by policy') as String).replace('"', '\\"')
         execution.setVariable('isoRawBody', '{"status":"SKIPPED","reason":"' + reason + '"}')
@@ -45,8 +44,7 @@
     </scriptTask>
     <sequenceFlow id="flow_iso_skip_to_prep_cs" sourceRef="task_iso_skip" targetRef="task_prepare_creditsafe_body"/>
 
-    <serviceTask id="task_isoftpull" name="Call iSoftPull"
-                 flowable:exclusive="false" flowable:type="http">
+    <serviceTask id="task_isoftpull" name="Call iSoftPull" flowable:exclusive="false" flowable:type="http">
       <extensionElements>
         <flowable:failedJobRetryTimeCycle>R2/PT5S</flowable:failedJobRetryTimeCycle>
         <flowable:field name="requestMethod"><flowable:string>POST</flowable:string></flowable:field>
@@ -66,8 +64,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <boundaryEvent id="err_iso" attachedToRef="task_isoftpull" cancelActivity="true">
       <errorEventDefinition errorRef="serviceError"/>
     </boundaryEvent>
-    <scriptTask id="task_iso_degrade" name="iSoftPull degrade"
-                scriptFormat="groovy" flowable:autoStoreVariables="false">
+    <scriptTask id="task_iso_degrade" name="iSoftPull degrade" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         execution.setVariable('isoRawBody', '{}')
         execution.setVariable('iso_status', 'UNAVAILABLE')
@@ -76,8 +73,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_err_iso" sourceRef="err_iso" targetRef="task_iso_degrade"/>
     <sequenceFlow id="flow_iso_deg_to_prep_cs" sourceRef="task_iso_degrade" targetRef="task_prepare_creditsafe_body"/>
 
-    <scriptTask id="task_parse_iso" name="Parse iSoftPull"
-                scriptFormat="groovy" flowable:autoStoreVariables="false">
+    <scriptTask id="task_parse_iso" name="Parse iSoftPull" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def raw = (execution.getVariable('isoRawBody') ?: '{}') as String
         def mv = raw =~ /"status"\s*:\s*"([^"]+)"/
@@ -87,8 +83,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_iso_to_parse" sourceRef="task_isoftpull" targetRef="task_parse_iso"/>
     <sequenceFlow id="flow_parse_iso_to_prep_cs" sourceRef="task_parse_iso" targetRef="task_prepare_creditsafe_body"/>
 
-    <scriptTask id="task_prepare_creditsafe_body" name="Prepare Creditsafe body"
-                scriptFormat="groovy" flowable:autoStoreVariables="false">
+    <scriptTask id="task_prepare_creditsafe_body" name="Prepare Creditsafe body" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def isoBody = (execution.getVariable('isoRawBody') ?: '{}') as String
         def body = '{"request_id":"' + execution.getVariable('request_id') + '",' +
@@ -100,6 +95,7 @@ X-Request-Id: ${request_id}</flowable:expression>
         execution.setVariable('creditsafe_request_body', body)
       ]]></script>
     </scriptTask>
+
     <exclusiveGateway id="gateway_cs" name="Skip Creditsafe?"/>
     <sequenceFlow id="flow_prep_cs_to_call" sourceRef="task_prepare_creditsafe_body" targetRef="gateway_cs"/>
     <sequenceFlow id="flow_cs_gate_to_skip" sourceRef="gateway_cs" targetRef="task_cs_skip">
@@ -107,8 +103,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     </sequenceFlow>
     <sequenceFlow id="flow_cs_gate_to_call" sourceRef="gateway_cs" targetRef="task_creditsafe"/>
 
-    <scriptTask id="task_cs_skip" name="Skip Creditsafe"
-                scriptFormat="groovy" flowable:autoStoreVariables="false">
+    <scriptTask id="task_cs_skip" name="Skip Creditsafe" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def reason = ((execution.getVariable('skip_reason_creditsafe') ?: 'pipeline step skipped by policy') as String).replace('"', '\\"')
         execution.setVariable('csRawBody', '{"status":"SKIPPED","reason":"' + reason + '"}')
@@ -117,8 +112,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     </scriptTask>
     <sequenceFlow id="flow_cs_skip_to_prep_plaid" sourceRef="task_cs_skip" targetRef="task_prepare_plaid_body"/>
 
-    <serviceTask id="task_creditsafe" name="Call Creditsafe"
-                 flowable:exclusive="false" flowable:type="http">
+    <serviceTask id="task_creditsafe" name="Call Creditsafe" flowable:exclusive="false" flowable:type="http">
       <extensionElements>
         <flowable:failedJobRetryTimeCycle>R2/PT5S</flowable:failedJobRetryTimeCycle>
         <flowable:field name="requestMethod"><flowable:string>POST</flowable:string></flowable:field>
@@ -136,8 +130,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <boundaryEvent id="err_cs" attachedToRef="task_creditsafe" cancelActivity="true">
       <errorEventDefinition errorRef="serviceError"/>
     </boundaryEvent>
-    <scriptTask id="task_cs_degrade" name="Creditsafe degrade"
-                scriptFormat="groovy" flowable:autoStoreVariables="false">
+    <scriptTask id="task_cs_degrade" name="Creditsafe degrade" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         execution.setVariable('csRawBody', '{}')
         execution.setVariable('creditsafe_status', 'UNAVAILABLE')
@@ -146,8 +139,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_err_cs" sourceRef="err_cs" targetRef="task_cs_degrade"/>
     <sequenceFlow id="flow_cs_deg_to_prep_plaid" sourceRef="task_cs_degrade" targetRef="task_prepare_plaid_body"/>
 
-    <scriptTask id="task_parse_cs" name="Parse Creditsafe"
-                scriptFormat="groovy" flowable:autoStoreVariables="false">
+    <scriptTask id="task_parse_cs" name="Parse Creditsafe" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def raw = (execution.getVariable('csRawBody') ?: '{}') as String
         def mv = raw =~ /"status"\s*:\s*"([^"]+)"/
@@ -157,8 +149,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     <sequenceFlow id="flow_cs_to_parse" sourceRef="task_creditsafe" targetRef="task_parse_cs"/>
     <sequenceFlow id="flow_parse_cs_to_prep_plaid" sourceRef="task_parse_cs" targetRef="task_prepare_plaid_body"/>
 
-    <scriptTask id="task_prepare_plaid_body" name="Prepare Plaid body"
-                scriptFormat="groovy" flowable:autoStoreVariables="false">
+    <scriptTask id="task_prepare_plaid_body" name="Prepare Plaid body" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def csBody = (execution.getVariable('csRawBody') ?: '{}') as String
         def body = '{"request_id":"' + execution.getVariable('request_id') + '",' +
@@ -170,6 +161,7 @@ X-Request-Id: ${request_id}</flowable:expression>
         execution.setVariable('plaid_request_body', body)
       ]]></script>
     </scriptTask>
+
     <exclusiveGateway id="gateway_plaid" name="Skip Plaid?"/>
     <sequenceFlow id="flow_prep_plaid_to_call" sourceRef="task_prepare_plaid_body" targetRef="gateway_plaid"/>
     <sequenceFlow id="flow_plaid_gate_to_skip" sourceRef="gateway_plaid" targetRef="task_plaid_skip">
@@ -177,18 +169,16 @@ X-Request-Id: ${request_id}</flowable:expression>
     </sequenceFlow>
     <sequenceFlow id="flow_plaid_gate_to_call" sourceRef="gateway_plaid" targetRef="task_plaid"/>
 
-    <scriptTask id="task_plaid_skip" name="Skip Plaid"
-                scriptFormat="groovy" flowable:autoStoreVariables="false">
+    <scriptTask id="task_plaid_skip" name="Skip Plaid" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def reason = ((execution.getVariable('skip_reason_plaid') ?: 'pipeline step skipped by policy') as String).replace('"', '\\"')
         execution.setVariable('plaidRawBody', '{"status":"SKIPPED","reason":"' + reason + '"}')
         execution.setVariable('plaid_status', 'SKIPPED')
       ]]></script>
     </scriptTask>
-    <sequenceFlow id="flow_plaid_skip_to_finalize" sourceRef="task_plaid_skip" targetRef="task_finalize"/>
+    <sequenceFlow id="flow_plaid_skip_to_prep_decision" sourceRef="task_plaid_skip" targetRef="task_prepare_decision_body"/>
 
-    <serviceTask id="task_plaid" name="Call Plaid"
-                 flowable:exclusive="false" flowable:type="http">
+    <serviceTask id="task_plaid" name="Call Plaid" flowable:exclusive="false" flowable:type="http">
       <extensionElements>
         <flowable:failedJobRetryTimeCycle>R2/PT5S</flowable:failedJobRetryTimeCycle>
         <flowable:field name="requestMethod"><flowable:string>POST</flowable:string></flowable:field>
@@ -206,18 +196,16 @@ X-Request-Id: ${request_id}</flowable:expression>
     <boundaryEvent id="err_plaid" attachedToRef="task_plaid" cancelActivity="true">
       <errorEventDefinition errorRef="serviceError"/>
     </boundaryEvent>
-    <scriptTask id="task_plaid_degrade" name="Plaid degrade"
-                scriptFormat="groovy" flowable:autoStoreVariables="false">
+    <scriptTask id="task_plaid_degrade" name="Plaid degrade" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         execution.setVariable('plaidRawBody', '{}')
         execution.setVariable('plaid_status', 'UNAVAILABLE')
       ]]></script>
     </scriptTask>
     <sequenceFlow id="flow_err_plaid" sourceRef="err_plaid" targetRef="task_plaid_degrade"/>
-    <sequenceFlow id="flow_plaid_deg_to_finalize" sourceRef="task_plaid_degrade" targetRef="task_finalize"/>
+    <sequenceFlow id="flow_plaid_deg_to_prep_decision" sourceRef="task_plaid_degrade" targetRef="task_prepare_decision_body"/>
 
-    <scriptTask id="task_parse_plaid" name="Parse Plaid"
-                scriptFormat="groovy" flowable:autoStoreVariables="false">
+    <scriptTask id="task_parse_plaid" name="Parse Plaid" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
         def raw = (execution.getVariable('plaidRawBody') ?: '{}') as String
         def mv = raw =~ /"status"\s*:\s*"([^"]+)"/
@@ -225,212 +213,122 @@ X-Request-Id: ${request_id}</flowable:expression>
       ]]></script>
     </scriptTask>
     <sequenceFlow id="flow_plaid_to_parse" sourceRef="task_plaid" targetRef="task_parse_plaid"/>
-    <sequenceFlow id="flow_parse_plaid_to_finalize" sourceRef="task_parse_plaid" targetRef="task_finalize"/>
+    <sequenceFlow id="flow_parse_plaid_to_prep_decision" sourceRef="task_parse_plaid" targetRef="task_prepare_decision_body"/>
 
-    <scriptTask id="task_finalize" name="Finalize result"
-                scriptFormat="groovy" flowable:autoStoreVariables="false">
+    <scriptTask id="task_prepare_decision_body" name="Prepare decision body" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
+        import groovy.json.JsonOutput
         import groovy.json.JsonSlurper
 
-        def parseJson = { rawValue ->
+        def parseStep = { rawKey, statusKey, reasonKey, serviceId ->
+          def rawValue = (execution.getVariable(rawKey) ?: '{}') as String
+          def parsed
           try {
-            return new JsonSlurper().parseText((rawValue ?: '{}') as String)
+            parsed = new JsonSlurper().parseText(rawValue)
           } catch (Exception ignored) {
-            return [:]
+            parsed = [:]
           }
+          if (!(parsed instanceof Map)) {
+            parsed = [:]
+          }
+          parsed['service'] = serviceId
+          parsed['status'] = parsed['status'] ?: (execution.getVariable(statusKey) ?: 'UNKNOWN')
+          def reason = execution.getVariable(reasonKey)
+          if (reason && !parsed['reason']) {
+            parsed['reason'] = reason
+          }
+          return parsed
         }
 
-        def pathValue = { root, path ->
-          def current = root
-          for (segment in path) {
-            if (current instanceof Map) {
-              current = current[segment]
-            } else if (current instanceof List && segment instanceof Number && segment < current.size()) {
-              current = current[segment.intValue()]
-            } else {
-              return null
-            }
-          }
-          return current
-        }
-
-        def numberValue = { raw ->
-          if (raw == null) {
-            return null
-          }
-          if (raw instanceof Number) {
-            return new BigDecimal(raw.toString())
-          }
-          def text = raw.toString().trim()
-          if (!text || ['N/A', 'NA', 'NULL', 'null'].contains(text)) {
-            return null
-          }
-          try {
-            return new BigDecimal(text.replace(',', ''))
-          } catch (Exception ignored) {
-            return null
-          }
-        }
-
-        def firstNumericAt = { root, paths ->
-          for (path in paths) {
-            def number = numberValue(pathValue(root, path))
-            if (number != null) {
-              return number
-            }
-          }
-          return null
-        }
-
-        def firstCountAt = { root, paths ->
-          for (path in paths) {
-            def value = pathValue(root, path)
-            if (value instanceof Collection) {
-              return value.size()
-            }
-            def number = numberValue(value)
-            if (number != null) {
-              return number.intValue()
-            }
-          }
-          return null
-        }
-
-        def bureauCollectionTotal = { accounts ->
-          if (!(accounts instanceof Collection)) {
-            return 0
-          }
-          def total = 0
-          accounts.each { account ->
-            if (account instanceof Map) {
-              total += (numberValue(account['30_day_delinquencies']) ?: BigDecimal.ZERO).intValue()
-              total += (numberValue(account['60_day_delinquencies']) ?: BigDecimal.ZERO).intValue()
-              total += (numberValue(account['90_day_delinquencies']) ?: BigDecimal.ZERO).intValue()
-            }
-          }
-          return total
-        }
-
-        def isoBody = parseJson(execution.getVariable('isoRawBody'))
-        def csBody = parseJson(execution.getVariable('csRawBody'))
-        def plaidBody = parseJson(execution.getVariable('plaidRawBody'))
-
-        def isoScore = firstNumericAt(isoBody, [
-          ['creditScore'],
-          ['result', 'creditScore'],
-          ['result', 'credit_score'],
-          ['result', 'score'],
-          ['rawResponse', 'firstScore'],
-          ['rawResponse', 'creditScore'],
-          ['equifaxScore'],
-          ['transunionScore'],
-          ['rawResponse', 'equifaxScore'],
-          ['rawResponse', 'transunionScore'],
-          ['rawResponse', 'reports', 'equifax', 'full_feed', 'credit_score', 'fico_8', 'scoreValue'],
-          ['rawResponse', 'reports', 'equifax', 'full_feed', 'credit_score', 'fico_8', 'score'],
-          ['rawResponse', 'reports', 'transunion', 'full_feed', 'credit_score', 'fico_8', 'scoreValue'],
-          ['rawResponse', 'reports', 'transunion', 'full_feed', 'credit_score', 'fico_8', 'score'],
-          ['rawResponse', 'reports', 'experian', 'full_feed', 'credit_score', 'fico_8', 'scoreValue'],
-          ['rawResponse', 'reports', 'experian', 'full_feed', 'credit_score', 'fico_8', 'score']
-        ])
-
-        def explicitCollectionCount = firstCountAt(isoBody, [
-          ['collectionCount'],
-          ['collection_count'],
-          ['collections'],
-          ['result', 'collectionCount'],
-          ['result', 'collection_count'],
-          ['result', 'collections'],
-          ['rawResponse', 'collectionCount'],
-          ['rawResponse', 'collection_count'],
-          ['rawResponse', 'collections']
-        ])
-        def bureauCollectionCounts = [
-          bureauCollectionTotal(pathValue(isoBody, ['rawResponse', 'reports', 'equifax', 'full_feed', 'trade_accounts'])),
-          bureauCollectionTotal(pathValue(isoBody, ['rawResponse', 'reports', 'transunion', 'full_feed', 'trade_accounts'])),
-          bureauCollectionTotal(pathValue(isoBody, ['rawResponse', 'reports', 'experian', 'full_feed', 'trade_accounts'])),
-          bureauCollectionTotal(pathValue(isoBody, ['rawResponse', 'trade_accounts']))
+        def payload = [
+          request_id: execution.getVariable('request_id'),
+          route_mode: execution.getVariable('route_mode'),
+          external_applicant_id: execution.getVariable('external_applicant_id'),
+          steps: [
+            isoftpull: parseStep('isoRawBody', 'iso_status', 'skip_reason_isoftpull', 'isoftpull'),
+            creditsafe: parseStep('csRawBody', 'creditsafe_status', 'skip_reason_creditsafe', 'creditsafe'),
+            plaid: parseStep('plaidRawBody', 'plaid_status', 'skip_reason_plaid', 'plaid'),
+          ],
         ]
-        def collectionCount = explicitCollectionCount != null ? explicitCollectionCount : (bureauCollectionCounts ? bureauCollectionCounts.max() : 0)
-
-        def creditsafeComplianceAlerts = firstCountAt(csBody, [
-          ['complianceAlertCount'],
-          ['compliance_alert_count'],
-          ['result', 'complianceAlertCount'],
-          ['result', 'compliance_alert_count'],
-          ['rawResponse', 'complianceAlertCount'],
-          ['rawResponse', 'compliance_alert_count'],
-          ['rawResponse', 'complianceAlerts'],
-          ['rawResponse', 'alerts'],
-          ['rawResponse', 'compliance', 'alerts'],
-          ['rawResponse', 'complianceResult', 'alerts'],
-          ['rawResponse', 'bestMatch', 'complianceAlerts']
-        ])
-        if (creditsafeComplianceAlerts == null) {
-          creditsafeComplianceAlerts = firstCountAt(csBody, [
-            ['rawResponse', 'bestMatch', 'company', 'derogatoryCount'],
-            ['rawResponse', 'businessCredit', 'derogatoryCount']
-          ]) ?: 0
-        }
-
-        def isoStatus = (execution.getVariable('iso_status') ?: 'UNKNOWN') as String
-        def creditsafeStatus = (execution.getVariable('creditsafe_status') ?: 'UNKNOWN') as String
-        def plaidStatus = (execution.getVariable('plaid_status') ?: 'UNKNOWN') as String
-
-        def decisionStatus = 'COMPLETED'
-        def decisionReason = 'Flowable completed report-based decision successfully'
-
-        def serviceStatuses = [isoStatus, creditsafeStatus, plaidStatus]
-        if (serviceStatuses.any { it == 'UNAVAILABLE' }) {
-          decisionStatus = 'REVIEW'
-          decisionReason = 'One or more connector calls were unavailable'
-        }
-        if (isoScore != null) {
-          try {
-            if ((isoScore as BigDecimal) < 580) {
-              decisionStatus = 'REJECTED'
-              decisionReason = 'Credit score below approval threshold'
-            }
-          } catch (Exception ignored) {}
-        }
-        if (decisionStatus != 'REJECTED') {
-          try {
-            if ((collectionCount ?: 0) > 5) {
-              decisionStatus = 'REJECTED'
-              decisionReason = 'Collection count above approval threshold'
-            }
-          } catch (Exception ignored) {}
-        }
-        if (decisionStatus != 'REJECTED') {
-          try {
-            if ((creditsafeComplianceAlerts ?: 0) > 1) {
-              decisionStatus = 'REJECTED'
-              decisionReason = 'Creditsafe compliance alerts above approval threshold'
-            }
-          } catch (Exception ignored) {}
-        }
-
-        def summary = '{"request_id":"' + execution.getVariable('request_id') + '",' +
-                      '"route_mode":"' + execution.getVariable('route_mode') + '",' +
-                      '"decision_source":"flowable_bpmn",' +
-                      '"decision_reason":"' + decisionReason.replace('"', '\\"') + '",' +
-                      '"credit_score":' + (isoScore != null ? isoScore.intValue() : 'null') + ',' +
-                      '"collection_count":' + (collectionCount ?: 0) + ',' +
-                      '"creditsafe_compliance_alert_count":' + (creditsafeComplianceAlerts ?: 0) + ',' +
-                      '"iso_status":"' + isoStatus + '",' +
-                      '"creditsafe_status":"' + creditsafeStatus + '",' +
-                      '"plaid_status":"' + plaidStatus + '"}'
-        def flowableResult = '{"status":"' + decisionStatus + '","adapter":"flowable","request_id":"' + execution.getVariable('request_id') + '",' +
-                             '"decision_reason":"' + decisionReason.replace('"', '\\"') + '",' +
-                             '"steps":{' +
-                               '"isoftpull":' + ((execution.getVariable('isoRawBody') ?: '{}') as String) + ',' +
-                               '"creditsafe":' + ((execution.getVariable('csRawBody') ?: '{}') as String) + ',' +
-                               '"plaid":' + ((execution.getVariable('plaidRawBody') ?: '{}') as String) + '},' +
-                             '"summary":' + summary + '}'
-        execution.setVariable('orchestration_result', flowableResult)
+        execution.setVariable('decision_request_body', JsonOutput.toJson(payload))
       ]]></script>
     </scriptTask>
-    <sequenceFlow id="flow_finalize_to_end" sourceRef="task_finalize" targetRef="endEvent"/>
+    <sequenceFlow id="flow_prep_decision_to_call" sourceRef="task_prepare_decision_body" targetRef="task_decision_service"/>
+
+    <serviceTask id="task_decision_service" name="Call Decision Service" flowable:exclusive="false" flowable:type="http">
+      <extensionElements>
+        <flowable:failedJobRetryTimeCycle>R2/PT5S</flowable:failedJobRetryTimeCycle>
+        <flowable:field name="requestMethod"><flowable:string>POST</flowable:string></flowable:field>
+        <flowable:field name="requestUrl"><flowable:expression>${decision_service_url}</flowable:expression></flowable:field>
+        <flowable:field name="requestHeaders">
+          <flowable:expression>Content-Type: application/json
+X-Request-Id: ${request_id}</flowable:expression>
+        </flowable:field>
+        <flowable:field name="requestBody"><flowable:expression>${decision_request_body}</flowable:expression></flowable:field>
+        <flowable:field name="saveResponseParameters"><flowable:string>true</flowable:string></flowable:field>
+        <flowable:field name="resultVariablePrefix"><flowable:string>decisionRaw</flowable:string></flowable:field>
+        <flowable:field name="requestTimeout"><flowable:string>10000</flowable:string></flowable:field>
+      </extensionElements>
+    </serviceTask>
+    <boundaryEvent id="err_decision" attachedToRef="task_decision_service" cancelActivity="true">
+      <errorEventDefinition errorRef="serviceError"/>
+    </boundaryEvent>
+    <scriptTask id="task_decision_degrade" name="Decision degrade" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        import groovy.json.JsonOutput
+        def decisionReason = 'Decision service unavailable'
+        def payload = [
+          status: 'ENGINE_ERROR',
+          request_id: execution.getVariable('request_id'),
+          decision_reason: decisionReason,
+          decision_source: 'decision-service',
+          summary: [
+            request_id: execution.getVariable('request_id'),
+            route_mode: execution.getVariable('route_mode'),
+            decision_source: 'decision-service',
+            decision_reason: decisionReason,
+            iso_status: execution.getVariable('iso_status') ?: 'UNKNOWN',
+            creditsafe_status: execution.getVariable('creditsafe_status') ?: 'UNKNOWN',
+            plaid_status: execution.getVariable('plaid_status') ?: 'UNKNOWN',
+          ],
+        ]
+        execution.setVariable('decisionRawBody', JsonOutput.toJson(payload))
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_err_decision" sourceRef="err_decision" targetRef="task_decision_degrade"/>
+    <sequenceFlow id="flow_decision_deg_to_parse" sourceRef="task_decision_degrade" targetRef="task_parse_decision"/>
+
+    <scriptTask id="task_parse_decision" name="Parse decision" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        import groovy.json.JsonOutput
+        import groovy.json.JsonSlurper
+
+        def raw = (execution.getVariable('decisionRawBody') ?: '{}') as String
+        def parsed
+        try {
+          parsed = new JsonSlurper().parseText(raw)
+        } catch (Exception ignored) {
+          parsed = [
+            status: 'ENGINE_ERROR',
+            request_id: execution.getVariable('request_id'),
+            decision_reason: 'Decision payload is invalid',
+            decision_source: 'decision-service',
+          ]
+        }
+        if (!(parsed instanceof Map)) {
+          parsed = [
+            status: 'ENGINE_ERROR',
+            request_id: execution.getVariable('request_id'),
+            decision_reason: 'Decision payload is invalid',
+            decision_source: 'decision-service',
+          ]
+        }
+        execution.setVariable('decision_status', parsed['status'] ?: 'ENGINE_ERROR')
+        execution.setVariable('orchestration_result', JsonOutput.toJson(parsed))
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_decision_to_parse" sourceRef="task_decision_service" targetRef="task_parse_decision"/>
+    <sequenceFlow id="flow_parse_decision_to_end" sourceRef="task_parse_decision" targetRef="endEvent"/>
 
     <endEvent id="endEvent" name="Completed"/>
   </process>
@@ -459,8 +357,12 @@ X-Request-Id: ${request_id}</flowable:expression>
       <bpmndi:BPMNShape id="shape_err_plaid" bpmnElement="err_plaid"><omgdc:Bounds x="1570" y="210" width="36" height="36"/></bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="shape_plaid_deg" bpmnElement="task_plaid_degrade"><omgdc:Bounds x="1660" y="280" width="120" height="80"/></bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="shape_parse_plaid" bpmnElement="task_parse_plaid"><omgdc:Bounds x="1660" y="158" width="120" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_finalize" bpmnElement="task_finalize"><omgdc:Bounds x="1840" y="158" width="120" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_end" bpmnElement="endEvent"><omgdc:Bounds x="2020" y="180" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_prep_decision" bpmnElement="task_prepare_decision_body"><omgdc:Bounds x="1840" y="158" width="160" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_decision" bpmnElement="task_decision_service"><omgdc:Bounds x="2060" y="158" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_err_decision" bpmnElement="err_decision"><omgdc:Bounds x="2150" y="210" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_decision_deg" bpmnElement="task_decision_degrade"><omgdc:Bounds x="2240" y="280" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_parse_decision" bpmnElement="task_parse_decision"><omgdc:Bounds x="2240" y="158" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_end" bpmnElement="endEvent"><omgdc:Bounds x="2440" y="180" width="36" height="36"/></bpmndi:BPMNShape>
 
       <bpmndi:BPMNEdge id="edge1" bpmnElement="flow_start_to_init"><omgdi:waypoint x="136" y="198"/><omgdi:waypoint x="180" y="198"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge2" bpmnElement="flow_init_to_iso"><omgdi:waypoint x="300" y="198"/><omgdi:waypoint x="300" y="95"/><omgdi:waypoint x="420" y="95"/></bpmndi:BPMNEdge>
@@ -478,17 +380,21 @@ X-Request-Id: ${request_id}</flowable:expression>
       <bpmndi:BPMNEdge id="edge8" bpmnElement="flow_prep_plaid_to_call"><omgdi:waypoint x="1420" y="198"/><omgdi:waypoint x="1420" y="95"/><omgdi:waypoint x="1540" y="95"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge8a" bpmnElement="flow_plaid_gate_to_skip"><omgdi:waypoint x="1540" y="120"/><omgdi:waypoint x="1540" y="280"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge8b" bpmnElement="flow_plaid_gate_to_call"><omgdi:waypoint x="1540" y="120"/><omgdi:waypoint x="1540" y="158"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge8c" bpmnElement="flow_plaid_skip_to_finalize"><omgdi:waypoint x="1600" y="320"/><omgdi:waypoint x="1900" y="320"/><omgdi:waypoint x="1900" y="238"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge8c" bpmnElement="flow_plaid_skip_to_prep_decision"><omgdi:waypoint x="1600" y="320"/><omgdi:waypoint x="1920" y="320"/><omgdi:waypoint x="1920" y="238"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge9" bpmnElement="flow_plaid_to_parse"><omgdi:waypoint x="1600" y="198"/><omgdi:waypoint x="1660" y="198"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge10" bpmnElement="flow_parse_plaid_to_finalize"><omgdi:waypoint x="1780" y="198"/><omgdi:waypoint x="1840" y="198"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge14" bpmnElement="flow_finalize_to_end"><omgdi:waypoint x="1960" y="198"/><omgdi:waypoint x="2020" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge10" bpmnElement="flow_parse_plaid_to_prep_decision"><omgdi:waypoint x="1780" y="198"/><omgdi:waypoint x="1840" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge11" bpmnElement="flow_prep_decision_to_call"><omgdi:waypoint x="2000" y="198"/><omgdi:waypoint x="2060" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge12" bpmnElement="flow_decision_to_parse"><omgdi:waypoint x="2200" y="198"/><omgdi:waypoint x="2240" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge13" bpmnElement="flow_parse_decision_to_end"><omgdi:waypoint x="2380" y="198"/><omgdi:waypoint x="2440" y="198"/></bpmndi:BPMNEdge>
 
       <bpmndi:BPMNEdge id="edge15" bpmnElement="flow_err_iso"><omgdi:waypoint x="468" y="246"/><omgdi:waypoint x="600" y="280"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge16" bpmnElement="flow_iso_deg_to_prep_cs"><omgdi:waypoint x="660" y="320"/><omgdi:waypoint x="790" y="320"/><omgdi:waypoint x="790" y="238"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge17" bpmnElement="flow_err_cs"><omgdi:waypoint x="1028" y="246"/><omgdi:waypoint x="1160" y="280"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge18" bpmnElement="flow_cs_deg_to_prep_plaid"><omgdi:waypoint x="1220" y="320"/><omgdi:waypoint x="1350" y="320"/><omgdi:waypoint x="1350" y="238"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge19" bpmnElement="flow_err_plaid"><omgdi:waypoint x="1588" y="246"/><omgdi:waypoint x="1720" y="280"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge20" bpmnElement="flow_plaid_deg_to_finalize"><omgdi:waypoint x="1780" y="320"/><omgdi:waypoint x="1900" y="320"/><omgdi:waypoint x="1900" y="238"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge20" bpmnElement="flow_plaid_deg_to_prep_decision"><omgdi:waypoint x="1780" y="320"/><omgdi:waypoint x="1920" y="320"/><omgdi:waypoint x="1920" y="238"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge21" bpmnElement="flow_err_decision"><omgdi:waypoint x="2168" y="246"/><omgdi:waypoint x="2310" y="280"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge22" bpmnElement="flow_decision_deg_to_parse"><omgdi:waypoint x="2380" y="320"/><omgdi:waypoint x="2310" y="320"/><omgdi:waypoint x="2310" y="238"/></bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
 </definitions>

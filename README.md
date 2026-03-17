@@ -70,13 +70,12 @@ Each route is proxied directly to its Flowable app. `FLOWABLE_AUTO_DEPLOY_BPMN=f
 | --- | --- | --- |
 | `config-db` | 5433 | PostgreSQL for config and requests |
 | `core-api` | 8000 | Gateway, config API, request lifecycle |
-| `processors` | 8105, 8106 | Report parser and stop-factor processor |
+| `processors` | 8105, 8106, 8107 | Report parser, stop-factor processor, and decision service |
 | `orchestrators` | 8011, 8012 | Flowable adapter and custom adapter |
 | `isoftpull` | 8101 | Mock bureau connector |
 | `creditsafe` | 8102 | Mock company score connector |
 | `plaid` | 8103 | Mock accounts connector |
 | `mock-bureaus` | 8110 | Built-in unified mock applicant backend for iSoftPull, Creditsafe, and Plaid |
-| `crm` | 8104 | Mock CRM connector |
 | `flowable-db` | 5434 | PostgreSQL for Flowable |
 | `flowable-rest` | 8085 | Flowable REST engine |
 | `flowable-ui` | 8080 | Flowable UI |

@@ -41,7 +41,6 @@ flowchart LR
         Isoft["isoftpull"]:::ext
         Creditsafe["creditsafe"]:::ext
         Plaid["plaid"]:::ext
-        Crm["crm"]:::ext
     end
 
     subgraph Data["Хранилища"]
@@ -66,11 +65,9 @@ flowchart LR
     Custom --> Isoft
     Custom --> Creditsafe
     Custom --> Plaid
-    Custom --> Crm
     Flowable --> Isoft
     Flowable --> Creditsafe
     Flowable --> Plaid
-    Flowable --> Crm
     Api --> ConfigDb
     Flowable --> FlowableDb
     Api --> Tracker

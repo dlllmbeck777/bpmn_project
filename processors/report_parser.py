@@ -234,16 +234,6 @@ def _extract_plaid(data: dict) -> dict:
     }
 
 
-def _extract_crm(data: dict) -> dict:
-    r = data.get("result", data)
-    return {
-        "provider": "crm",
-        "crm_updated": r.get("crm_updated", False),
-        "segment": r.get("segment"),
-        "status": "OK" if r.get("crm_updated") else "NO_UPDATE",
-    }
-
-
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "report-parser"}
@@ -255,7 +245,6 @@ def parse(body: ParseRequest):
         "isoftpull": _extract_isoftpull,
         "creditsafe": _extract_creditsafe,
         "plaid": _extract_plaid,
-        "crm": _extract_crm,
     }
     providers = {}
     for key, data in body.steps.items():
@@ -264,7 +253,11 @@ def parse(body: ParseRequest):
     iso = providers.get("isoftpull", {})
     creditsafe = providers.get("creditsafe", {})
     plaid = providers.get("plaid", {})
-    crm = providers.get("crm", {})
+    iso_status = iso.get("status")
+    creditsafe_status = creditsafe.get("status")
+    plaid_status = plaid.get("status")
+    required_reports_available = iso_status not in {"UNAVAILABLE", "FAILED"} and creditsafe_status not in {"UNAVAILABLE", "FAILED"}
+    all_providers_ok = all(p.get("status") == "OK" for p in providers.values()) if providers else False
     return {
         "status": "OK",
         "request_id": body.request_id,
@@ -276,10 +269,12 @@ def parse(body: ParseRequest):
             "creditsafe_compliance_alert_count": creditsafe.get("compliance_alert_count", 0),
             "accounts_found": plaid.get("accounts_found", 0),
             "cashflow_stability": plaid.get("cashflow_stability"),
-            "plaid_status": plaid.get("status"),
+            "iso_status": iso_status,
+            "creditsafe_status": creditsafe_status,
+            "plaid_status": plaid_status,
             "plaid_tracking_url": plaid.get("tracking_url"),
             "plaid_report_ready": plaid.get("report_ready", False),
-            "crm_segment": crm.get("segment"),
-            "all_providers_ok": all(p.get("status") == "OK" for p in providers.values()),
+            "required_reports_available": required_reports_available,
+            "all_providers_ok": all_providers_ok,
         },
     }

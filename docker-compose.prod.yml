@@ -189,20 +189,6 @@ services:
       resources:
         limits: { cpus: '0.25', memory: 128M }
 
-  crm:
-    ports: !reset []
-    networks: [backend]
-    restart: always
-    logging: *logging
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8104/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
-    deploy:
-      resources:
-        limits: { cpus: '0.25', memory: 128M }
-
   flowable-db:
     ports: !reset []
     environment:

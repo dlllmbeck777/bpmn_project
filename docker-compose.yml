@@ -288,19 +288,6 @@ services:
       - prometheus
     restart: unless-stopped
     networks: [monitoring]
-  crm:
-    build: ./connectors/crm
-    container_name: crm
-    ports:
-      - "8104:8104"
-    restart: unless-stopped
-    networks: [backend]
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8104/health"]
-      interval: 15s
-      timeout: 3s
-      retries: 3
-
 volumes:
   config_db_data:
   flowable_db_data:

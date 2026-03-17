@@ -36,7 +36,7 @@ flowchart TB
     Core["core-api<br/>FastAPI"]:::app
     Orch["orchestrators<br/>flowable-adapter + custom-adapter"]:::proc
     Proc["processors<br/>report parser + stop-factor"]:::proc
-    Conn["connectors<br/>isoftpull / creditsafe / plaid / crm"]:::ext
+    Conn["connectors<br/>isoftpull / creditsafe / plaid"]:::ext
     FlowableRest["flowable-rest"]:::proc
     FlowableUi["flowable-ui"]:::proc
     ConfigDb["config-db"]:::db
@@ -92,7 +92,6 @@ flowchart LR
         Isoft["isoftpull"]:::ext
         Creditsafe["creditsafe"]:::ext
         Plaid["plaid"]:::ext
-        Crm["crm"]:::ext
     end
 
     subgraph Observability["Observability"]
@@ -114,7 +113,6 @@ flowchart LR
     Orch --> Isoft
     Orch --> Creditsafe
     Orch --> Plaid
-    Orch --> Crm
     Orch --> FlowableRest
 
     Proc --> ConfigDb

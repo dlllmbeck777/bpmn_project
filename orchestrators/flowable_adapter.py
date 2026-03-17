@@ -384,18 +384,26 @@ def _build_watch_timeout_result(request_id: str, instance_id: str, snapshot: Dic
 
 async def _build_result_payload(body: "RequestIn", instance_id: str, process_variables: Dict[str, Any], connector_urls: Dict[str, str], cid: str):
     steps = _build_steps(process_variables)
-    parsed_report = await _parsed_report(body.request_id, steps, cid)
+    orchestration_result = _parse_jsonish(process_variables.get("orchestration_result", {}))
+    decision_payload = orchestration_result if isinstance(orchestration_result, dict) else {}
+    parsed_report = decision_payload.get("parsed_report") if isinstance(decision_payload.get("parsed_report"), dict) else None
+    if not parsed_report:
+        parsed_report = await _parsed_report(body.request_id, steps, cid)
+    summary = decision_payload.get("summary") if isinstance(decision_payload.get("summary"), dict) else _extract_summary(process_variables)
     return {
-        "status": "COMPLETED",
+        "status": decision_payload.get("status", "COMPLETED"),
         "adapter": "flowable",
         "request_id": body.request_id,
         "external_applicant_id": body.external_applicant_id or "",
+        "decision_reason": decision_payload.get("decision_reason"),
+        "decision_source": decision_payload.get("decision_source"),
+        "matched_rule": decision_payload.get("matched_rule"),
         "engine": {"engine": "flowable", "started": True, "instance_id": instance_id, "completed": True},
         "connector_urls_injected": connector_urls,
         "process_variables": {key: _parse_jsonish(value) for key, value in process_variables.items()},
         "steps": steps,
         "parsed_report": parsed_report,
-        "summary": _extract_summary(process_variables),
+        "summary": summary,
     }
 
 
@@ -457,6 +465,18 @@ async def _emit_flowable_trace(body: "RequestIn", process_variables: Dict[str, A
         status=parsed_report.get("status", "OK"),
         payload=parsed_report,
     )
+    decision_payload = _parse_jsonish(process_variables.get("decisionRawBody", {}))
+    if isinstance(decision_payload, dict) and decision_payload:
+        await _track(
+            body.request_id,
+            "decision",
+            "IN",
+            "Decision service response",
+            cid=cid,
+            service_id="decision-service",
+            status=decision_payload.get("status", "OK"),
+            payload=decision_payload,
+        )
 
 
 async def _notify_core(request_id: str, result: Dict[str, Any], cid: str):
@@ -600,6 +620,10 @@ async def orchestrate(body: RequestIn, request: Request):
         for step in FLOWABLE_STEPS
         if connector_urls.get(step["service_id"])
     }
+    decision_service = await _acfg("/api/v1/services/decision-service")
+    decision_service_url = ""
+    if decision_service.get("base_url"):
+        decision_service_url = f"{decision_service.get('base_url')}{decision_service.get('endpoint_path', '/api/v1/decide')}"
     pipeline_steps, skip_flags, skip_reasons, skip_policies = await _pipeline_skip_flags(flowable_connector_urls)
 
     variables = [
@@ -614,6 +638,7 @@ async def orchestrate(body: RequestIn, request: Request):
     variables.append({"name": "applicant_json", "value": json.dumps(applicant_payload or {})})
     for service_id, url in flowable_connector_urls.items():
         variables.append({"name": f"{service_id}_url", "value": url})
+    variables.append({"name": "decision_service_url", "value": decision_service_url})
     for service_id, skip in skip_flags.items():
         variables.append({"name": f"skip_{service_id}", "value": skip})
     for service_id, reason in skip_reasons.items():
@@ -631,6 +656,7 @@ async def orchestrate(body: RequestIn, request: Request):
             "process_key": process_key,
             "flowable_url": flowable_url,
             "connector_urls": flowable_connector_urls,
+            "decision_service_url": decision_service_url,
             "skip_flags": skip_flags,
             "skip_policies": skip_policies,
             "pipeline_steps": pipeline_steps,

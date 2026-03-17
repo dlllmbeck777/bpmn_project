@@ -145,6 +145,7 @@ class ReportParserTests(unittest.TestCase):
         self.assertEqual(parsed["summary"]["credit_score"], 575)
         self.assertEqual(parsed["summary"]["collection_count"], 6)
         self.assertEqual(parsed["summary"]["creditsafe_compliance_alert_count"], 2)
+        self.assertTrue(parsed["summary"]["required_reports_available"])
 
     def test_extract_plaid_handles_pending_link_response(self):
         payload = {
@@ -194,6 +195,20 @@ class ReportParserTests(unittest.TestCase):
         self.assertEqual(parsed["summary"]["plaid_status"], "PENDING_LINK")
         self.assertEqual(parsed["summary"]["plaid_tracking_url"], "http://18.119.38.114/api/v1/plaid/link/abc")
         self.assertFalse(parsed["summary"]["plaid_report_ready"])
+
+    def test_parse_summary_marks_required_reports_unavailable_when_provider_fails(self):
+        request = report_parser.ParseRequest(
+            request_id="REQ-3",
+            steps={
+                "isoftpull": {"status": "FAILED"},
+                "creditsafe": {"creditScore": 72},
+            },
+        )
+
+        parsed = report_parser.parse(request)
+
+        self.assertFalse(parsed["summary"]["required_reports_available"])
+        self.assertEqual(parsed["summary"]["iso_status"], "FAILED")
 
 
 if __name__ == "__main__":

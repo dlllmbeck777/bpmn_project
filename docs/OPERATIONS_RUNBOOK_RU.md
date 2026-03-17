@@ -17,7 +17,7 @@
 - `core-api` — публичный API, конфигурация, заявки, audit;
 - `orchestrators` — `custom` и `flowable`;
 - `processors` — parser и stop-factor processor;
-- `connectors` — `isoftpull`, `creditsafe`, `plaid`, `crm`;
+- `connectors` — `isoftpull`, `creditsafe`, `plaid`;
 - `flowable-rest` / `flowable-ui` — BPMN runtime и modeler;
 - `config-db` / `flowable-db` — БД платформы и Flowable;
 - `nginx` — production reverse proxy;

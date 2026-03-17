@@ -4,6 +4,19 @@ import Modal from '../components/Modal'
 
 const empty = { name: '', stage: 'pre', check_type: 'field_check', field_path: '', operator: 'gte', threshold: '', action_on_fail: 'REJECT', enabled: true, priority: 0, meta: {} }
 
+function stageLabel(stage) {
+  if (stage === 'pre') return 'Pre-check'
+  if (stage === 'post') return 'Post-check'
+  if (stage === 'decision') return 'Decision rules'
+  return stage || 'Unknown'
+}
+
+function stageBadge(stage) {
+  if (stage === 'pre') return 'badge-blue'
+  if (stage === 'decision') return 'badge-purple'
+  return 'badge-amber'
+}
+
 export default function StopFactorsPage({ canEdit }) {
   const [items, setItems] = useState([])
   const [filter, setFilter] = useState('')
@@ -78,9 +91,9 @@ export default function StopFactorsPage({ canEdit }) {
       </div>
       <div className="flex-between mb-16">
         <div className="tab-bar" style={{ marginBottom: 0, borderBottom: 'none' }}>
-          {['', 'pre', 'post'].map((f) => (
+          {['', 'pre', 'decision', 'post'].map((f) => (
             <button key={f} className={`tab-btn${filter === f ? ' active' : ''}`} onClick={() => setFilter(f)}>
-              {f === '' ? 'All rules' : f === 'pre' ? 'Pre-check' : 'Post-check'}
+              {f === '' ? 'All rules' : stageLabel(f)}
             </button>
           ))}
         </div>
@@ -97,7 +110,7 @@ export default function StopFactorsPage({ canEdit }) {
             {items.map((s) => (
               <tr key={s.id}>
                 <td style={{ fontWeight: 600 }}>{s.name}</td>
-                <td><span className={`badge ${s.stage === 'pre' ? 'badge-blue' : 'badge-amber'}`}>{s.stage}</span></td>
+                <td><span className={`badge ${stageBadge(s.stage)}`}>{s.stage}</span></td>
                 <td className="mono text-sm" style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.field_path}</td>
                 <td className="mono">{s.operator}</td>
                 <td className="mono">{s.threshold}</td>
@@ -118,7 +131,7 @@ export default function StopFactorsPage({ canEdit }) {
         <Modal title={editing._id ? 'Edit stop factor' : 'Add stop factor'} onClose={() => setEditing(null)}>
           <div className="form-row"><label>Name</label><input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></div>
           <div className="form-inline">
-            <div className="form-row"><label>Stage</label><select value={editing.stage} onChange={(e) => setEditing({ ...editing, stage: e.target.value })}><option value="pre">pre</option><option value="post">post</option></select></div>
+            <div className="form-row"><label>Stage</label><select value={editing.stage} onChange={(e) => setEditing({ ...editing, stage: e.target.value })}><option value="pre">pre</option><option value="decision">decision</option><option value="post">post</option></select></div>
             <div className="form-row"><label>Priority</label><input type="number" value={editing.priority} onChange={(e) => setEditing({ ...editing, priority: +e.target.value })} /></div>
           </div>
           <div className="form-row"><label>Field path</label><input value={editing.field_path || ''} onChange={(e) => setEditing({ ...editing, field_path: e.target.value })} placeholder="result.parsed_report.summary.credit_score" /></div>

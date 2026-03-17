@@ -1591,7 +1591,7 @@ def build_flowable_result_from_variables(request_id: str, instance_id: str, proc
     result["engine"] = {"engine": "flowable", "started": True, "instance_id": instance_id, "completed": True}
     result["process_variables"] = normalized_variables
     result["steps"] = build_flowable_steps(normalized_variables)
-    result["summary"] = build_flowable_summary(normalized_variables)
+    result["summary"] = result.get("summary") if isinstance(result.get("summary"), dict) else build_flowable_summary(normalized_variables)
     return result
 
 

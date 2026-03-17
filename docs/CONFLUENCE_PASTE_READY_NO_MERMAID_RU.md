@@ -38,7 +38,6 @@
         |                           +--> isoftpull
         |                           +--> creditsafe
         |                           +--> plaid
-        |                           +--> crm
         |
         +--------------------> Flowable BPMN
                                     |
