@@ -77,7 +77,8 @@ X-Request-Id: ${request_id}</flowable:expression>
 
     <scriptTask id="task_parse_iso" name="Parse iSoftPull" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
-        def raw = (execution.getVariable('isoRawBody') ?: '{}') as String
+        def raw = ((execution.getVariable('isoRawResponseBody') ?: execution.getVariable('isoRawBody') ?: '{}')) as String
+        execution.setVariable('isoRawBody', raw)
         def mv = raw =~ /"status"\s*:\s*"([^"]+)"/
         execution.setVariable('iso_status', mv.find() ? mv.group(1) : 'OK')
       ]]></script>
@@ -143,7 +144,8 @@ X-Request-Id: ${request_id}</flowable:expression>
 
     <scriptTask id="task_parse_cs" name="Parse Creditsafe" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
-        def raw = (execution.getVariable('csRawBody') ?: '{}') as String
+        def raw = ((execution.getVariable('csRawResponseBody') ?: execution.getVariable('csRawBody') ?: '{}')) as String
+        execution.setVariable('csRawBody', raw)
         def mv = raw =~ /"status"\s*:\s*"([^"]+)"/
         execution.setVariable('creditsafe_status', mv.find() ? mv.group(1) : 'OK')
       ]]></script>
@@ -209,7 +211,8 @@ X-Request-Id: ${request_id}</flowable:expression>
 
     <scriptTask id="task_parse_plaid" name="Parse Plaid" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
-        def raw = (execution.getVariable('plaidRawBody') ?: '{}') as String
+        def raw = ((execution.getVariable('plaidRawResponseBody') ?: execution.getVariable('plaidRawBody') ?: '{}')) as String
+        execution.setVariable('plaidRawBody', raw)
         def mv = raw =~ /"status"\s*:\s*"([^"]+)"/
         execution.setVariable('plaid_status', mv.find() ? mv.group(1) : 'OK')
       ]]></script>
@@ -349,7 +352,8 @@ X-Request-Id: ${request_id}</flowable:expression>
 
         def mapper = new ObjectMapper()
 
-        def raw = (execution.getVariable('decisionRawBody') ?: '{}') as String
+        def raw = ((execution.getVariable('decisionRawResponseBody') ?: execution.getVariable('decisionRawBody') ?: '{}')) as String
+        execution.setVariable('decisionRawBody', raw)
         def parsed
         try {
           parsed = mapper.readValue(raw, java.util.LinkedHashMap)
