@@ -112,6 +112,56 @@ def _public_applicant_record(applicant: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _extract_external_applicant_id(body: Dict[str, Any]) -> int:
+    payload = body.get("payload") if isinstance(body.get("payload"), dict) else {}
+    return _to_int(
+        body.get("external_applicant_id")
+        or body.get("externalApplicantId")
+        or payload.get("external_applicant_id")
+        or payload.get("externalApplicantId"),
+        0,
+    )
+
+
+def _extract_applicant_payload(body: Dict[str, Any]) -> Dict[str, Any]:
+    payload = body.get("payload") if isinstance(body.get("payload"), dict) else {}
+    candidates = []
+    if isinstance(body.get("applicant"), dict):
+        candidates.append(body["applicant"])
+    if isinstance(payload.get("applicant"), dict):
+        candidates.append(payload["applicant"])
+    candidates.append(body)
+
+    merged: Dict[str, Any] = {}
+    for source in candidates:
+        for field in APPLICANT_FIELDS:
+            value = _clean_text(source.get(field))
+            if value:
+                merged[field] = value
+    return merged
+
+
+def _provider_request_body(applicant: Dict[str, Any], body: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    request_body = deepcopy(body or {})
+    applicant_payload = _extract_applicant_payload(request_body) or {
+        field: applicant.get(field, "")
+        for field in APPLICANT_FIELDS
+        if _clean_text(applicant.get(field))
+    }
+    merged = {
+        **deepcopy(applicant),
+        **{field: value for field, value in applicant_payload.items() if value},
+        "applicant": applicant_payload,
+    }
+    if isinstance(request_body, dict):
+        for key in ("request_id", "customer_id", "product_type", "iin"):
+            value = request_body.get(key)
+            if value not in (None, ""):
+                merged[key] = value
+    merged["external_applicant_id"] = str(applicant["id"])
+    return merged
+
+
 def _provider_catalog() -> List[Dict[str, Any]]:
     return [
         {
@@ -839,15 +889,17 @@ def _plaid_status_payload(state: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
-def _create_applicant_record(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _create_applicant_record(payload: Dict[str, Any], *, applicant_id: int | None = None) -> Dict[str, Any]:
     now = _utcnow()
-    applicant_id = _next_applicant_id()
+    resolved_applicant_id = applicant_id if applicant_id is not None and applicant_id > 0 else _next_applicant_id()
+    if applicant_id is not None and applicant_id > 0:
+        _runtime["next_applicant_id"] = max(_runtime["next_applicant_id"], applicant_id + 1)
     record = {field: _clean_text(payload.get(field)) for field in APPLICANT_FIELDS}
-    record["id"] = applicant_id
+    record["id"] = resolved_applicant_id
     record["createdAt"] = _iso(now)
     record["updatedAt"] = _iso(now)
-    _runtime["applicants"][applicant_id] = record
-    _runtime["reports"].setdefault(applicant_id, [])
+    _runtime["applicants"][resolved_applicant_id] = record
+    _runtime["reports"].setdefault(resolved_applicant_id, [])
     return deepcopy(record)
 
 
@@ -861,31 +913,57 @@ def _update_applicant_record(applicant_id: int, payload: Dict[str, Any]) -> Dict
     return deepcopy(current)
 
 
-def _trigger_isoftpull(applicant_id: int) -> Dict[str, Any]:
+def _ensure_applicant_for_provider_request(body: Dict[str, Any]) -> Dict[str, Any]:
+    applicant_payload = _extract_applicant_payload(body)
+    applicant_id = _extract_external_applicant_id(body)
+    if applicant_id:
+        existing = _runtime["applicants"].get(applicant_id)
+        if existing:
+            if applicant_payload:
+                return _update_applicant_record(applicant_id, applicant_payload)
+            return deepcopy(existing)
+        if applicant_payload:
+            return _create_applicant_record(applicant_payload, applicant_id=applicant_id)
+    if applicant_payload:
+        return _create_applicant_record(applicant_payload)
+    raise HTTPException(400, "provider request requires applicant payload or external_applicant_id")
+
+
+def _trigger_isoftpull(applicant_id: int, body: Dict[str, Any] | None = None) -> Dict[str, Any]:
     applicant = _require_applicant(applicant_id)
-    report = _build_isoftpull_response(applicant, get_current_config()["isoftpull"], applicant_id=applicant_id, report_id=_next_report_id())
+    report = _build_isoftpull_response(
+        _provider_request_body(applicant, body),
+        get_current_config()["isoftpull"],
+        applicant_id=applicant_id,
+        report_id=_next_report_id(),
+    )
     return _store_report(applicant_id, report)
 
 
-def _trigger_creditsafe(applicant_id: int) -> Dict[str, Any]:
+def _trigger_creditsafe(applicant_id: int, body: Dict[str, Any] | None = None) -> Dict[str, Any]:
     applicant = _require_applicant(applicant_id)
-    report = _build_creditsafe_response(applicant, get_current_config()["creditsafe"], applicant_id=applicant_id, report_id=_next_report_id())
+    report = _build_creditsafe_response(
+        _provider_request_body(applicant, body),
+        get_current_config()["creditsafe"],
+        applicant_id=applicant_id,
+        report_id=_next_report_id(),
+    )
     return _store_report(applicant_id, report)
 
 
-def _trigger_plaid(applicant_id: int) -> Dict[str, Any]:
+def _trigger_plaid(applicant_id: int, body: Dict[str, Any] | None = None) -> Dict[str, Any]:
     applicant = _require_applicant(applicant_id)
     config = get_current_config()["plaid"]
-    body = dict(applicant)
-    request_id = f"PLAID-{applicant_id}-{uuid4().hex[:8].upper()}"
+    request_body = _provider_request_body(applicant, body)
+    request_id = str(request_body.get("request_id") or f"PLAID-{applicant_id}-{uuid4().hex[:8].upper()}")
     scenario = config["scenario"]
     if scenario == "failed_missing_ssn":
-        report = _build_plaid_response(body, config, applicant_id=applicant_id, report_id=_next_report_id())
+        report = _build_plaid_response(request_body, config, applicant_id=applicant_id, report_id=_next_report_id())
         return _store_report(applicant_id, report)
     if scenario == "pending_link":
         link_state = _create_plaid_link(applicant_id, request_id, config)
         report = _build_plaid_response(
-            body,
+            request_body,
             config,
             applicant_id=applicant_id,
             report_id=link_state["reportId"],
@@ -893,17 +971,17 @@ def _trigger_plaid(applicant_id: int) -> Dict[str, Any]:
             tracking_state=link_state,
         )
         return _store_report(applicant_id, report)
-    report = _build_plaid_response(body, config, applicant_id=applicant_id, report_id=_next_report_id())
+    report = _build_plaid_response(request_body, config, applicant_id=applicant_id, report_id=_next_report_id())
     return _store_report(applicant_id, report)
 
 
-def _run_provider_check(applicant_id: int, provider: str) -> Dict[str, Any]:
+def _run_provider_check(applicant_id: int, provider: str, body: Dict[str, Any] | None = None) -> Dict[str, Any]:
     provider = _provider_key(provider)
     if provider == "isoftpull":
-        return _trigger_isoftpull(applicant_id)
+        return _trigger_isoftpull(applicant_id, body)
     if provider == "creditsafe":
-        return _trigger_creditsafe(applicant_id)
-    return _trigger_plaid(applicant_id)
+        return _trigger_creditsafe(applicant_id, body)
+    return _trigger_plaid(applicant_id, body)
 
 
 @app.get("/health")
@@ -1129,17 +1207,23 @@ def plaid_tracking_status(tracking_id: str):
 
 @app.post("/api/pull")
 def isoftpull_mock(body: Dict[str, Any]):
-    return _build_response("isoftpull", body)
+    with _state_lock:
+        applicant = _ensure_applicant_for_provider_request(body)
+        return _run_provider_check(applicant["id"], "isoftpull", body)
 
 
 @app.post("/api/report")
 def creditsafe_mock(body: Dict[str, Any]):
-    return _build_response("creditsafe", body)
+    with _state_lock:
+        applicant = _ensure_applicant_for_provider_request(body)
+        return _run_provider_check(applicant["id"], "creditsafe", body)
 
 
 @app.post("/api/accounts")
 def plaid_mock(body: Dict[str, Any]):
-    return _build_response("plaid", body)
+    with _state_lock:
+        applicant = _ensure_applicant_for_provider_request(body)
+        return _run_provider_check(applicant["id"], "plaid", body)
 
 
 if __name__ == "__main__":

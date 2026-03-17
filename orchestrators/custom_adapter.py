@@ -47,6 +47,53 @@ def _step_meta(step: Dict[str, Any]) -> Dict[str, Any]:
     return meta if isinstance(meta, dict) else {}
 
 
+def _provider_key(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    aliases = {
+        "isoftpull": "isoftpull",
+        "creditsafe": "creditsafe",
+        "plaid": "plaid",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _reports_by_provider(payload: Any) -> Dict[str, Any]:
+    if not isinstance(payload, list):
+        return {}
+    reports: Dict[str, Any] = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        provider_key = _provider_key(
+            item.get("service")
+            or item.get("provider")
+            or item.get("providerName")
+            or item.get("providerCode")
+            or item.get("provider_code")
+        )
+        if not provider_key:
+            continue
+        report_payload = dict(item)
+        report_payload.setdefault("service", provider_key)
+        reports[provider_key] = report_payload
+    return reports
+
+
+def _merge_reports(steps: Dict[str, Any], external_reports: Dict[str, Any]) -> Dict[str, Any]:
+    merged = {key: dict(value) if isinstance(value, dict) else value for key, value in (steps or {}).items()}
+    for service_id, payload in (external_reports or {}).items():
+        if not isinstance(payload, dict):
+            if service_id not in merged:
+                merged[service_id] = payload
+            continue
+        current = merged.get(service_id)
+        merged_payload = dict(current) if isinstance(current, dict) else {}
+        merged_payload.update(payload)
+        merged_payload.setdefault("service", service_id)
+        merged[service_id] = merged_payload
+    return merged
+
+
 def _resolve_skip_policy(step: Dict[str, Any], mode: str) -> Dict[str, Any]:
     if not step.get("enabled", True):
         return {"skip": True, "reason": "pipeline step disabled", "source": "enabled"}
@@ -93,6 +140,30 @@ async def _track(
         pass
 
 
+async def _external_credit_reports(external_applicant_id: str, cid: str = "") -> Dict[str, Any]:
+    applicant_id = str(external_applicant_id or "").strip()
+    if not applicant_id:
+        return {}
+
+    service = await _acfg("/api/v1/services/credit-backend")
+    base_url = str(service.get("base_url") or "").rstrip("/")
+    if not base_url:
+        return {}
+
+    timeout = max(5.0, float(service.get("timeout_ms", 15000)) / 1000)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(
+                f"{base_url}/api/v1/applicants/{applicant_id}/credit-reports",
+                headers={"X-Correlation-ID": cid} if cid else {},
+            )
+        if response.status_code >= 400:
+            return {}
+        return _reports_by_provider(response.json() if response.content else [])
+    except Exception:
+        return {}
+
+
 class RequestIn(BaseModel):
     request_id: str
     customer_id: str
@@ -116,6 +187,7 @@ async def orchestrate(body: RequestIn, request: Request):
     results = {}
     accumulated = body.model_dump()
     parsed_report = {"status": "NOT_REQUESTED"}
+    external_reports: Dict[str, Any] = {}
 
     for step in steps:
         service_id = step.get("service_id", "")
@@ -227,6 +299,20 @@ async def orchestrate(body: RequestIn, request: Request):
                 payload=results[service_id],
             )
 
+    external_reports = await _external_credit_reports(body.external_applicant_id or accumulated.get("external_applicant_id", ""), cid)
+    report_inputs = _merge_reports(results, external_reports)
+    if external_reports:
+        await _track(
+            body.request_id,
+            "applicant_backend",
+            "IN",
+            "Unified credit reports fetched",
+            cid=cid,
+            service_id="credit-backend",
+            status="SYNCED",
+            payload={"external_applicant_id": body.external_applicant_id or accumulated.get("external_applicant_id", ""), "providers": sorted(external_reports.keys())},
+        )
+
     parser = await _acfg("/api/v1/services/report-parser")
     parser_url = parser.get("base_url", "")
     parser_endpoint = parser.get("endpoint_path", "/api/v1/parse")
@@ -240,16 +326,15 @@ async def orchestrate(body: RequestIn, request: Request):
                 cid=cid,
                 service_id="report-parser",
                 status="DISPATCHED",
-                payload={"steps": results},
+                payload={"steps": report_inputs},
             )
             async with httpx.AsyncClient(timeout=10.0) as client:
                 parser_response = await client.post(
                     f"{parser_url}{parser_endpoint}",
-                    json={"request_id": body.request_id, "steps": results},
+                    json={"request_id": body.request_id, "steps": report_inputs},
                     headers={"X-Correlation-ID": cid},
                 )
             parsed_report = parser_response.json()
-            results["parsed_report"] = parsed_report
             await _track(
                 body.request_id,
                 "parser",
@@ -279,6 +364,7 @@ async def orchestrate(body: RequestIn, request: Request):
         "adapter": "custom",
         "request_id": body.request_id,
         "external_applicant_id": body.external_applicant_id or "",
-        "steps": results,
+        "steps": report_inputs,
+        "external_reports": external_reports or report_inputs,
         "parsed_report": parsed_report,
     }

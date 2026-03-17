@@ -194,6 +194,38 @@ def _canonicalize_flowable_variables(process_variables: Dict[str, Any]) -> Dict[
     return normalized
 
 
+def _provider_key(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    aliases = {
+        "isoftpull": "isoftpull",
+        "creditsafe": "creditsafe",
+        "plaid": "plaid",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _reports_by_provider(payload: Any) -> Dict[str, Any]:
+    if not isinstance(payload, list):
+        return {}
+    reports: Dict[str, Any] = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        provider_key = _provider_key(
+            item.get("service")
+            or item.get("provider")
+            or item.get("providerName")
+            or item.get("providerCode")
+            or item.get("provider_code")
+        )
+        if not provider_key:
+            continue
+        report_payload = dict(item)
+        report_payload.setdefault("service", provider_key)
+        reports[provider_key] = report_payload
+    return reports
+
+
 def _step_meta(step: Dict[str, Any]) -> Dict[str, Any]:
     meta = step.get("meta")
     return meta if isinstance(meta, dict) else {}
@@ -277,6 +309,30 @@ def _merge_step_payloads(runtime_steps: Dict[str, Any], embedded_steps: Any):
             elif service_id not in merged:
                 merged[service_id] = payload
     return merged
+
+
+async def _external_credit_reports(external_applicant_id: str, cid: str = "") -> Dict[str, Any]:
+    applicant_id = str(external_applicant_id or "").strip()
+    if not applicant_id:
+        return {}
+
+    service = await _acfg("/api/v1/services/credit-backend")
+    base_url = str(service.get("base_url") or "").rstrip("/")
+    if not base_url:
+        return {}
+
+    timeout = max(5.0, float(service.get("timeout_ms", 15000)) / 1000)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(
+                f"{base_url}/api/v1/applicants/{applicant_id}/credit-reports",
+                headers={"X-Correlation-ID": cid} if cid else {},
+            )
+        if response.status_code >= 400:
+            return {}
+        return _reports_by_provider(response.json() if response.content else [])
+    except Exception:
+        return {}
 
 
 def _copy_jsonish(value: Any):
@@ -557,6 +613,17 @@ async def _build_result_payload(body: "RequestIn", instance_id: str, process_var
     runtime_steps = _build_steps(process_variables)
     decision_payload = _extract_decision_payload(process_variables)
     steps = _merge_step_payloads(runtime_steps, decision_payload.get("steps"))
+    request_context = decision_payload.get("request_context") if isinstance(decision_payload.get("request_context"), dict) else {
+        "request_id": body.request_id,
+        "route_mode": "FLOWABLE",
+        "external_applicant_id": body.external_applicant_id or "",
+    }
+    unified_reports = await _external_credit_reports(
+        request_context.get("external_applicant_id") or body.external_applicant_id or "",
+        cid,
+    )
+    if unified_reports:
+        steps = _merge_step_payloads(steps, unified_reports)
     embedded_parsed_report = decision_payload.get("parsed_report") if isinstance(decision_payload.get("parsed_report"), dict) else None
     parsed_report = await _parsed_report(body.request_id, steps, cid) if steps else embedded_parsed_report
     if not isinstance(parsed_report, dict) or parsed_report.get("status") in {"PARSER_ERROR", "PARSER_UNAVAILABLE", "PARSER_NOT_CONFIGURED"}:
@@ -571,16 +638,13 @@ async def _build_result_payload(body: "RequestIn", instance_id: str, process_var
         if decision_payload.get(key) is not None and key not in summary:
             summary[key] = decision_payload.get(key)
     external_reports = _merge_step_payloads(runtime_steps, decision_payload.get("external_reports"))
+    if unified_reports:
+        external_reports = _merge_step_payloads(external_reports, unified_reports)
     if not external_reports:
         external_reports = steps
     step_statuses = decision_payload.get("step_statuses") if isinstance(decision_payload.get("step_statuses"), dict) else {
         service_id: payload.get("status", "UNKNOWN") if isinstance(payload, dict) else "UNKNOWN"
         for service_id, payload in steps.items()
-    }
-    request_context = decision_payload.get("request_context") if isinstance(decision_payload.get("request_context"), dict) else {
-        "request_id": body.request_id,
-        "route_mode": "FLOWABLE",
-        "external_applicant_id": body.external_applicant_id or "",
     }
     result = {
         "status": decision_payload.get("status", "COMPLETED"),

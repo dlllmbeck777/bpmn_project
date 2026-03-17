@@ -168,6 +168,34 @@ class MockBureausTests(unittest.TestCase):
         self.assertEqual(len(stored), 3)
         self.assertEqual({item["providerCode"] for item in stored}, {"ISOFTPULL", "CREDITSAFE", "PLAID"})
 
+    def test_direct_provider_endpoint_creates_applicant_and_persists_full_report(self):
+        response = mock_bureaus.isoftpull_mock(
+            {
+                "request_id": "REQ-DIRECT-1",
+                "customer_id": "CUST-1",
+                "applicant": {
+                    "firstName": "Jane",
+                    "lastName": "Doe",
+                    "address": "123 Main Street",
+                    "city": "New York",
+                    "state": "NY",
+                    "zipCode": "10001",
+                    "ssn": "123456789",
+                    "dateOfBirth": "1985-06-15",
+                    "email": "jane@example.com",
+                    "phone": "555-111-2222",
+                },
+            }
+        )
+
+        stored = mock_bureaus.get_credit_reports(response["applicantId"])
+
+        self.assertEqual(response["received_request_id"], "REQ-DIRECT-1")
+        self.assertEqual(response["customer_id"], "CUST-1")
+        self.assertEqual(response["applicantId"], 42)
+        self.assertEqual(stored[0]["id"], response["id"])
+        self.assertEqual(stored[0]["creditScore"], response["creditScore"])
+
     def test_plaid_pending_link_can_be_clicked_and_completed(self):
         mock_bureaus.update_provider_config(
             "plaid",

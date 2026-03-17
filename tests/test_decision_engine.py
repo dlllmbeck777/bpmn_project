@@ -124,6 +124,45 @@ class DecisionEngineTests(unittest.TestCase):
         finally:
             decision_engine._fetch_rules = original_fetch_rules
 
+    def test_decision_prefers_external_reports_when_steps_are_status_only(self):
+        original_fetch_rules = decision_engine._fetch_rules
+        try:
+            async def fake_fetch_rules():
+                return [
+                    {
+                        "id": 3,
+                        "name": "Reject when synced iSoftPull score below 700",
+                        "enabled": True,
+                        "priority": 10,
+                        "field_path": "result.steps.isoftpull.creditScore",
+                        "operator": "gte",
+                        "threshold": "700",
+                        "action_on_fail": "REJECT",
+                    }
+                ]
+
+            decision_engine._fetch_rules = fake_fetch_rules
+            response = asyncio.run(
+                decision_engine.decide(
+                    decision_engine.DecideRequest(
+                        request_id="REQ-RAW-2",
+                        steps={
+                            "isoftpull": {"status": "OK"},
+                            "creditsafe": {"status": "OK"},
+                        },
+                        external_reports={
+                            "isoftpull": {"status": "COMPLETED", "creditScore": 650},
+                            "creditsafe": {"status": "COMPLETED", "creditScore": 72},
+                        },
+                    )
+                )
+            )
+            self.assertEqual(response["status"], "REJECTED")
+            self.assertEqual(response["steps"]["isoftpull"]["creditScore"], 650)
+            self.assertEqual(response["external_reports"]["isoftpull"]["creditScore"], 650)
+        finally:
+            decision_engine._fetch_rules = original_fetch_rules
+
     def test_decision_reviews_when_required_reports_are_unavailable(self):
         original_fetch_rules = decision_engine._fetch_rules
         try:

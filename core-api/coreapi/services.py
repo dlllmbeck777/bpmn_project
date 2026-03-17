@@ -972,6 +972,9 @@ def normalize_result_payload(result: Dict[str, Any]):
     if not steps and isinstance(decision_payload.get("steps"), dict):
         steps = decision_payload.get("steps")
         normalized["steps"] = steps
+    elif not steps and external_reports:
+        steps = external_reports
+        normalized["steps"] = steps
 
     if not external_reports:
         if isinstance(decision_payload.get("external_reports"), dict):
@@ -1107,7 +1110,8 @@ async def ensure_parsed_report(request_id: str, result: Dict[str, Any], cid: str
     if isinstance(normalized.get("steps"), dict) and normalized["steps"].get("parsed_report"):
         normalized["parsed_report"] = normalized["steps"]["parsed_report"]
         return normalized
-    if not isinstance(normalized.get("steps"), dict):
+    report_inputs = normalized.get("external_reports") if isinstance(normalized.get("external_reports"), dict) and normalized.get("external_reports") else normalized.get("steps")
+    if not isinstance(report_inputs, dict):
         return normalized
 
     service = to_json_ready(query("SELECT * FROM services WHERE id=%s", ("report-parser",), "one")) or {}
@@ -1118,7 +1122,7 @@ async def ensure_parsed_report(request_id: str, result: Dict[str, Any], cid: str
     parsed = await resilient_post(
         "report-parser",
         f"{base_url}{service.get('endpoint_path', '/api/v1/parse')}",
-        {"request_id": request_id, "steps": normalized["steps"]},
+        {"request_id": request_id, "steps": report_inputs},
         timeout=service.get("timeout_ms", 10000) / 1000,
         max_retries=service.get("retry_count", 2),
         cid=cid,

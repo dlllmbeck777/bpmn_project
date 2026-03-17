@@ -23,6 +23,7 @@ class DecideRequest(BaseModel):
     route_mode: str = "FLOWABLE"
     external_applicant_id: str = ""
     steps: Dict[str, Any] = {}
+    external_reports: Dict[str, Any] = {}
     parsed_report: Optional[Dict[str, Any]] = None
 
 
@@ -118,6 +119,21 @@ def _step_statuses(steps: Dict[str, Any]) -> Dict[str, str]:
     return statuses
 
 
+def _merge_report_inputs(steps: Dict[str, Any], external_reports: Dict[str, Any]) -> Dict[str, Any]:
+    merged = {key: dict(value) if isinstance(value, dict) else value for key, value in (steps or {}).items()}
+    for service_id, payload in (external_reports or {}).items():
+        if not isinstance(payload, dict):
+            if service_id not in merged:
+                merged[service_id] = payload
+            continue
+        current = merged.get(service_id)
+        merged_payload = dict(current) if isinstance(current, dict) else {}
+        merged_payload.update(payload)
+        merged_payload.setdefault("service", service_id)
+        merged[service_id] = merged_payload
+    return merged
+
+
 def _decision_value(status: str, *, enabled_rules_count: int) -> Optional[str]:
     normalized = str(status or "").upper()
     if enabled_rules_count <= 0:
@@ -131,12 +147,13 @@ def _decision_value(status: str, *, enabled_rules_count: int) -> Optional[str]:
     return None
 
 
-def _build_decision_inputs(parsed_report: Dict[str, Any], steps: Dict[str, Any]) -> Dict[str, Any]:
+def _build_decision_inputs(parsed_report: Dict[str, Any], steps: Dict[str, Any], external_reports: Dict[str, Any]) -> Dict[str, Any]:
+    merged_reports = _merge_report_inputs(steps, external_reports)
     return {
         "result": {
             "parsed_report": parsed_report,
-            "steps": steps or {},
-            "external_reports": steps or {},
+            "steps": merged_reports,
+            "external_reports": external_reports or merged_reports,
         }
     }
 
@@ -150,8 +167,8 @@ def _baseline_decision(parsed_report: Dict[str, Any]) -> tuple[str, str]:
     return "COMPLETED", "Decision rules passed"
 
 
-def _apply_rules(parsed_report: Dict[str, Any], rules: List[Dict[str, Any]], steps: Dict[str, Any]) -> tuple[str, str, Dict[str, Any]]:
-    envelope = _build_decision_inputs(parsed_report, steps)
+def _apply_rules(parsed_report: Dict[str, Any], rules: List[Dict[str, Any]], steps: Dict[str, Any], external_reports: Dict[str, Any]) -> tuple[str, str, Dict[str, Any]]:
+    envelope = _build_decision_inputs(parsed_report, steps, external_reports)
     enabled_rules = [rule for rule in rules if rule.get("enabled", True)]
     enabled_rules.sort(key=lambda rule: int(rule.get("priority", 0)))
     for rule in enabled_rules:
@@ -188,7 +205,8 @@ async def _fetch_rules() -> Optional[List[Dict[str, Any]]]:
 def _ensure_parsed_report(body: DecideRequest) -> Dict[str, Any]:
     if isinstance(body.parsed_report, dict) and body.parsed_report:
         return body.parsed_report
-    return report_parser.parse(report_parser.ParseRequest(request_id=body.request_id, steps=body.steps))
+    report_inputs = _merge_report_inputs(body.steps, body.external_reports)
+    return report_parser.parse(report_parser.ParseRequest(request_id=body.request_id, steps=report_inputs))
 
 
 @app.get("/health")
@@ -199,8 +217,9 @@ def health():
 @app.post("/api/v1/decide")
 async def decide(body: DecideRequest):
     parsed_report = _ensure_parsed_report(body)
+    merged_reports = _merge_report_inputs(body.steps, body.external_reports)
     rules = await _fetch_rules()
-    step_statuses = _step_statuses(body.steps)
+    step_statuses = _step_statuses(merged_reports)
     enabled_rules = [rule for rule in (rules or []) if rule.get("enabled", True)]
     enabled_rules_count = len(enabled_rules)
     request_context = {
@@ -215,8 +234,8 @@ async def decide(body: DecideRequest):
             "decision_reason": "Decision rules are unavailable",
             "decision_source": "decision-service",
             "request_context": request_context,
-            "steps": body.steps,
-            "external_reports": body.steps,
+            "steps": merged_reports,
+            "external_reports": body.external_reports or merged_reports,
             "step_statuses": step_statuses,
             "parsed_report": parsed_report,
             "summary": {
@@ -238,7 +257,7 @@ async def decide(body: DecideRequest):
         if status == "COMPLETED":
             reason = "No active decision rules configured"
     elif status == "COMPLETED":
-        status, reason, matched_rule = _apply_rules(parsed_report, rules, body.steps)
+        status, reason, matched_rule = _apply_rules(parsed_report, rules, body.steps, body.external_reports)
     decision = _decision_value(status, enabled_rules_count=enabled_rules_count)
 
     summary = {
@@ -260,8 +279,8 @@ async def decide(body: DecideRequest):
         "decision_source": "decision-service",
         "matched_rule": matched_rule or None,
         "request_context": request_context,
-        "steps": body.steps,
-        "external_reports": body.steps,
+        "steps": merged_reports,
+        "external_reports": body.external_reports or merged_reports,
         "step_statuses": step_statuses,
         "baseline_decision": {
             "status": baseline_status,
