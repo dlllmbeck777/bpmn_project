@@ -274,78 +274,11 @@ async def orchestrate(body: RequestIn, request: Request):
                 payload=parsed_report,
             )
 
-    decision_service = await _acfg("/api/v1/services/decision-service")
-    decision_url = decision_service.get("base_url", "")
-    decision_endpoint = decision_service.get("endpoint_path", "/api/v1/decide")
-    decision_result = {
-        "status": "ENGINE_ERROR",
-        "request_id": body.request_id,
-        "decision_reason": "Decision service is not configured",
-        "decision_source": "decision-service",
-        "parsed_report": parsed_report,
-        "summary": {"request_id": body.request_id, "decision_reason": "Decision service is not configured"},
-    }
-    if decision_url:
-        try:
-            await _track(
-                body.request_id,
-                "decision",
-                "OUT",
-                "Dispatch to decision service",
-                cid=cid,
-                service_id="decision-service",
-                status="DISPATCHED",
-                payload={"steps": results, "parsed_report": parsed_report},
-            )
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                decision_response = await client.post(
-                    f"{decision_url}{decision_endpoint}",
-                    json={"request_id": body.request_id, "steps": results, "parsed_report": parsed_report},
-                    headers={"X-Correlation-ID": cid},
-                )
-            decision_result = decision_response.json()
-            await _track(
-                body.request_id,
-                "decision",
-                "IN",
-                "Decision service response",
-                cid=cid,
-                service_id="decision-service",
-                status=decision_result.get("status", "OK"),
-                payload=decision_result,
-            )
-        except Exception as exc:
-            decision_result = {
-                "status": "ENGINE_ERROR",
-                "request_id": body.request_id,
-                "decision_reason": f"Decision service unavailable: {exc}",
-                "decision_source": "decision-service",
-                "parsed_report": parsed_report,
-                "summary": {
-                    "request_id": body.request_id,
-                    "decision_reason": f"Decision service unavailable: {exc}",
-                },
-            }
-            await _track(
-                body.request_id,
-                "decision",
-                "IN",
-                "Decision service unavailable",
-                cid=cid,
-                service_id="decision-service",
-                status="UNAVAILABLE",
-                payload=decision_result,
-            )
-
     return {
-        "status": decision_result.get("status", "COMPLETED"),
+        "status": "COMPLETED",
         "adapter": "custom",
         "request_id": body.request_id,
         "external_applicant_id": body.external_applicant_id or "",
-        "decision_reason": decision_result.get("decision_reason"),
-        "decision_source": decision_result.get("decision_source"),
-        "matched_rule": decision_result.get("matched_rule"),
         "steps": results,
-        "parsed_report": decision_result.get("parsed_report", parsed_report),
-        "summary": decision_result.get("summary", {}),
+        "parsed_report": parsed_report,
     }

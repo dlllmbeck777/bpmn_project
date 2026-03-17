@@ -98,6 +98,37 @@ class PipelineSkipPolicyTests(unittest.TestCase):
         policy = custom_adapter._resolve_skip_policy(step, "custom")
         self.assertFalse(policy["skip"])
 
+    def test_custom_adapter_does_not_load_decision_service(self):
+        original_acfg = custom_adapter._acfg
+        try:
+            seen_paths = []
+
+            async def fake_acfg(path, ttl=30):
+                seen_paths.append(path)
+                if path == "/api/v1/pipeline-steps?pipeline_name=default":
+                    return {"items": []}
+                if path == "/api/v1/services/report-parser":
+                    return {}
+                if path == "/api/v1/services/decision-service":
+                    raise AssertionError("custom adapter should not query decision-service")
+                return {}
+
+            custom_adapter._acfg = fake_acfg
+            body = custom_adapter.RequestIn(
+                request_id="REQ-CUSTOM-1",
+                customer_id="CUST-1",
+                iin="IIN-1",
+                product_type="loan",
+                orchestration_mode="custom",
+            )
+            result = asyncio.run(custom_adapter.orchestrate(body, SimpleNamespace(headers={})))
+            self.assertEqual(result["status"], "COMPLETED")
+            self.assertEqual(result["adapter"], "custom")
+            self.assertNotIn("decision_reason", result)
+            self.assertNotIn("/api/v1/services/decision-service", seen_paths)
+        finally:
+            custom_adapter._acfg = original_acfg
+
     def test_flowable_mode_marks_missing_step_as_skipped(self):
         policy = flowable_adapter._resolve_skip_policy(None, "flowable")
         self.assertTrue(policy["skip"])
