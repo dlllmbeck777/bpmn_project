@@ -107,11 +107,11 @@ services:
       core-api:
         condition: service_healthy
       flowable-rest:
-        condition: service_healthy
+        condition: service_started
     restart: unless-stopped
     networks: [backend, flowable]
     healthcheck:
-      test: ["CMD", "sh", "-c", "curl -sf http://localhost:8011/health && curl -sf http://localhost:8012/health && curl -sf -u admin:${FLOWABLE_PASSWORD:-test} http://flowable-rest:8080/flowable-rest/actuator/health"]
+      test: ["CMD", "sh", "-c", "curl -sf http://localhost:8011/health && curl -sf http://localhost:8012/health"]
       interval: 10s
       timeout: 5s
       retries: 3

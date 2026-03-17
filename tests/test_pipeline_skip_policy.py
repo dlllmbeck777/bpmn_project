@@ -220,6 +220,23 @@ class PipelineSkipPolicyTests(unittest.TestCase):
         self.assertEqual(variables_by_name["external_applicant_id"], "APP-1")
         self.assertEqual(variables_by_name["applicant_json"], '{"firstName": "John"}')
 
+    def test_flowable_health_url_strips_service_suffix(self):
+        self.assertEqual(
+            flowable_adapter._flowable_health_url("http://flowable-rest:8080/flowable-rest/service"),
+            "http://flowable-rest:8080/flowable-rest/actuator/health",
+        )
+
+    def test_wait_for_flowable_ready_accepts_healthy_response(self):
+        original_request = flowable_adapter._flowable_request
+        try:
+            async def fake_request(method, url, **kwargs):
+                return SimpleNamespace(status_code=200)
+
+            flowable_adapter._flowable_request = fake_request
+            asyncio.run(flowable_adapter._wait_for_flowable_ready("http://flowable-rest:8080/flowable-rest/service"))
+        finally:
+            flowable_adapter._flowable_request = original_request
+
     def test_extract_decision_payload_falls_back_to_decision_raw_body(self):
         payload = flowable_adapter._extract_decision_payload({
             "decisionRawBody": {

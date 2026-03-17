@@ -31,6 +31,8 @@ FLOWABLE_PASSWORD_FALLBACKS = [
 FLOWABLE_AUTO_DEPLOY_BPMN = os.getenv("FLOWABLE_AUTO_DEPLOY_BPMN", "true").strip().lower() in {"1", "true", "yes", "on"}
 FLOWABLE_WATCH_TIMEOUT_SECONDS = max(15, int((os.getenv("FLOWABLE_WATCH_TIMEOUT_SECONDS", "90") or "90").strip()))
 FLOWABLE_WATCH_POLL_SECONDS = max(1.0, float((os.getenv("FLOWABLE_WATCH_POLL_SECONDS", "2") or "2").strip()))
+FLOWABLE_READY_TIMEOUT_SECONDS = max(5, int((os.getenv("FLOWABLE_READY_TIMEOUT_SECONDS", "75") or "75").strip()))
+FLOWABLE_READY_POLL_SECONDS = max(1.0, float((os.getenv("FLOWABLE_READY_POLL_SECONDS", "3") or "3").strip()))
 CORE_CALLBACK_URL = os.getenv("CORE_CALLBACK_URL", f"{CONFIG_URL}/internal/cases/complete")
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 SERVICE_NAME = "flowable-adapter"
@@ -117,6 +119,35 @@ async def _flowable_request(method: str, url: str, *, timeout: float = 15.0, ret
     if last_response is not None:
         return last_response
     raise last_error or RuntimeError("flowable request failed without response")
+
+
+def _flowable_health_url(flowable_url: str) -> str:
+    base = (flowable_url or "").rstrip("/")
+    if base.endswith("/service"):
+        base = base[:-len("/service")]
+    return f"{base}/actuator/health"
+
+
+async def _wait_for_flowable_ready(flowable_url: str, cid: str = ""):
+    health_url = _flowable_health_url(flowable_url)
+    attempts = max(1, int(FLOWABLE_READY_TIMEOUT_SECONDS / FLOWABLE_READY_POLL_SECONDS))
+    last_error = ""
+    for attempt in range(attempts):
+        try:
+            response = await _flowable_request(
+                "GET",
+                health_url,
+                timeout=10.0,
+                retry_attempts=1,
+            )
+            if response.status_code < 400:
+                return
+            last_error = f"health returned {response.status_code}"
+        except Exception as exc:
+            last_error = str(exc)
+        if attempt < attempts - 1:
+            await asyncio.sleep(FLOWABLE_READY_POLL_SECONDS)
+    raise RuntimeError(f"Flowable is not ready: {last_error or 'healthcheck failed'}")
 
 
 def _internal_headers(cid: str = ""):
@@ -768,6 +799,32 @@ async def _orchestrate_once(body: RequestIn, cid: str):
     flowable_url = flowable_cfg.get("base_url", "http://flowable-rest:8080/flowable-rest/service")
     meta = flowable_cfg.get("meta", {})
     process_key = meta.get("process_key", "creditServiceChainOrchestration") if isinstance(meta, dict) else "creditServiceChainOrchestration"
+    try:
+        await _wait_for_flowable_ready(flowable_url, cid)
+    except Exception as exc:
+        log.error(f"[{cid}] flowable readiness failed for {body.request_id}: process_key={process_key}, error={exc}")
+        await _track(
+            body.request_id,
+            "flowable",
+            "IN",
+            "Flowable engine not ready",
+            cid=cid,
+            service_id="flowable-rest",
+            status="ENGINE_UNREACHABLE",
+            payload={
+                "process_key": process_key,
+                "flowable_url": flowable_url,
+                "error": str(exc),
+            },
+        )
+        return {
+            "status": "ENGINE_UNREACHABLE",
+            "adapter": "flowable",
+            "request_id": body.request_id,
+            "error": str(exc),
+            "process_key": process_key,
+            "flowable_url": flowable_url,
+        }
     connector_urls = await _acfg("/api/v1/connector-urls") or {}
     flowable_connector_urls = {
         step["service_id"]: connector_urls.get(step["service_id"])
