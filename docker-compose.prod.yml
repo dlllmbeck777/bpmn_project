@@ -223,7 +223,6 @@ services:
   flowable-ui:
     ports: !reset []
     environment:
-      - SERVER_USE_FORWARD_HEADERS=true
       - SERVER_FORWARD_HEADERS_STRATEGY=framework
     networks: [frontend, flowable]
     restart: always
