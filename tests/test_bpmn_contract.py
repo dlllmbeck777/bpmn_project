@@ -18,6 +18,12 @@ class BpmnContractTests(unittest.TestCase):
         self.assertIn("execution.setVariable('decision_service_url'", xml)
         self.assertIn("execution.setVariable('decision_request_body'", xml)
 
+    def test_skip_gateways_define_default_paths(self):
+        xml = BPMN_PATH.read_text(encoding="utf-8")
+        self.assertIn('id="gateway_iso" name="Skip iSoftPull?" default="flow_iso_gate_to_call"', xml)
+        self.assertIn('id="gateway_cs" name="Skip Creditsafe?" default="flow_cs_gate_to_call"', xml)
+        self.assertIn('id="gateway_plaid" name="Skip Plaid?" default="flow_plaid_gate_to_call"', xml)
+
 
 if __name__ == "__main__":
     unittest.main()

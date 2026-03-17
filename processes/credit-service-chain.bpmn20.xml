@@ -30,7 +30,7 @@
       ]]></script>
     </scriptTask>
 
-    <exclusiveGateway id="gateway_iso" name="Skip iSoftPull?"/>
+    <exclusiveGateway id="gateway_iso" name="Skip iSoftPull?" default="flow_iso_gate_to_call"/>
     <sequenceFlow id="flow_init_to_iso" sourceRef="task_init" targetRef="gateway_iso"/>
     <sequenceFlow id="flow_iso_gate_to_skip" sourceRef="gateway_iso" targetRef="task_iso_skip">
       <conditionExpression xsi:type="tFormalExpression">${skip_isoftpull}</conditionExpression>
@@ -98,7 +98,7 @@ X-Request-Id: ${request_id}</flowable:expression>
       ]]></script>
     </scriptTask>
 
-    <exclusiveGateway id="gateway_cs" name="Skip Creditsafe?"/>
+    <exclusiveGateway id="gateway_cs" name="Skip Creditsafe?" default="flow_cs_gate_to_call"/>
     <sequenceFlow id="flow_prep_cs_to_call" sourceRef="task_prepare_creditsafe_body" targetRef="gateway_cs"/>
     <sequenceFlow id="flow_cs_gate_to_skip" sourceRef="gateway_cs" targetRef="task_cs_skip">
       <conditionExpression xsi:type="tFormalExpression">${skip_creditsafe}</conditionExpression>
@@ -164,7 +164,7 @@ X-Request-Id: ${request_id}</flowable:expression>
       ]]></script>
     </scriptTask>
 
-    <exclusiveGateway id="gateway_plaid" name="Skip Plaid?"/>
+    <exclusiveGateway id="gateway_plaid" name="Skip Plaid?" default="flow_plaid_gate_to_call"/>
     <sequenceFlow id="flow_prep_plaid_to_call" sourceRef="task_prepare_plaid_body" targetRef="gateway_plaid"/>
     <sequenceFlow id="flow_plaid_gate_to_skip" sourceRef="gateway_plaid" targetRef="task_plaid_skip">
       <conditionExpression xsi:type="tFormalExpression">${skip_plaid}</conditionExpression>

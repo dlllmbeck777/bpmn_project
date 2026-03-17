@@ -107,15 +107,15 @@ services:
       core-api:
         condition: service_healthy
       flowable-rest:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
     networks: [backend, flowable]
     healthcheck:
-      test: ["CMD", "sh", "-c", "curl -sf http://localhost:8011/health && curl -sf http://localhost:8012/health"]
+      test: ["CMD", "sh", "-c", "curl -sf http://localhost:8011/health && curl -sf http://localhost:8012/health && curl -sf -u admin:${FLOWABLE_PASSWORD:-test} http://flowable-rest:8080/flowable-rest/service/actuator/health"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 30s
 
   # ── Connectors ────────────────────────────────────────
   isoftpull:
@@ -224,6 +224,12 @@ services:
       - flowable-db
     restart: unless-stopped
     networks: [flowable, backend]
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -sf -u admin:${FLOWABLE_PASSWORD:-test} http://localhost:8080/flowable-rest/service/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
 
   flowable-ui:
     image: flowable/flowable-ui:6.8.0

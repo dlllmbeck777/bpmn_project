@@ -18,7 +18,7 @@ services:
       admin-ui:
         condition: service_healthy
       flowable-rest:
-        condition: service_started
+        condition: service_healthy
       flowable-ui:
         condition: service_healthy
     restart: always
@@ -109,11 +109,11 @@ services:
     restart: always
     logging: *logging
     healthcheck:
-      test: ["CMD", "sh", "-c", "curl -sf http://localhost:8011/health && curl -sf http://localhost:8012/health"]
+      test: ["CMD", "sh", "-c", "curl -sf http://localhost:8011/health && curl -sf http://localhost:8012/health && curl -sf -u admin:${FLOWABLE_PASSWORD:-test} http://flowable-rest:8080/flowable-rest/service/actuator/health"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 30s
     deploy:
       resources:
         limits: { cpus: '0.5', memory: 256M }
