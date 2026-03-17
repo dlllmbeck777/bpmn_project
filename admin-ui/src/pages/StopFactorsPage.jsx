@@ -128,7 +128,7 @@ export default function StopFactorsPage({
       </div>
       <div className="card">
         <table className="tbl">
-          <thead><tr><th>Name</th><th>Stage</th><th>Field path</th><th>Op</th><th>Threshold</th><th>Action</th><th>Enabled</th>{canEdit && <th></th>}</tr></thead>
+          <thead><tr><th>Name</th><th>Stage</th><th>Field path</th><th>Op</th><th>Threshold</th><th>{forcedStage === 'decision' ? 'On fail' : 'Action'}</th><th>Enabled</th>{canEdit && <th></th>}</tr></thead>
           <tbody>
             {items.map((s) => (
               <tr key={s.id}>
@@ -169,6 +169,12 @@ export default function StopFactorsPage({
             <div className="form-row"><label>Operator</label><select value={editing.operator} onChange={(e) => setEditing({ ...editing, operator: e.target.value })}><option value="gte">gte</option><option value="lte">lte</option><option value="gt">gt</option><option value="lt">lt</option><option value="eq">eq</option><option value="neq">neq</option><option value="not_in">not_in</option><option value="contains">contains</option></select></div>
             <div className="form-row"><label>Threshold</label><input value={editing.threshold || ''} onChange={(e) => setEditing({ ...editing, threshold: e.target.value })} /></div>
           </div>
+          {forcedStage === 'decision' && (
+            <div className="notice mb-16">
+              Decision rules are evaluated as pass conditions. The configured action runs only when the check fails.
+              Example: <span className="mono">credit_score gte 500</span> with <span className="mono">REJECT</span> means scores below 500 are rejected.
+            </div>
+          )}
           <div className="form-row"><label>Action on fail</label><select value={editing.action_on_fail} onChange={(e) => setEditing({ ...editing, action_on_fail: e.target.value })}><option value="REJECT">REJECT</option><option value="REVIEW">REVIEW</option></select></div>
           <div className="form-row">
             <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
