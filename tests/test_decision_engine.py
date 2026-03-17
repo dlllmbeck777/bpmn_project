@@ -74,6 +74,8 @@ class DecisionEngineTests(unittest.TestCase):
                 decision_engine.decide(
                     decision_engine.DecideRequest(
                         request_id="REQ-1",
+                        route_mode="FLOWABLE",
+                        external_applicant_id="EXT-1",
                         steps={
                             "isoftpull": {"creditScore": 550},
                             "creditsafe": {"creditScore": 72},
@@ -83,6 +85,42 @@ class DecisionEngineTests(unittest.TestCase):
             )
             self.assertEqual(response["status"], "REJECTED")
             self.assertEqual(response["matched_rule"]["name"], "Min credit score 580")
+            self.assertEqual(response["external_reports"]["isoftpull"]["creditScore"], 550)
+            self.assertEqual(response["request_context"]["external_applicant_id"], "EXT-1")
+        finally:
+            decision_engine._fetch_rules = original_fetch_rules
+
+    def test_decision_rules_can_target_raw_external_reports(self):
+        original_fetch_rules = decision_engine._fetch_rules
+        try:
+            async def fake_fetch_rules():
+                return [
+                    {
+                        "id": 2,
+                        "name": "Reject when iSoftPull score below 600",
+                        "enabled": True,
+                        "priority": 10,
+                        "field_path": "result.steps.isoftpull.creditScore",
+                        "operator": "gte",
+                        "threshold": "600",
+                        "action_on_fail": "REJECT",
+                    }
+                ]
+
+            decision_engine._fetch_rules = fake_fetch_rules
+            response = asyncio.run(
+                decision_engine.decide(
+                    decision_engine.DecideRequest(
+                        request_id="REQ-RAW-1",
+                        steps={
+                            "isoftpull": {"status": "OK", "creditScore": 590},
+                            "creditsafe": {"status": "OK", "creditScore": 72},
+                        },
+                    )
+                )
+            )
+            self.assertEqual(response["status"], "REJECTED")
+            self.assertEqual(response["matched_rule"]["name"], "Reject when iSoftPull score below 600")
         finally:
             decision_engine._fetch_rules = original_fetch_rules
 

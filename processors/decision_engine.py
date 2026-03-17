@@ -16,6 +16,8 @@ app = FastAPI(title="decision-service", version="1.0.0")
 
 class DecideRequest(BaseModel):
     request_id: str
+    route_mode: str = "FLOWABLE"
+    external_applicant_id: str = ""
     steps: Dict[str, Any] = {}
     parsed_report: Optional[Dict[str, Any]] = None
 
@@ -102,8 +104,24 @@ def _evaluate_rule(rule: Dict[str, Any], data: Dict[str, Any]) -> bool:
     return True
 
 
-def _build_decision_inputs(parsed_report: Dict[str, Any]) -> Dict[str, Any]:
-    return {"result": {"parsed_report": parsed_report}}
+def _step_statuses(steps: Dict[str, Any]) -> Dict[str, str]:
+    statuses: Dict[str, str] = {}
+    for service_id, payload in (steps or {}).items():
+        if isinstance(payload, dict):
+            statuses[service_id] = str(payload.get("status") or "UNKNOWN")
+        else:
+            statuses[service_id] = "UNKNOWN"
+    return statuses
+
+
+def _build_decision_inputs(parsed_report: Dict[str, Any], steps: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "result": {
+            "parsed_report": parsed_report,
+            "steps": steps or {},
+            "external_reports": steps or {},
+        }
+    }
 
 
 def _baseline_decision(parsed_report: Dict[str, Any]) -> tuple[str, str]:
@@ -115,8 +133,8 @@ def _baseline_decision(parsed_report: Dict[str, Any]) -> tuple[str, str]:
     return "COMPLETED", "Decision rules passed"
 
 
-def _apply_rules(parsed_report: Dict[str, Any], rules: List[Dict[str, Any]]) -> tuple[str, str, Dict[str, Any]]:
-    envelope = _build_decision_inputs(parsed_report)
+def _apply_rules(parsed_report: Dict[str, Any], rules: List[Dict[str, Any]], steps: Dict[str, Any]) -> tuple[str, str, Dict[str, Any]]:
+    envelope = _build_decision_inputs(parsed_report, steps)
     enabled_rules = [rule for rule in rules if rule.get("enabled", True)]
     enabled_rules.sort(key=lambda rule: int(rule.get("priority", 0)))
     for rule in enabled_rules:
@@ -165,25 +183,39 @@ def health():
 async def decide(body: DecideRequest):
     parsed_report = _ensure_parsed_report(body)
     rules = await _fetch_rules()
+    step_statuses = _step_statuses(body.steps)
+    request_context = {
+        "request_id": body.request_id,
+        "route_mode": body.route_mode,
+        "external_applicant_id": body.external_applicant_id,
+    }
     if rules is None:
         return {
             "status": "ENGINE_ERROR",
             "request_id": body.request_id,
             "decision_reason": "Decision rules are unavailable",
             "decision_source": "decision-service",
+            "request_context": request_context,
+            "steps": body.steps,
+            "external_reports": body.steps,
+            "step_statuses": step_statuses,
             "parsed_report": parsed_report,
             "summary": {
                 **(parsed_report.get("summary") if isinstance(parsed_report.get("summary"), dict) else {}),
                 "request_id": body.request_id,
                 "decision_source": "decision-service",
                 "decision_reason": "Decision rules are unavailable",
+                "rules_evaluated": 0,
+                "matched_rule": None,
+                **{f"{service_id}_status": status for service_id, status in step_statuses.items()},
             },
         }
 
-    status, reason = _baseline_decision(parsed_report)
+    baseline_status, baseline_reason = _baseline_decision(parsed_report)
+    status, reason = baseline_status, baseline_reason
     matched_rule: Dict[str, Any] = {}
     if status == "COMPLETED":
-        status, reason, matched_rule = _apply_rules(parsed_report, rules)
+        status, reason, matched_rule = _apply_rules(parsed_report, rules, body.steps)
 
     summary = {
         **(parsed_report.get("summary") if isinstance(parsed_report.get("summary"), dict) else {}),
@@ -193,6 +225,7 @@ async def decide(body: DecideRequest):
         "rules_evaluated": len([rule for rule in rules if rule.get("enabled", True)]),
         "matched_rule": matched_rule or None,
         "plaid_considered": False,
+        **{f"{service_id}_status": status_value for service_id, status_value in step_statuses.items()},
     }
     return {
         "status": status,
@@ -200,6 +233,14 @@ async def decide(body: DecideRequest):
         "decision_reason": reason,
         "decision_source": "decision-service",
         "matched_rule": matched_rule or None,
+        "request_context": request_context,
+        "steps": body.steps,
+        "external_reports": body.steps,
+        "step_statuses": step_statuses,
+        "baseline_decision": {
+            "status": baseline_status,
+            "reason": baseline_reason,
+        },
         "parsed_report": parsed_report,
         "summary": summary,
     }

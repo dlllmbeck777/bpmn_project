@@ -17,18 +17,31 @@ function stageBadge(stage) {
   return 'badge-amber'
 }
 
-export default function StopFactorsPage({ canEdit }) {
+export default function StopFactorsPage({
+  canEdit,
+  forcedStage = '',
+  title = 'Stop-factor behavior',
+  intro,
+  showStageTabs = true,
+  stageOptions = ['', 'pre', 'decision', 'post'],
+  addLabel = '+ Add factor',
+  fieldPathPlaceholder = 'result.parsed_report.summary.credit_score',
+}) {
   const [items, setItems] = useState([])
-  const [filter, setFilter] = useState('')
+  const [filter, setFilter] = useState(() => forcedStage || '')
   const [editing, setEditing] = useState(null)
   const [error, setError] = useState('')
   const [bulkBusy, setBulkBusy] = useState(false)
+  const activeStage = forcedStage || filter
 
   const load = () => {
-    const q = filter ? `?stage=${filter}` : ''
+    const q = activeStage ? `?stage=${activeStage}` : ''
     get(`/api/v1/stop-factors${q}`).then((d) => setItems(d.items || [])).catch((e) => setError(e.message))
   }
-  useEffect(() => { load() }, [filter])
+  useEffect(() => { load() }, [activeStage])
+  useEffect(() => {
+    if (forcedStage) setFilter(forcedStage)
+  }, [forcedStage])
 
   const allLoadedEnabled = useMemo(() => items.length > 0 && items.every((item) => item.enabled), [items])
   const enabledCount = useMemo(() => items.filter((item) => item.enabled).length, [items])
@@ -76,31 +89,41 @@ export default function StopFactorsPage({ canEdit }) {
     <>
       {error && <div className="notice notice-error mb-16">{error}</div>}
       <div className="card mb-16">
-        <div className="card-title">Stop-factor behavior</div>
+        <div className="card-title">{title}</div>
         <div className="grid-2">
           <div className="sum-card">
-            <div className="sum-label">Active rules</div>
+            <div className="sum-label">{forcedStage === 'decision' ? 'Active decision rules' : 'Active rules'}</div>
             <div className="sum-val">{enabledCount}</div>
           </div>
           <div className="notice">
-            {enabledCount > 0
-              ? 'Active stop-factor rules will be checked in the selected stage.'
-              : 'No active stop-factor rule is configured. By default, requests pass without stop-factor blocking.'}
+            {intro || (
+              enabledCount > 0
+                ? `Active ${forcedStage === 'decision' ? 'Flowable decision rules' : 'stop-factor rules'} will be checked in the selected stage.`
+                : forcedStage === 'decision'
+                  ? 'No active Flowable decision rule is configured. Requests will complete unless baseline report availability forces review.'
+                  : 'No active stop-factor rule is configured. By default, requests pass without stop-factor blocking.'
+            )}
           </div>
         </div>
       </div>
       <div className="flex-between mb-16">
-        <div className="tab-bar" style={{ marginBottom: 0, borderBottom: 'none' }}>
-          {['', 'pre', 'decision', 'post'].map((f) => (
-            <button key={f} className={`tab-btn${filter === f ? ' active' : ''}`} onClick={() => setFilter(f)}>
-              {f === '' ? 'All rules' : stageLabel(f)}
-            </button>
-          ))}
-        </div>
+        {showStageTabs ? (
+          <div className="tab-bar" style={{ marginBottom: 0, borderBottom: 'none' }}>
+            {stageOptions.map((f) => (
+              <button key={f} className={`tab-btn${filter === f ? ' active' : ''}`} onClick={() => setFilter(f)}>
+                {f === '' ? 'All rules' : stageLabel(f)}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="notice" style={{ marginBottom: 0 }}>
+            Stage: <strong>{stageLabel(forcedStage)}</strong>
+          </div>
+        )}
         <div className="form-actions">
           {canEdit && <button className="btn btn-ghost btn-sm" disabled={bulkBusy || allLoadedEnabled} onClick={() => applyBulkState(true)}>Enable visible rules</button>}
           {canEdit && <button className="btn btn-ghost btn-sm" disabled={bulkBusy || !items.some((item) => item.enabled)} onClick={() => applyBulkState(false)}>Disable visible rules</button>}
-          {canEdit && <button className="btn btn-primary btn-sm" onClick={() => setEditing({ ...empty })}>+ Add factor</button>}
+          {canEdit && <button className="btn btn-primary btn-sm" onClick={() => setEditing({ ...empty, stage: forcedStage || activeStage || 'pre' })}>{addLabel}</button>}
         </div>
       </div>
       <div className="card">
@@ -128,13 +151,20 @@ export default function StopFactorsPage({ canEdit }) {
       </div>
 
       {editing && (
-        <Modal title={editing._id ? 'Edit stop factor' : 'Add stop factor'} onClose={() => setEditing(null)}>
+        <Modal title={editing._id ? `Edit ${forcedStage === 'decision' ? 'decision rule' : 'stop factor'}` : `Add ${forcedStage === 'decision' ? 'decision rule' : 'stop factor'}`} onClose={() => setEditing(null)}>
           <div className="form-row"><label>Name</label><input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></div>
           <div className="form-inline">
-            <div className="form-row"><label>Stage</label><select value={editing.stage} onChange={(e) => setEditing({ ...editing, stage: e.target.value })}><option value="pre">pre</option><option value="decision">decision</option><option value="post">post</option></select></div>
+            {forcedStage ? (
+              <div className="form-row">
+                <label>Stage</label>
+                <div className="notice" style={{ marginTop: 0 }}>{stageLabel(forcedStage)}</div>
+              </div>
+            ) : (
+              <div className="form-row"><label>Stage</label><select value={editing.stage} onChange={(e) => setEditing({ ...editing, stage: e.target.value })}><option value="pre">pre</option><option value="decision">decision</option><option value="post">post</option></select></div>
+            )}
             <div className="form-row"><label>Priority</label><input type="number" value={editing.priority} onChange={(e) => setEditing({ ...editing, priority: +e.target.value })} /></div>
           </div>
-          <div className="form-row"><label>Field path</label><input value={editing.field_path || ''} onChange={(e) => setEditing({ ...editing, field_path: e.target.value })} placeholder="result.parsed_report.summary.credit_score" /></div>
+          <div className="form-row"><label>Field path</label><input value={editing.field_path || ''} onChange={(e) => setEditing({ ...editing, field_path: e.target.value })} placeholder={fieldPathPlaceholder} /></div>
           <div className="form-inline">
             <div className="form-row"><label>Operator</label><select value={editing.operator} onChange={(e) => setEditing({ ...editing, operator: e.target.value })}><option value="gte">gte</option><option value="lte">lte</option><option value="gt">gt</option><option value="lt">lt</option><option value="eq">eq</option><option value="neq">neq</option><option value="not_in">not_in</option><option value="contains">contains</option></select></div>
             <div className="form-row"><label>Threshold</label><input value={editing.threshold || ''} onChange={(e) => setEditing({ ...editing, threshold: e.target.value })} /></div>

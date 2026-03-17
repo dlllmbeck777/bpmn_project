@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { getControlCenterTab, setControlCenterTab } from '../lib/preferences'
 import RoutingPage from './RoutingPage'
 import StopFactorsPage from './StopFactorsPage'
+import DecisionRulesPage from './DecisionRulesPage'
 import PipelinePage from './PipelinePage'
 
 const tabs = [
@@ -14,7 +15,12 @@ const tabs = [
   {
     id: 'stopfactors',
     label: 'Stop factors',
-    summary: 'If active stop-factor rules exist, they are applied. If none exist, requests pass by default.',
+    summary: 'Manage pre and post stop logic without mixing it with final Flowable decisioning.',
+  },
+  {
+    id: 'decisionrules',
+    label: 'Decision rules',
+    summary: 'Edit the Flowable-only rules that run after external reports are collected and parsed.',
   },
   {
     id: 'pipeline',
@@ -40,7 +46,9 @@ export default function ControlCenterPage({ canEdit, canAdmin, onNavigate }) {
       case 'routing':
         return <RoutingPage canEdit={canEdit} />
       case 'stopfactors':
-        return <StopFactorsPage canEdit={canEdit} />
+        return <StopFactorsPage canEdit={canEdit} stageOptions={['', 'pre', 'post']} />
+      case 'decisionrules':
+        return <DecisionRulesPage canEdit={canEdit} />
       case 'pipeline':
         return <PipelinePage canEdit={canEdit} />
       default:

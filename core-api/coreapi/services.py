@@ -938,10 +938,26 @@ def normalize_result_payload(result: Dict[str, Any]):
 
     decision_payload = normalized.get("decisionRawBody")
     decision_payload = decision_payload if isinstance(decision_payload, dict) else {}
+    steps = normalized.get("steps")
+    steps = steps if isinstance(steps, dict) else {}
+    external_reports = normalized.get("external_reports")
+    external_reports = external_reports if isinstance(external_reports, dict) else {}
     parsed_report = normalized.get("parsed_report")
     parsed_report = parsed_report if isinstance(parsed_report, dict) else {}
     parsed_summary = parsed_report.get("summary") if isinstance(parsed_report.get("summary"), dict) else {}
     decision_summary = decision_payload.get("summary") if isinstance(decision_payload.get("summary"), dict) else {}
+
+    if not steps and isinstance(decision_payload.get("steps"), dict):
+        steps = decision_payload.get("steps")
+        normalized["steps"] = steps
+
+    if not external_reports:
+        if isinstance(decision_payload.get("external_reports"), dict):
+            external_reports = decision_payload.get("external_reports")
+        elif steps:
+            external_reports = steps
+        if external_reports:
+            normalized["external_reports"] = external_reports
 
     if not parsed_report and isinstance(decision_payload.get("parsed_report"), dict):
         parsed_report = decision_payload.get("parsed_report")
@@ -965,6 +981,10 @@ def normalize_result_payload(result: Dict[str, Any]):
         normalized["decision_source"] = decision_payload.get("decision_source")
     if not normalized.get("matched_rule") and decision_payload.get("matched_rule"):
         normalized["matched_rule"] = decision_payload.get("matched_rule")
+    if not isinstance(normalized.get("step_statuses"), dict) and isinstance(decision_payload.get("step_statuses"), dict):
+        normalized["step_statuses"] = decision_payload.get("step_statuses")
+    if not isinstance(normalized.get("request_context"), dict) and isinstance(decision_payload.get("request_context"), dict):
+        normalized["request_context"] = decision_payload.get("request_context")
     if not normalized.get("status") and decision_payload.get("status"):
         normalized["status"] = decision_payload.get("status")
     return normalized
@@ -1655,6 +1675,18 @@ def build_flowable_summary(process_variables: Dict[str, Any]) -> Dict[str, Any]:
     return summary
 
 
+def _merge_flowable_step_payloads(runtime_steps: Dict[str, Any], bundled_steps: Any) -> Dict[str, Any]:
+    merged = dict(runtime_steps or {})
+    if isinstance(bundled_steps, dict):
+        for service_id, payload in bundled_steps.items():
+            if isinstance(payload, dict):
+                existing = merged.get(service_id)
+                merged[service_id] = {**existing, **payload} if isinstance(existing, dict) else payload
+            elif service_id not in merged:
+                merged[service_id] = payload
+    return merged
+
+
 def build_flowable_result_from_variables(request_id: str, instance_id: str, process_variables: Dict[str, Any]) -> Dict[str, Any]:
     normalized_variables = normalize_flowable_variables(process_variables)
     orchestration_result = _parse_embedded_json(normalized_variables.get("orchestration_result", {}))
@@ -1666,7 +1698,14 @@ def build_flowable_result_from_variables(request_id: str, instance_id: str, proc
     result["request_id"] = request_id
     result["engine"] = {"engine": "flowable", "started": True, "instance_id": instance_id, "completed": True}
     result["process_variables"] = normalized_variables
-    result["steps"] = build_flowable_steps(normalized_variables)
+    result["steps"] = _merge_flowable_step_payloads(build_flowable_steps(normalized_variables), result.get("steps"))
+    if not isinstance(result.get("external_reports"), dict):
+        result["external_reports"] = result["steps"]
+    if not isinstance(result.get("step_statuses"), dict):
+        result["step_statuses"] = {
+            service_id: payload.get("status", "UNKNOWN") if isinstance(payload, dict) else "UNKNOWN"
+            for service_id, payload in result["steps"].items()
+        }
     result["summary"] = result.get("summary") if isinstance(result.get("summary"), dict) else build_flowable_summary(normalized_variables)
     return result
 

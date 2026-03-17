@@ -2,7 +2,7 @@ const START_PAGE_STORAGE_KEY = 'credit-platform.start-page'
 const CONTROL_TAB_STORAGE_KEY = 'credit-platform.control-tab'
 
 const START_PAGE_OPTIONS = ['dashboard', 'control', 'services', 'users', 'requests', 'tracker', 'flowable', 'audit', 'settings']
-const CONTROL_TAB_OPTIONS = ['routing', 'stopfactors', 'pipeline']
+const CONTROL_TAB_OPTIONS = ['routing', 'stopfactors', 'decisionrules', 'pipeline']
 
 function readStoredValue(key) {
   return (localStorage.getItem(key) || '').trim()

@@ -200,6 +200,18 @@ def _build_steps(process_variables: Dict[str, Any]):
     return steps
 
 
+def _merge_step_payloads(runtime_steps: Dict[str, Any], embedded_steps: Any):
+    merged = dict(runtime_steps or {})
+    if isinstance(embedded_steps, dict):
+        for service_id, payload in embedded_steps.items():
+            if isinstance(payload, dict):
+                existing = merged.get(service_id)
+                merged[service_id] = {**existing, **payload} if isinstance(existing, dict) else payload
+            elif service_id not in merged:
+                merged[service_id] = payload
+    return merged
+
+
 def _track_task(task: asyncio.Task):
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
@@ -393,8 +405,9 @@ def _build_watch_timeout_result(request_id: str, instance_id: str, snapshot: Dic
 
 
 async def _build_result_payload(body: "RequestIn", instance_id: str, process_variables: Dict[str, Any], connector_urls: Dict[str, str], cid: str):
-    steps = _build_steps(process_variables)
+    runtime_steps = _build_steps(process_variables)
     decision_payload = _extract_decision_payload(process_variables)
+    steps = _merge_step_payloads(runtime_steps, decision_payload.get("steps"))
     parsed_report = decision_payload.get("parsed_report") if isinstance(decision_payload.get("parsed_report"), dict) else None
     if not parsed_report:
         parsed_report = await _parsed_report(body.request_id, steps, cid)
@@ -405,6 +418,16 @@ async def _build_result_payload(body: "RequestIn", instance_id: str, process_var
             summary = parsed_summary
     if not summary:
         summary = _extract_summary(process_variables)
+    external_reports = decision_payload.get("external_reports") if isinstance(decision_payload.get("external_reports"), dict) else steps
+    step_statuses = decision_payload.get("step_statuses") if isinstance(decision_payload.get("step_statuses"), dict) else {
+        service_id: payload.get("status", "UNKNOWN") if isinstance(payload, dict) else "UNKNOWN"
+        for service_id, payload in steps.items()
+    }
+    request_context = decision_payload.get("request_context") if isinstance(decision_payload.get("request_context"), dict) else {
+        "request_id": body.request_id,
+        "route_mode": "FLOWABLE",
+        "external_applicant_id": body.external_applicant_id or "",
+    }
     return {
         "status": decision_payload.get("status", "COMPLETED"),
         "adapter": "flowable",
@@ -417,6 +440,9 @@ async def _build_result_payload(body: "RequestIn", instance_id: str, process_var
         "connector_urls_injected": connector_urls,
         "process_variables": {key: _parse_jsonish(value) for key, value in process_variables.items()},
         "steps": steps,
+        "external_reports": external_reports,
+        "step_statuses": step_statuses,
+        "request_context": request_context,
         "parsed_report": parsed_report,
         "summary": summary,
     }

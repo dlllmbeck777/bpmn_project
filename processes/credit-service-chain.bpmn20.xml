@@ -282,19 +282,57 @@ X-Request-Id: ${request_id}</flowable:expression>
 
         def mapper = new ObjectMapper()
         def decisionReason = 'Decision service unavailable'
+        def parseStep = { rawKey, statusKey, reasonKey, serviceId ->
+          def rawValue = (execution.getVariable(rawKey) ?: '{}') as String
+          def parsed
+          try {
+            parsed = mapper.readValue(rawValue, java.util.LinkedHashMap)
+          } catch (Exception ignored) {
+            parsed = [:]
+          }
+          if (!(parsed instanceof Map)) {
+            parsed = [:]
+          }
+          parsed['service'] = serviceId
+          parsed['status'] = parsed['status'] ?: (execution.getVariable(statusKey) ?: 'UNKNOWN')
+          def reason = execution.getVariable(reasonKey)
+          if (reason && !parsed['reason']) {
+            parsed['reason'] = reason
+          }
+          return parsed
+        }
+        def steps = [
+          isoftpull: parseStep('isoRawBody', 'iso_status', 'skip_reason_isoftpull', 'isoftpull'),
+          creditsafe: parseStep('csRawBody', 'creditsafe_status', 'skip_reason_creditsafe', 'creditsafe'),
+          plaid: parseStep('plaidRawBody', 'plaid_status', 'skip_reason_plaid', 'plaid'),
+        ]
         def payload = [
           status: 'ENGINE_ERROR',
           request_id: execution.getVariable('request_id'),
           decision_reason: decisionReason,
           decision_source: 'decision-service',
+          request_context: [
+            request_id: execution.getVariable('request_id'),
+            route_mode: execution.getVariable('route_mode'),
+            external_applicant_id: execution.getVariable('external_applicant_id'),
+          ],
+          steps: steps,
+          external_reports: steps,
+          step_statuses: [
+            isoftpull: steps.isoftpull.status,
+            creditsafe: steps.creditsafe.status,
+            plaid: steps.plaid.status,
+          ],
           summary: [
             request_id: execution.getVariable('request_id'),
             route_mode: execution.getVariable('route_mode'),
             decision_source: 'decision-service',
             decision_reason: decisionReason,
-            iso_status: execution.getVariable('iso_status') ?: 'UNKNOWN',
-            creditsafe_status: execution.getVariable('creditsafe_status') ?: 'UNKNOWN',
-            plaid_status: execution.getVariable('plaid_status') ?: 'UNKNOWN',
+            rules_evaluated: 0,
+            matched_rule: null,
+            iso_status: steps.isoftpull.status,
+            creditsafe_status: steps.creditsafe.status,
+            plaid_status: steps.plaid.status,
           ],
         ]
         execution.setVariable('decisionRawBody', mapper.writeValueAsString(payload))

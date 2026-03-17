@@ -237,6 +237,26 @@ class FlowableOpsHelperTests(unittest.TestCase):
                 "decision_reason": "Decision rules passed",
                 "decision_source": "decision-service",
                 "matched_rule": None,
+                "request_context": {
+                    "request_id": "REQ-56",
+                    "route_mode": "FLOWABLE",
+                    "external_applicant_id": "57",
+                },
+                "steps": {
+                    "isoftpull": {
+                        "status": "OK",
+                        "creditScore": 775,
+                    },
+                },
+                "external_reports": {
+                    "isoftpull": {
+                        "status": "OK",
+                        "creditScore": 775,
+                    },
+                },
+                "step_statuses": {
+                    "isoftpull": "OK",
+                },
                 "parsed_report": {
                     "status": "OK",
                     "summary": {
@@ -257,6 +277,9 @@ class FlowableOpsHelperTests(unittest.TestCase):
         self.assertEqual(result["decision_source"], "decision-service")
         self.assertEqual(result["summary"]["credit_score"], 775)
         self.assertEqual(result["parsed_report"]["status"], "OK")
+        self.assertEqual(result["external_reports"]["isoftpull"]["creditScore"], 775)
+        self.assertEqual(result["request_context"]["external_applicant_id"], "57")
+        self.assertEqual(result["step_statuses"]["isoftpull"], "OK")
 
     def test_resolve_mode_supports_deterministic_canary_rules(self):
         original_query = services.query
