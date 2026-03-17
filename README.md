@@ -45,6 +45,7 @@ Russian operational and project documentation:
 - `docs/INTEGRATION_SPEC_MOBILE_RU.md`
 - `docs/INTEGRATION_SPEC_SNP_RU.md`
 - `docs/API_CHEATSHEET_RU.md`
+- `docs/FLOWABLE_STABILIZATION_RU.md`
 - `docs/MOCK_BUREAUS_SERVICE_RU.md`
 - `docs/TEST_SPEC_MOCK_CONNECTORS_RU.md`
 - `docs/DEMO_TEST_CASES_RU.md`
@@ -54,7 +55,7 @@ Russian operational and project documentation:
 For request submission load testing, use `k6` with `scripts/stress-test-requests.js`.
 Detailed steps are in `docs/STRESS_TEST.md`.
 
-For production modeling workflows, `flowable-ui` is available behind nginx at `https://YOUR_DOMAIN/flowable-ui/index.html`. `FLOWABLE_AUTO_DEPLOY_BPMN=false` is recommended so BPMN definitions edited in Flowable UI are not overwritten by file-based auto-deploy on restart. Legacy paths such as `/flowable-modeler/` are redirected to the unified Flowable UI entry page.
+For production modeling workflows, `flowable-ui` is available behind nginx at `https://YOUR_DOMAIN/flowable-ui/`. `FLOWABLE_AUTO_DEPLOY_BPMN=false` is recommended so BPMN definitions edited in Flowable UI are not overwritten by file-based auto-deploy on restart. Legacy paths such as `/flowable-modeler/` are redirected to the unified Flowable UI entry page.
 
 ## Services (15, including optional mock)
 
