@@ -80,17 +80,20 @@
 
 ### 1. Один внешний вход в Flowable UI
 
-Официальный путь:
+Официальные публичные пути:
 
 ```text
+https://YOUR_DOMAIN/flowable-ui/
+https://YOUR_DOMAIN/flowable-task/
 https://YOUR_DOMAIN/flowable-modeler/
+https://YOUR_DOMAIN/flowable-admin/
+https://YOUR_DOMAIN/flowable-idm/
 ```
 
-Как основной путь для BPMN-работ используем именно `flowable-modeler`.
+Для BPMN-работ основной путь `flowable-modeler`, но остальные приложения должны открываться напрямую, без редиректов между разными Flowable apps.
 
 Не используем как основной вход:
 - `/flowable-ui/index.html`
-- `/flowable-ui/` only as compatibility redirect
 
 Legacy paths допустимы только как redirect compatibility.
 

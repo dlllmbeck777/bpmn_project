@@ -95,11 +95,11 @@ Expected result:
 
 - Admin UI: `https://YOUR_DOMAIN/`
 - API: `https://YOUR_DOMAIN/api/`
+- Flowable UI: `https://YOUR_DOMAIN/flowable-ui/`
+- Flowable Task: `https://YOUR_DOMAIN/flowable-task/`
 - Flowable Modeler: `https://YOUR_DOMAIN/flowable-modeler/`
 - Flowable Admin: `https://YOUR_DOMAIN/flowable-admin/`
 - Flowable IDM: `https://YOUR_DOMAIN/flowable-idm/`
-- Flowable Task: `https://YOUR_DOMAIN/flowable-task/`
-- Compatibility path: `https://YOUR_DOMAIN/flowable-ui/` -> redirects to `/flowable-modeler/`
 - Grafana: `https://YOUR_DOMAIN/grafana/`
 
 Internal services are not exposed in the production override.
@@ -107,7 +107,7 @@ Internal services are not exposed in the production override.
 ## Notes
 
 - The production override uses Compose merge tags such as `!reset`. If your Compose version cannot parse them, upgrade the Docker Compose plugin.
-- `flowable-ui` is enabled in production and proxied through nginx behind explicit per-app routes (`/flowable-modeler/`, `/flowable-admin/`, `/flowable-idm/`, `/flowable-task/`).
+- `flowable-ui` is enabled in production and proxied through nginx behind explicit per-app routes (`/flowable-ui/`, `/flowable-task/`, `/flowable-modeler/`, `/flowable-admin/`, `/flowable-idm/`).
 - `FLOWABLE_AUTO_DEPLOY_BPMN=false` means Flowable UI and the Flowable database become the source of truth for BPMN definitions.
 - If you edit and deploy a model from Flowable UI, keep the same process definition key expected by the adapter unless you intentionally update it in configuration.
 - `admin-ui` uses the production image defined in `admin-ui/Dockerfile.prod`.

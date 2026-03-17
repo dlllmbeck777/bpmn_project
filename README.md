@@ -55,13 +55,14 @@ Russian operational and project documentation:
 For request submission load testing, use `k6` with `scripts/stress-test-requests.js`.
 Detailed steps are in `docs/STRESS_TEST.md`.
 
-For production Flowable access, use the explicit app routes behind nginx:
+For production Flowable access, use the direct app routes behind nginx:
+- UI: `https://YOUR_DOMAIN/flowable-ui/`
+- task: `https://YOUR_DOMAIN/flowable-task/`
 - modeler: `https://YOUR_DOMAIN/flowable-modeler/`
 - admin: `https://YOUR_DOMAIN/flowable-admin/`
 - IDM/login: `https://YOUR_DOMAIN/flowable-idm/`
-- task: `https://YOUR_DOMAIN/flowable-task/`
 
-The compatibility path `https://YOUR_DOMAIN/flowable-ui/` redirects to `flowable-modeler`. `FLOWABLE_AUTO_DEPLOY_BPMN=false` is recommended so BPMN definitions edited in Flowable UI are not overwritten by file-based auto-deploy on restart.
+Each route is proxied directly to its Flowable app. `FLOWABLE_AUTO_DEPLOY_BPMN=false` is recommended so BPMN definitions edited in Flowable UI are not overwritten by file-based auto-deploy on restart.
 
 ## Services (15, including optional mock)
 

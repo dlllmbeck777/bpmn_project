@@ -143,11 +143,11 @@ bash scripts/rebuild-prod.sh
 
 Production endpoint:
 
+- `https://YOUR_DOMAIN/flowable-ui/`
+- `https://YOUR_DOMAIN/flowable-task/`
 - `https://YOUR_DOMAIN/flowable-modeler/`
 - `https://YOUR_DOMAIN/flowable-admin/`
 - `https://YOUR_DOMAIN/flowable-idm/`
-- `https://YOUR_DOMAIN/flowable-task/`
-- `https://YOUR_DOMAIN/flowable-ui/` используется только как compatibility redirect на `flowable-modeler`
 
 Рекомендуемый режим:
 
