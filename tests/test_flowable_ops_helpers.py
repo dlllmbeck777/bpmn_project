@@ -228,6 +228,36 @@ class FlowableOpsHelperTests(unittest.TestCase):
         self.assertNotIn("crm", result["steps"])
         self.assertEqual(result["summary"]["request_id"], "REQ-55")
 
+    def test_build_flowable_result_from_variables_falls_back_to_decision_raw_body(self):
+        variables = {
+            "request_id": "REQ-56",
+            "route_mode": "FLOWABLE",
+            "decisionRawBody": {
+                "status": "COMPLETED",
+                "decision_reason": "Decision rules passed",
+                "decision_source": "decision-service",
+                "matched_rule": None,
+                "parsed_report": {
+                    "status": "OK",
+                    "summary": {
+                        "credit_score": 775,
+                        "collection_count": 0,
+                    },
+                },
+                "summary": {
+                    "credit_score": 775,
+                    "collection_count": 0,
+                    "decision_reason": "Decision rules passed",
+                },
+            },
+        }
+        result = services.build_flowable_result_from_variables("REQ-56", "instance-56", variables)
+        self.assertEqual(result["status"], "COMPLETED")
+        self.assertEqual(result["decision_reason"], "Decision rules passed")
+        self.assertEqual(result["decision_source"], "decision-service")
+        self.assertEqual(result["summary"]["credit_score"], 775)
+        self.assertEqual(result["parsed_report"]["status"], "OK")
+
     def test_resolve_mode_supports_deterministic_canary_rules(self):
         original_query = services.query
         try:

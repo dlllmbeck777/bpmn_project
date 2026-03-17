@@ -206,10 +206,20 @@ def _track_task(task: asyncio.Task):
 
 
 def _extract_summary(process_variables: Dict[str, Any]):
-    result = _parse_jsonish(process_variables.get("orchestration_result", {}))
+    result = _extract_decision_payload(process_variables)
     if isinstance(result, dict):
         return result.get("summary", result)
     return result
+
+
+def _extract_decision_payload(process_variables: Dict[str, Any]):
+    orchestration_result = _parse_jsonish(process_variables.get("orchestration_result", {}))
+    if isinstance(orchestration_result, dict) and orchestration_result:
+        return orchestration_result
+    decision_raw = _parse_jsonish(process_variables.get("decisionRawBody", {}))
+    if isinstance(decision_raw, dict):
+        return decision_raw
+    return {}
 
 
 async def _track(request_id: str, stage: str, direction: str, title: str, *, cid: str = "", service_id: Optional[str] = None, status: Optional[str] = None, payload: Any = None):
@@ -384,12 +394,17 @@ def _build_watch_timeout_result(request_id: str, instance_id: str, snapshot: Dic
 
 async def _build_result_payload(body: "RequestIn", instance_id: str, process_variables: Dict[str, Any], connector_urls: Dict[str, str], cid: str):
     steps = _build_steps(process_variables)
-    orchestration_result = _parse_jsonish(process_variables.get("orchestration_result", {}))
-    decision_payload = orchestration_result if isinstance(orchestration_result, dict) else {}
+    decision_payload = _extract_decision_payload(process_variables)
     parsed_report = decision_payload.get("parsed_report") if isinstance(decision_payload.get("parsed_report"), dict) else None
     if not parsed_report:
         parsed_report = await _parsed_report(body.request_id, steps, cid)
-    summary = decision_payload.get("summary") if isinstance(decision_payload.get("summary"), dict) else _extract_summary(process_variables)
+    summary = decision_payload.get("summary") if isinstance(decision_payload.get("summary"), dict) else {}
+    if not summary and isinstance(parsed_report, dict):
+        parsed_summary = parsed_report.get("summary")
+        if isinstance(parsed_summary, dict):
+            summary = parsed_summary
+    if not summary:
+        summary = _extract_summary(process_variables)
     return {
         "status": decision_payload.get("status", "COMPLETED"),
         "adapter": "flowable",

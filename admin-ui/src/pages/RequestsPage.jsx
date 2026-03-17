@@ -73,6 +73,12 @@ function metricValue(result, key) {
   return value === undefined || value === null || value === '' ? '-' : String(value)
 }
 
+function matchedRuleLabel(result) {
+  const rule = result?.matched_rule || result?.summary?.matched_rule
+  if (!rule || typeof rule !== 'object') return '-'
+  return rule.name || rule.id || '-'
+}
+
 function noteTime(value) {
   return value ? String(value).slice(0, 19).replace('T', ' ') : '-'
 }
@@ -314,6 +320,8 @@ export default function RequestsPage() {
               <div className="card-title">Outcome</div>
               <div className="kv-row"><span className="kv-key">Final status</span><span className="kv-val"><StatusBadge status={detail.status} /></span></div>
               <div className="kv-row"><span className="kv-key">Decision</span><span className="kv-val">{engineHint(detail)}</span></div>
+              <div className="kv-row"><span className="kv-key">Decision source</span><span className="kv-val">{detail.result?.decision_source || '-'}</span></div>
+              <div className="kv-row"><span className="kv-key">Matched rule</span><span className="kv-val">{matchedRuleLabel(detail.result)}</span></div>
               <div className="kv-row"><span className="kv-key">Engine instance</span><span className="kv-val">{detail.result?.engine?.instance_id || '-'}</span></div>
               {detail.flowable_live_state && (
                 <>
@@ -325,6 +333,8 @@ export default function RequestsPage() {
             </div>
             <div className="card">
               <div className="card-title">Decision inputs</div>
+              <div className="kv-row"><span className="kv-key">Rules evaluated</span><span className="kv-val">{metricValue(detail.result, 'rules_evaluated')}</span></div>
+              <div className="kv-row"><span className="kv-key">Required reports</span><span className="kv-val">{metricValue(detail.result, 'required_reports_available')}</span></div>
               <div className="kv-row"><span className="kv-key">Credit score</span><span className="kv-val">{metricValue(detail.result, 'credit_score')}</span></div>
               <div className="kv-row"><span className="kv-key">Collections</span><span className="kv-val">{metricValue(detail.result, 'collection_count')}</span></div>
               <div className="kv-row"><span className="kv-key">Creditsafe alerts</span><span className="kv-val">{metricValue(detail.result, 'creditsafe_compliance_alert_count')}</span></div>

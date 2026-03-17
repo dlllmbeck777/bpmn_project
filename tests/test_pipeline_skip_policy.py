@@ -220,6 +220,17 @@ class PipelineSkipPolicyTests(unittest.TestCase):
         self.assertEqual(variables_by_name["external_applicant_id"], "APP-1")
         self.assertEqual(variables_by_name["applicant_json"], '{"firstName": "John"}')
 
+    def test_extract_decision_payload_falls_back_to_decision_raw_body(self):
+        payload = flowable_adapter._extract_decision_payload({
+            "decisionRawBody": {
+                "status": "COMPLETED",
+                "decision_reason": "Decision rules passed",
+                "summary": {"credit_score": 775},
+            }
+        })
+        self.assertEqual(payload["status"], "COMPLETED")
+        self.assertEqual(payload["summary"]["credit_score"], 775)
+
 
 if __name__ == '__main__':
     unittest.main()

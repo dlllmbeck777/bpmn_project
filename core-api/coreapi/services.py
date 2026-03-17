@@ -935,6 +935,38 @@ def normalize_result_payload(result: Dict[str, Any]):
     normalized = dict(result or {})
     for key, value in list(normalized.items()):
         normalized[key] = _parse_embedded_json(value)
+
+    decision_payload = normalized.get("decisionRawBody")
+    decision_payload = decision_payload if isinstance(decision_payload, dict) else {}
+    parsed_report = normalized.get("parsed_report")
+    parsed_report = parsed_report if isinstance(parsed_report, dict) else {}
+    parsed_summary = parsed_report.get("summary") if isinstance(parsed_report.get("summary"), dict) else {}
+    decision_summary = decision_payload.get("summary") if isinstance(decision_payload.get("summary"), dict) else {}
+
+    if not parsed_report and isinstance(decision_payload.get("parsed_report"), dict):
+        parsed_report = decision_payload.get("parsed_report")
+        normalized["parsed_report"] = parsed_report
+        parsed_summary = parsed_report.get("summary") if isinstance(parsed_report.get("summary"), dict) else {}
+
+    if not isinstance(normalized.get("summary"), dict) or not normalized.get("summary"):
+        if decision_summary:
+            normalized["summary"] = decision_summary
+        elif parsed_summary:
+            normalized["summary"] = parsed_summary
+
+    if not normalized.get("decision_reason"):
+        reason = decision_payload.get("decision_reason")
+        if not reason and isinstance(normalized.get("summary"), dict):
+            reason = normalized["summary"].get("decision_reason")
+        if reason:
+            normalized["decision_reason"] = reason
+
+    if not normalized.get("decision_source") and decision_payload.get("decision_source"):
+        normalized["decision_source"] = decision_payload.get("decision_source")
+    if not normalized.get("matched_rule") and decision_payload.get("matched_rule"):
+        normalized["matched_rule"] = decision_payload.get("matched_rule")
+    if not normalized.get("status") and decision_payload.get("status"):
+        normalized["status"] = decision_payload.get("status")
     return normalized
 
 
@@ -1076,6 +1108,9 @@ async def finalize_request(request_id: str, mode: str, result: Dict[str, Any], c
             "status": final_status,
             "decision_reason": decision_reason,
             "summary": summary,
+            "decision_source": normalized_result.get("decision_source"),
+            "matched_rule": normalized_result.get("matched_rule"),
+            "parsed_report_status": (normalized_result.get("parsed_report") or {}).get("status") if isinstance(normalized_result.get("parsed_report"), dict) else None,
             "engine": normalized_result.get("engine", {}),
             "snp_result": snp,
         },
@@ -1601,11 +1636,18 @@ def build_flowable_steps(process_variables: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def build_flowable_summary(process_variables: Dict[str, Any]) -> Dict[str, Any]:
-    orchestration_result = _parse_embedded_json(process_variables.get("orchestration_result", {}))
-    if isinstance(orchestration_result, dict):
-        summary = orchestration_result.get("summary")
+    decision_payload = _parse_embedded_json(process_variables.get("orchestration_result", {}))
+    if not isinstance(decision_payload, dict) or not decision_payload:
+        decision_payload = _parse_embedded_json(process_variables.get("decisionRawBody", {}))
+    if isinstance(decision_payload, dict):
+        summary = decision_payload.get("summary")
         if isinstance(summary, dict):
             return summary
+        parsed_report = decision_payload.get("parsed_report")
+        if isinstance(parsed_report, dict):
+            parsed_summary = parsed_report.get("summary")
+            if isinstance(parsed_summary, dict):
+                return parsed_summary
 
     summary = {"request_id": process_variables.get("request_id", ""), "route_mode": process_variables.get("route_mode", "FLOWABLE")}
     for service_id, _, status_key, _ in FLOWABLE_STEP_MAP:
@@ -1616,6 +1658,8 @@ def build_flowable_summary(process_variables: Dict[str, Any]) -> Dict[str, Any]:
 def build_flowable_result_from_variables(request_id: str, instance_id: str, process_variables: Dict[str, Any]) -> Dict[str, Any]:
     normalized_variables = normalize_flowable_variables(process_variables)
     orchestration_result = _parse_embedded_json(normalized_variables.get("orchestration_result", {}))
+    if not isinstance(orchestration_result, dict) or not orchestration_result:
+        orchestration_result = _parse_embedded_json(normalized_variables.get("decisionRawBody", {}))
     result = normalize_result_payload(orchestration_result) if isinstance(orchestration_result, dict) else {}
     result.setdefault("status", "COMPLETED")
     result["adapter"] = "flowable"
