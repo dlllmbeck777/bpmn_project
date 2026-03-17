@@ -20,7 +20,7 @@ services:
       flowable-rest:
         condition: service_started
       flowable-ui:
-        condition: service_started
+        condition: service_healthy
     restart: always
     networks: [frontend, flowable]
     deploy:
@@ -239,6 +239,12 @@ services:
     networks: [frontend, flowable]
     restart: always
     logging: *logging
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/flowable-ui/index.html"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
     deploy:
       resources:
         limits: { cpus: '0.75', memory: 512M }

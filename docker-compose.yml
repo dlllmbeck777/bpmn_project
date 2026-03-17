@@ -239,6 +239,12 @@ services:
       - flowable-db
     restart: unless-stopped
     networks: [flowable]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/flowable-ui/index.html"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
 
   # ── Admin UI ──────────────────────────────────────────
   admin-ui:
