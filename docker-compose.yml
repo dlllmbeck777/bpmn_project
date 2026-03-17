@@ -111,7 +111,7 @@ services:
     restart: unless-stopped
     networks: [backend, flowable]
     healthcheck:
-      test: ["CMD", "sh", "-c", "curl -sf http://localhost:8011/health && curl -sf http://localhost:8012/health && curl -sf -u admin:${FLOWABLE_PASSWORD:-test} http://flowable-rest:8080/flowable-rest/service/actuator/health"]
+      test: ["CMD", "sh", "-c", "curl -sf http://localhost:8011/health && curl -sf http://localhost:8012/health && curl -sf -u admin:${FLOWABLE_PASSWORD:-test} http://flowable-rest:8080/flowable-rest/actuator/health"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -225,7 +225,7 @@ services:
     restart: unless-stopped
     networks: [flowable, backend]
     healthcheck:
-      test: ["CMD", "sh", "-c", "curl -sf -u admin:${FLOWABLE_PASSWORD:-test} http://localhost:8080/flowable-rest/service/actuator/health"]
+      test: ["CMD", "sh", "-c", "curl -sf -u admin:${FLOWABLE_PASSWORD:-test} http://localhost:8080/flowable-rest/actuator/health"]
       interval: 15s
       timeout: 5s
       retries: 20
