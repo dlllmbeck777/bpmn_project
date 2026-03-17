@@ -170,6 +170,67 @@ class PipelineStepIn(BaseModel):
     meta: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ApplicantIn(BaseModel):
+    firstName: str = Field(..., example="John")
+    lastName: str = Field(..., example="Doe")
+    address: str = Field(..., example="123 Main Street")
+    city: str = Field(..., example="New York")
+    state: str = Field(..., example="NY")
+    zipCode: str = Field(..., example="10001")
+    ssn: str = Field(..., example="123456789")
+    dateOfBirth: str = Field(..., example="1985-06-15")
+    email: str = Field(..., example="john@example.com")
+    phone: str = Field(..., example="555-123-4567")
+
+    model_config = {"json_schema_extra": {"examples": [
+        {
+            "firstName": "John",
+            "lastName": "Doe",
+            "address": "123 Main Street",
+            "city": "New York",
+            "state": "NY",
+            "zipCode": "10001",
+            "ssn": "123456789",
+            "dateOfBirth": "1985-06-15",
+            "email": "john@example.com",
+            "phone": "555-123-4567",
+        }
+    ]}}
+
+
+class ApplicantUpdateIn(BaseModel):
+    firstName: Optional[str] = Field(None, example="John")
+    lastName: Optional[str] = Field(None, example="Smith")
+    address: Optional[str] = Field(None, example="456 Oak Avenue")
+    city: Optional[str] = Field(None, example="Los Angeles")
+    state: Optional[str] = Field(None, example="CA")
+    zipCode: Optional[str] = Field(None, example="90001")
+    ssn: Optional[str] = Field(None, example="123456789")
+    dateOfBirth: Optional[str] = Field(None, example="1985-06-15")
+    email: Optional[str] = Field(None, example="john@example.com")
+    phone: Optional[str] = Field(None, example="555-123-4567")
+
+    @model_validator(mode="after")
+    def validate_has_updates(self):
+        if not any(
+            getattr(self, field_name) not in (None, "")
+            for field_name in (
+                "firstName",
+                "lastName",
+                "address",
+                "city",
+                "state",
+                "zipCode",
+                "ssn",
+                "dateOfBirth",
+                "email",
+                "phone",
+            )
+        ):
+            raise ValueError("at least one applicant field must be provided")
+        return self
+
+
 class RequestIn(BaseModel):
     firstName: Optional[str] = Field(None, example="John")
     lastName: Optional[str] = Field(None, example="Doe")
@@ -184,6 +245,7 @@ class RequestIn(BaseModel):
     request_id: Optional[str] = Field(None, example="REQ-2026-0001")
     customer_id: Optional[str] = Field(None, example="CUST-001")
     iin: Optional[str] = Field(None, example="900101123456")
+    external_applicant_id: Optional[str] = Field(None, example="51")
     product_type: Optional[str] = Field(None, example="loan")
     orchestration_mode: str = Field("auto", example="auto")
     payload: Dict[str, Any] = Field(default_factory=dict, example={"amount": 5000, "currency": "USD"})

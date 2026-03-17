@@ -391,6 +391,7 @@ async def _build_result_payload(body: "RequestIn", instance_id: str, process_var
         "status": "COMPLETED",
         "adapter": "flowable",
         "request_id": body.request_id,
+        "external_applicant_id": body.external_applicant_id or "",
         "engine": {"engine": "flowable", "started": True, "instance_id": instance_id, "completed": True},
         "connector_urls_injected": connector_urls,
         "process_variables": {key: _parse_jsonish(value) for key, value in process_variables.items()},
@@ -411,6 +412,7 @@ async def _emit_flowable_trace(body: "RequestIn", process_variables: Dict[str, A
                 "request_id": body.request_id,
                 "customer_id": body.customer_id,
                 "iin": body.iin,
+                "external_applicant_id": body.external_applicant_id or "",
                 "product_type": body.product_type,
                 "applicant": body.applicant or (body.payload.get("applicant", {}) if isinstance(body.payload, dict) else {}),
             }
@@ -573,6 +575,7 @@ class RequestIn(BaseModel):
     request_id: str
     customer_id: str
     iin: str
+    external_applicant_id: str = ""
     product_type: str
     orchestration_mode: str = "flowable"
     applicant: Dict[str, Any] = Field(default_factory=dict)
@@ -600,6 +603,7 @@ async def orchestrate(body: RequestIn, request: Request):
         {"name": "request_id", "value": body.request_id},
         {"name": "customer_id", "value": body.customer_id},
         {"name": "iin", "value": body.iin},
+        {"name": "external_applicant_id", "value": body.external_applicant_id or ""},
         {"name": "product_type", "value": body.product_type},
         {"name": "route_mode", "value": "FLOWABLE"},
     ]
@@ -730,6 +734,7 @@ async def orchestrate(body: RequestIn, request: Request):
             "status": "RUNNING",
             "adapter": "flowable",
             "request_id": body.request_id,
+            "external_applicant_id": body.external_applicant_id or "",
             "engine": {"engine": "flowable", "started": True, "instance_id": instance_id, "completed": False},
             "connector_urls_injected": connector_urls,
             "callback_expected": True,

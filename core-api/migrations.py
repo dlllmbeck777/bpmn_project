@@ -155,6 +155,25 @@ MIGRATIONS = [
         );
         CREATE INDEX IF NOT EXISTS idx_request_notes_request_id ON request_notes(request_id, id DESC);
     """),
+    (11, """
+        ALTER TABLE requests ADD COLUMN IF NOT EXISTS external_applicant_id TEXT;
+        CREATE INDEX IF NOT EXISTS idx_requests_external_applicant_id ON requests(external_applicant_id);
+
+        INSERT INTO services (id,name,type,base_url,health_path,enabled,timeout_ms,retry_count,endpoint_path,meta)
+        VALUES (
+            'credit-backend',
+            'Unified Applicant Backend',
+            'external',
+            'http://18.119.38.114',
+            '/api/v1/credit-providers/available',
+            TRUE,
+            15000,
+            1,
+            '',
+            '{"owner":"external-credit-server","applicant_contract":"v1"}'::jsonb
+        )
+        ON CONFLICT (id) DO NOTHING;
+    """),
 ]
 
 
@@ -210,6 +229,7 @@ def seed_defaults(conn):
         return
 
     svcs = [
+        ("credit-backend", "Unified Applicant Backend", "external", "http://18.119.38.114", "/api/v1/credit-providers/available", ""),
         ("flowable-adapter", "Flowable Adapter", "orchestrator", "http://orchestrators:8011", "/health", "/orchestrate"),
         ("custom-adapter", "Custom Adapter", "orchestrator", "http://orchestrators:8012", "/health", "/orchestrate"),
         ("flowable-rest", "Flowable REST Engine", "engine", "http://flowable-rest:8080/flowable-rest/service", "/actuator/health", ""),

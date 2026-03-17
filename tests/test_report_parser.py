@@ -146,6 +146,55 @@ class ReportParserTests(unittest.TestCase):
         self.assertEqual(parsed["summary"]["collection_count"], 6)
         self.assertEqual(parsed["summary"]["creditsafe_compliance_alert_count"], 2)
 
+    def test_extract_plaid_handles_pending_link_response(self):
+        payload = {
+            "status": "PENDING",
+            "intelligenceIndicator": "PENDING_LINK",
+            "reportUrl": "http://18.119.38.114/api/v1/plaid/link/abc",
+            "rawResponse": {
+                "trackingUrl": "http://18.119.38.114/api/v1/plaid/link/abc",
+                "trackingId": "abc",
+            },
+        }
+
+        parsed = report_parser._extract_plaid(payload)
+
+        self.assertEqual(parsed["status"], "PENDING_LINK")
+        self.assertEqual(parsed["accounts_found"], 0)
+        self.assertEqual(parsed["tracking_url"], "http://18.119.38.114/api/v1/plaid/link/abc")
+
+    def test_extract_isoftpull_respects_failed_upstream_status(self):
+        payload = {
+            "status": "FAILED",
+            "errorMessage": "upstream validation error",
+            "rawResponse": {},
+        }
+
+        parsed = report_parser._extract_isoftpull(payload)
+
+        self.assertEqual(parsed["status"], "FAILED")
+
+    def test_parse_summary_exposes_plaid_tracking_when_report_is_pending(self):
+        request = report_parser.ParseRequest(
+            request_id="REQ-2",
+            steps={
+                "plaid": {
+                    "status": "PENDING",
+                    "intelligenceIndicator": "PENDING_LINK",
+                    "reportUrl": "http://18.119.38.114/api/v1/plaid/link/abc",
+                    "rawResponse": {
+                        "trackingUrl": "http://18.119.38.114/api/v1/plaid/link/abc",
+                    },
+                }
+            },
+        )
+
+        parsed = report_parser.parse(request)
+
+        self.assertEqual(parsed["summary"]["plaid_status"], "PENDING_LINK")
+        self.assertEqual(parsed["summary"]["plaid_tracking_url"], "http://18.119.38.114/api/v1/plaid/link/abc")
+        self.assertFalse(parsed["summary"]["plaid_report_ready"])
+
 
 if __name__ == "__main__":
     unittest.main()

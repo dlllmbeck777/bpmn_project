@@ -38,6 +38,8 @@ services:
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
       - FLOWABLE_PASSWORD=${FLOWABLE_PASSWORD:-test}
       - FLOWABLE_PASSWORD_FALLBACKS=${FLOWABLE_PASSWORD_FALLBACKS:-test}
+      - CREDIT_BACKEND_DEFAULT_URL=${CREDIT_BACKEND_DEFAULT_URL:-http://18.119.38.114}
+      - CREDIT_BACKEND_TIMEOUT_MS=${CREDIT_BACKEND_TIMEOUT_MS:-15000}
       - ADMIN_LOGIN_USERNAME=${ADMIN_LOGIN_USERNAME:-admin}
       - ADMIN_LOGIN_PASSWORD=${ADMIN_LOGIN_PASSWORD:-admin}
       - SENIOR_ANALYST_LOGIN_USERNAME=${SENIOR_ANALYST_LOGIN_USERNAME:-senior}
@@ -120,6 +122,10 @@ services:
     container_name: isoftpull
     ports:
       - "8101:8101"
+    environment:
+      - CONFIG_SERVICE_URL=http://core-api:8000
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
+      - CREDIT_BACKEND_DEFAULT_URL=${CREDIT_BACKEND_DEFAULT_URL:-http://18.119.38.114}
     restart: unless-stopped
     networks: [backend]
     healthcheck:
@@ -133,6 +139,10 @@ services:
     container_name: creditsafe
     ports:
       - "8102:8102"
+    environment:
+      - CONFIG_SERVICE_URL=http://core-api:8000
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
+      - CREDIT_BACKEND_DEFAULT_URL=${CREDIT_BACKEND_DEFAULT_URL:-http://18.119.38.114}
     restart: unless-stopped
     networks: [backend]
     healthcheck:
@@ -146,6 +156,10 @@ services:
     container_name: plaid
     ports:
       - "8103:8103"
+    environment:
+      - CONFIG_SERVICE_URL=http://core-api:8000
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
+      - CREDIT_BACKEND_DEFAULT_URL=${CREDIT_BACKEND_DEFAULT_URL:-http://18.119.38.114}
     restart: unless-stopped
     networks: [backend]
     healthcheck:

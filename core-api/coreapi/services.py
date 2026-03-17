@@ -52,6 +52,9 @@ APPLICANT_INPUT_FIELDS = (
     "email",
     "phone",
 )
+CREDIT_BACKEND_SERVICE_ID = "credit-backend"
+CREDIT_BACKEND_DEFAULT_URL = (os.getenv("CREDIT_BACKEND_DEFAULT_URL", "http://18.119.38.114") or "http://18.119.38.114").strip().rstrip("/")
+CREDIT_BACKEND_DEFAULT_TIMEOUT_MS = int(os.getenv("CREDIT_BACKEND_TIMEOUT_MS", "15000") or "15000")
 
 ROLE_ANALYST = "analyst"
 ROLE_SENIOR_ANALYST = "senior_analyst"
@@ -82,6 +85,74 @@ FLOWABLE_STEP_MAP = (
 )
 PASSWORD_SCHEME = "pbkdf2_sha256"
 PASSWORD_ITERATIONS = 480_000
+
+
+def _credit_backend_service():
+    cached = config_cache.get(f"svc:{CREDIT_BACKEND_SERVICE_ID}")
+    row = dict(cached) if isinstance(cached, dict) else {}
+    if not row:
+        row = to_json_ready(query("SELECT * FROM services WHERE id=%s", (CREDIT_BACKEND_SERVICE_ID,), "one")) or {}
+        if row:
+            config_cache.set(f"svc:{CREDIT_BACKEND_SERVICE_ID}", row)
+    if not row:
+        return {
+            "id": CREDIT_BACKEND_SERVICE_ID,
+            "name": "Unified Applicant Backend",
+            "type": "external",
+            "base_url": CREDIT_BACKEND_DEFAULT_URL,
+            "timeout_ms": CREDIT_BACKEND_DEFAULT_TIMEOUT_MS,
+            "retry_count": 1,
+            "endpoint_path": "",
+            "health_path": "/api/v1/credit-providers/available",
+            "enabled": True,
+            "meta": {},
+        }
+    row["base_url"] = (_clean_text(row.get("base_url")) or CREDIT_BACKEND_DEFAULT_URL).rstrip("/")
+    row["timeout_ms"] = int(row.get("timeout_ms") or CREDIT_BACKEND_DEFAULT_TIMEOUT_MS)
+    row["retry_count"] = int(row.get("retry_count") or 1)
+    return row
+
+
+async def _credit_backend_request(
+    method: str,
+    path: str,
+    *,
+    body: Optional[Dict[str, Any]] = None,
+    params: Optional[Dict[str, Any]] = None,
+    cid: str = "",
+):
+    service = _credit_backend_service()
+    base_url = (_clean_text(service.get("base_url")) or CREDIT_BACKEND_DEFAULT_URL).rstrip("/")
+    if not base_url:
+        raise HTTPException(503, "credit backend not configured")
+
+    url = f"{base_url}{path if path.startswith('/') else f'/{path}'}"
+    timeout = max(5.0, float(service.get("timeout_ms", CREDIT_BACKEND_DEFAULT_TIMEOUT_MS)) / 1000)
+    headers = {}
+    if cid:
+        headers["X-Correlation-ID"] = cid
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.request(method, url, json=body, params=params, headers=headers)
+    except Exception as exc:
+        raise HTTPException(502, f"credit backend unavailable: {exc}") from exc
+
+    payload: Any
+    if not response.content:
+        payload = {}
+    else:
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {"raw": response.text}
+
+    if response.status_code >= 400:
+        detail = payload if isinstance(payload, (dict, list)) else {"error": response.text or response.reason_phrase}
+        status_code = response.status_code if response.status_code < 500 else 502
+        raise HTTPException(status_code, detail)
+
+    return payload
 
 
 def normalize_username(username: str) -> str:
@@ -340,6 +411,23 @@ def _build_applicant_from_legacy(data: Dict[str, Any]) -> Dict[str, Any]:
     return {key: value for key, value in applicant.items() if value not in ("", None)}
 
 
+def _extract_external_applicant_id(data: Dict[str, Any], payload: Dict[str, Any]) -> str:
+    return (
+        _clean_text(data.get("external_applicant_id"))
+        or _clean_text(data.get("externalApplicantId"))
+        or _clean_text(payload.get("external_applicant_id"))
+        or _clean_text(payload.get("externalApplicantId"))
+    )
+
+
+def _external_applicant_payload(applicant: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        field: _clean_text((applicant or {}).get(field))
+        for field in APPLICANT_INPUT_FIELDS
+        if _clean_text((applicant or {}).get(field))
+    }
+
+
 def normalize_incoming_request(data: Dict[str, Any]) -> Dict[str, Any]:
     applicant = _build_applicant_from_input(data) if _looks_like_applicant_input(data) else _build_applicant_from_legacy(data)
     request_id = _clean_text(data.get("request_id")) or _generate_request_id()
@@ -351,12 +439,16 @@ def normalize_incoming_request(data: Dict[str, Any]) -> Dict[str, Any]:
     payload = dict(data.get("payload") or {})
     if applicant:
         payload.setdefault("applicant", applicant)
+    external_applicant_id = _extract_external_applicant_id(data, payload)
+    if external_applicant_id:
+        payload["external_applicant_id"] = external_applicant_id
 
     internal = {
         "request_id": request_id,
         "customer_id": customer_id,
         "iin": ssn_value,
         "ssn": ssn_value,
+        "external_applicant_id": external_applicant_id,
         "product_type": product_type,
         "orchestration_mode": orchestration_mode,
         "payload": payload,
@@ -371,6 +463,7 @@ def normalize_incoming_request(data: Dict[str, Any]) -> Dict[str, Any]:
         "product_type": product_type,
         "orchestration_mode": orchestration_mode,
         "internal": internal,
+        "external_applicant_id": external_applicant_id,
         "applicant_profile": applicant,
         "applicant_profile_encrypted": encrypt_sensitive(applicant) if applicant else {},
         "ssn_encrypted": encrypt_field(ssn_value) if ssn_value else "",
@@ -407,6 +500,55 @@ def build_applicant_location(applicant: Dict[str, Any]) -> str:
     city = _clean_text((applicant or {}).get("city"))
     state = _clean_text((applicant or {}).get("state"))
     return ", ".join(part for part in (city, state) if part)
+
+
+async def create_external_applicant(applicant: Dict[str, Any], cid: str = "") -> Dict[str, Any]:
+    payload = _external_applicant_payload(applicant)
+    missing = [field for field in APPLICANT_INPUT_FIELDS if field not in payload]
+    if missing:
+        raise HTTPException(400, f"missing applicant fields for external sync: {', '.join(missing)}")
+    return await _credit_backend_request("POST", "/api/v1/applicants", body=payload, cid=cid)
+
+
+async def get_external_applicant(applicant_id: str, cid: str = ""):
+    return await _credit_backend_request("GET", f"/api/v1/applicants/{applicant_id}", cid=cid)
+
+
+async def list_external_applicants(cid: str = ""):
+    return await _credit_backend_request("GET", "/api/v1/applicants", cid=cid)
+
+
+async def update_external_applicant(applicant_id: str, updates: Dict[str, Any], cid: str = ""):
+    payload = {field: _clean_text(updates.get(field)) for field in APPLICANT_INPUT_FIELDS if _clean_text(updates.get(field))}
+    if not payload:
+        raise HTTPException(400, "at least one applicant field must be provided")
+    return await _credit_backend_request("PUT", f"/api/v1/applicants/{applicant_id}", body=payload, cid=cid)
+
+
+async def delete_external_applicant(applicant_id: str, cid: str = ""):
+    return await _credit_backend_request("DELETE", f"/api/v1/applicants/{applicant_id}", cid=cid)
+
+
+async def trigger_external_credit_check(applicant_id: str, provider: str = "", cid: str = ""):
+    suffix = f"/{provider.strip().lower()}" if provider else ""
+    return await _credit_backend_request("POST", f"/api/v1/applicants/{applicant_id}/credit-check{suffix}", cid=cid)
+
+
+async def get_external_credit_reports(applicant_id: str, cid: str = ""):
+    return await _credit_backend_request("GET", f"/api/v1/applicants/{applicant_id}/credit-reports", cid=cid)
+
+
+async def list_external_credit_providers(path_suffix: str = "", cid: str = ""):
+    suffix = f"/{path_suffix.strip('/')}" if path_suffix else ""
+    return await _credit_backend_request("GET", f"/api/v1/credit-providers{suffix}", cid=cid)
+
+
+async def get_external_plaid_link(tracking_id: str, cid: str = ""):
+    return await _credit_backend_request("GET", f"/api/v1/plaid/link/{tracking_id}", cid=cid)
+
+
+async def get_external_plaid_link_status(tracking_id: str, cid: str = ""):
+    return await _credit_backend_request("GET", f"/api/v1/plaid/link/{tracking_id}/status", cid=cid)
 
 
 def _nested_values(value: Any):
@@ -533,6 +675,8 @@ def build_request_view(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]
     item["applicant_profile"] = applicant_view
     item["applicant_name"] = build_applicant_name(applicant)
     item["applicant_location"] = build_applicant_location(applicant)
+    item["external_applicant_id"] = _clean_text(item.get("external_applicant_id"))
+    item["credit_backend_base_url"] = _credit_backend_service().get("base_url", CREDIT_BACKEND_DEFAULT_URL)
     item["ssn_masked"] = ssn_masked
     item["iin_masked"] = ssn_masked
     item["email_masked"] = email_masked
@@ -799,7 +943,7 @@ def get_request_context(request_id: str):
     row = query(
         """
         SELECT request_id, customer_id, product_type, orchestration_mode, correlation_id,
-               applicant_profile, ssn_encrypted, iin_encrypted
+               applicant_profile, ssn_encrypted, iin_encrypted, external_applicant_id
         FROM requests
         WHERE request_id=%s
         """,
@@ -818,6 +962,7 @@ def get_request_context(request_id: str):
         context.update({key: value for key, value in applicant.items() if value not in ("", None)})
         context.setdefault("ssn", applicant.get("ssn", ""))
         context.setdefault("iin", applicant.get("ssn", ""))
+    context["external_applicant_id"] = _clean_text(context.get("external_applicant_id"))
     return context
 
 
@@ -1045,6 +1190,7 @@ async def submit_request_payload(
     applicant_profile = normalized["applicant_profile_encrypted"]
     ssn_encrypted = normalized["ssn_encrypted"]
     iin_encrypted = ssn_encrypted
+    external_applicant_id = _clean_text(normalized.get("external_applicant_id"))
     metrics.inc("requests_total", f'product="{product_type}"')
 
     existing = query("SELECT status FROM requests WHERE request_id=%s", (request_id,), "one")
@@ -1061,6 +1207,90 @@ async def submit_request_payload(
         correlation_id=cid,
     )
 
+    if external_applicant_id:
+        data["external_applicant_id"] = external_applicant_id
+        data.setdefault("payload", {})["external_applicant_id"] = external_applicant_id
+        track_request_event(
+            request_id,
+            "applicant_backend",
+            "STATE",
+            "External applicant linked to request",
+            service_id=CREDIT_BACKEND_SERVICE_ID,
+            status="LINKED",
+            payload={"external_applicant_id": external_applicant_id, "base_url": _credit_backend_service().get("base_url", CREDIT_BACKEND_DEFAULT_URL)},
+            correlation_id=cid,
+        )
+    else:
+        track_request_event(
+            request_id,
+            "applicant_backend",
+            "OUT",
+            "External applicant creation requested",
+            service_id=CREDIT_BACKEND_SERVICE_ID,
+            status="SUBMITTED",
+            payload={"applicant": normalized.get("applicant_profile") or {}},
+            correlation_id=cid,
+        )
+        try:
+            external_record = await create_external_applicant(normalized.get("applicant_profile") or {}, cid)
+            external_applicant_id = _clean_text((external_record or {}).get("id"))
+            if not external_applicant_id:
+                raise HTTPException(502, "credit backend returned applicant without id")
+            data["external_applicant_id"] = external_applicant_id
+            data.setdefault("payload", {})["external_applicant_id"] = external_applicant_id
+            track_request_event(
+                request_id,
+                "applicant_backend",
+                "IN",
+                "External applicant created",
+                service_id=CREDIT_BACKEND_SERVICE_ID,
+                status="CREATED",
+                payload={"external_applicant_id": external_applicant_id, "record": external_record},
+                correlation_id=cid,
+            )
+        except HTTPException as exc:
+            error_payload = exc.detail if isinstance(exc.detail, dict) else {"error": exc.detail}
+            execute(
+                """
+                INSERT INTO requests (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,external_applicant_id,product_type,orchestration_mode,status,correlation_id,error)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """,
+                (
+                    request_id,
+                    customer_id,
+                    iin_encrypted,
+                    ssn_encrypted,
+                    json.dumps(applicant_profile),
+                    None,
+                    product_type,
+                    requested_mode,
+                    "FAILED",
+                    cid,
+                    json.dumps({"service": CREDIT_BACKEND_SERVICE_ID, "detail": error_payload}),
+                ),
+            )
+            track_request_event(
+                request_id,
+                "applicant_backend",
+                "IN",
+                "External applicant creation failed",
+                service_id=CREDIT_BACKEND_SERVICE_ID,
+                status="FAILED",
+                payload=error_payload,
+                correlation_id=cid,
+            )
+            return {
+                "request_id": request_id,
+                "selected_mode": "none",
+                "result": {
+                    "status": "FAILED",
+                    "adapter": CREDIT_BACKEND_SERVICE_ID,
+                    "request_id": request_id,
+                    "error": error_payload,
+                },
+                "http_error": f"external applicant creation failed: {error_payload}",
+            }
+
     sf_pre = await run_stop_factor_check("pre", data, cid)
     track_request_event(
         request_id,
@@ -1074,8 +1304,8 @@ async def submit_request_payload(
     if sf_pre["decision"] == "REJECT":
         execute(
             """
-            INSERT INTO requests (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,product_type,orchestration_mode,status,correlation_id,result,post_stop_factor)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            INSERT INTO requests (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,external_applicant_id,product_type,orchestration_mode,status,correlation_id,result,post_stop_factor)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             (
                 request_id,
@@ -1083,6 +1313,7 @@ async def submit_request_payload(
                 iin_encrypted,
                 ssn_encrypted,
                 json.dumps(applicant_profile),
+                external_applicant_id,
                 product_type,
                 requested_mode,
                 "REJECTED",
@@ -1122,10 +1353,10 @@ async def submit_request_payload(
 
     execute(
         """
-        INSERT INTO requests (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,product_type,orchestration_mode,status,correlation_id)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        INSERT INTO requests (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,external_applicant_id,product_type,orchestration_mode,status,correlation_id)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """,
-        (request_id, customer_id, iin_encrypted, ssn_encrypted, json.dumps(applicant_profile), product_type, mode, "SUBMITTED", cid),
+        (request_id, customer_id, iin_encrypted, ssn_encrypted, json.dumps(applicant_profile), external_applicant_id, product_type, mode, "SUBMITTED", cid),
     )
     track_request_event(
         request_id,
@@ -1134,7 +1365,7 @@ async def submit_request_payload(
         f"Request dispatched to {adapter_id}",
         service_id=adapter_id,
         status="SUBMITTED",
-        payload={"mode": mode, "adapter_id": adapter_id},
+        payload={"mode": mode, "adapter_id": adapter_id, "external_applicant_id": external_applicant_id},
         correlation_id=cid,
     )
 
@@ -1166,6 +1397,8 @@ async def submit_request_payload(
         }
 
     normalized_result = dict(result)
+    if external_applicant_id:
+        normalized_result.setdefault("external_applicant_id", external_applicant_id)
     current_status = normalized_result.get("status", "COMPLETED")
     execute("UPDATE requests SET status=%s,result=%s,updated_at=NOW() WHERE request_id=%s", (current_status, json.dumps(normalized_result), request_id))
     track_request_event(
@@ -1447,7 +1680,7 @@ def _find_request_for_flowable_instance(instance_id: str):
 def _flowable_request_for_list(limit: int, request_id: Optional[str] = None):
     sql = """
         SELECT request_id, customer_id, product_type, orchestration_mode, status, result, error, correlation_id,
-               created_at, updated_at, applicant_profile, ssn_encrypted
+               created_at, updated_at, applicant_profile, ssn_encrypted, external_applicant_id
         FROM requests
         WHERE orchestration_mode='flowable'
     """

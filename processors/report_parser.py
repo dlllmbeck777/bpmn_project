@@ -78,6 +78,20 @@ def _bureau_collection_total(accounts: Any) -> int:
     return total
 
 
+def _provider_status(data: Dict[str, Any], *, fallback: str, no_hit_status: str = "NO_HIT") -> str:
+    upstream_status = str(_nested(data, "status") or _nested(data, "result", "status") or "").upper()
+    indicator = str(_nested(data, "intelligenceIndicator") or _nested(data, "rawResponse", "intelligenceIndicator") or "").upper()
+    if upstream_status in {"FAILED", "ERROR"}:
+        return "FAILED"
+    if upstream_status == "PENDING" or indicator == "PENDING_LINK":
+        return "PENDING_LINK"
+    if upstream_status == "NO_HIT" or indicator == "NO_HIT":
+        return no_hit_status
+    if upstream_status in {"COMPLETED", "REPORT_READY"}:
+        return fallback
+    return fallback
+
+
 def _extract_isoftpull(data: dict) -> dict:
     r = data.get("result", data)
     credit_score = _first_number(
@@ -123,12 +137,15 @@ def _extract_isoftpull(data: dict) -> dict:
     ]
     collection_count = explicit_collection_count if explicit_collection_count is not None else max(bureau_totals or [0])
     bureau_hit = bool(r.get("bureau_hit", credit_score is not None))
+    status = _provider_status(data, fallback="OK")
+    if status == "OK" and not bureau_hit:
+        status = "NO_HIT"
     return {
         "provider": "isoftpull",
         "credit_score": int(credit_score) if credit_score is not None else None,
         "collection_count": int(collection_count),
         "bureau_hit": bureau_hit,
-        "status": "OK" if bureau_hit else "NO_HIT",
+        "status": status,
     }
 
 
@@ -173,17 +190,47 @@ def _extract_creditsafe(data: dict) -> dict:
         "risk_band": r.get("risk_band"),
         "compliance_alert_count": int(effective_alert_count),
         "derogatory_count": int(derogatory_count or 0),
-        "status": "OK" if company_score is not None or effective_alert_count is not None else "NO_DATA",
+        "status": _provider_status(data, fallback="OK", no_hit_status="NO_DATA") if (company_score is not None or effective_alert_count is not None) else _provider_status(data, fallback="NO_DATA", no_hit_status="NO_DATA"),
     }
 
 
 def _extract_plaid(data: dict) -> dict:
     r = data.get("result", data)
+    accounts_found = _first_count(
+        data,
+        (
+            ("accounts_found",),
+            ("accountsFound",),
+            ("result", "accounts_found"),
+            ("result", "accountsFound"),
+            ("rawResponse", "accounts_found"),
+            ("rawResponse", "accountsFound"),
+            ("rawResponse", "accounts"),
+            ("rawResponse", "bankAccounts"),
+        ),
+    ) or 0
+    status = _provider_status(data, fallback="OK", no_hit_status="NO_ACCOUNTS")
+    if status == "OK" and accounts_found <= 0:
+        status = "NO_ACCOUNTS"
     return {
         "provider": "plaid",
-        "accounts_found": r.get("accounts_found", 0),
-        "cashflow_stability": r.get("cashflow_stability"),
-        "status": "OK" if r.get("accounts_found", 0) > 0 else "NO_ACCOUNTS",
+        "accounts_found": accounts_found,
+        "cashflow_stability": (
+            r.get("cashflow_stability")
+            or _nested(data, "cashflowStability")
+            or _nested(data, "rawResponse", "cashflowStability")
+        ),
+        "tracking_url": (
+            data.get("reportUrl")
+            or _nested(data, "rawResponse", "trackingUrl")
+            or _nested(data, "rawResponse", "hostedLinkUrl")
+        ),
+        "report_ready": bool(
+            _nested(data, "reportReady")
+            or _nested(data, "rawResponse", "reportReady")
+            or _nested(data, "rawResponse", "report_ready")
+        ),
+        "status": status,
     }
 
 
@@ -229,6 +276,9 @@ def parse(body: ParseRequest):
             "creditsafe_compliance_alert_count": creditsafe.get("compliance_alert_count", 0),
             "accounts_found": plaid.get("accounts_found", 0),
             "cashflow_stability": plaid.get("cashflow_stability"),
+            "plaid_status": plaid.get("status"),
+            "plaid_tracking_url": plaid.get("tracking_url"),
+            "plaid_report_ready": plaid.get("report_ready", False),
             "crm_segment": crm.get("segment"),
             "all_providers_ok": all(p.get("status") == "OK" for p in providers.values()),
         },

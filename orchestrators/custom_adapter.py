@@ -97,6 +97,7 @@ class RequestIn(BaseModel):
     request_id: str
     customer_id: str
     iin: str
+    external_applicant_id: str = ""
     product_type: str
     orchestration_mode: str = "custom"
     applicant: Dict[str, Any] = Field(default_factory=dict)
@@ -277,6 +278,7 @@ async def orchestrate(body: RequestIn, request: Request):
         "status": "COMPLETED",
         "adapter": "custom",
         "request_id": body.request_id,
+        "external_applicant_id": body.external_applicant_id or "",
         "steps": results,
         "parsed_report": parsed_report,
     }
