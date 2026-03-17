@@ -296,9 +296,10 @@ FLOWABLE_AUTO_DEPLOY_BPMN=false
 | --- | --- |
 | `/` | `admin-ui` |
 | `/api/` | `core-api` |
-| `/flowable-modeler/` | `flowable-ui` |
-| `/flowable-admin/` | `flowable-ui` |
-| `/flowable-idm/` | `flowable-ui` |
+| `/flowable-ui/index.html` | `flowable-ui` |
+| `/flowable-modeler/` | redirect -> `/flowable-ui/index.html` |
+| `/flowable-admin/` | redirect -> `/flowable-ui/index.html` |
+| `/flowable-idm/` | redirect -> `/flowable-ui/index.html` |
 | `/grafana/` | `grafana` |
 
 ### Внутренний контур

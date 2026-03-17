@@ -139,17 +139,18 @@ bash scripts/rebuild-prod.sh
 - будет удалено текущее runtime-состояние БД;
 - использовать осознанно.
 
-## Flowable modeler
+## Flowable UI
 
 Production endpoint:
 
-- `https://YOUR_DOMAIN/flowable-modeler/`
+- `https://YOUR_DOMAIN/flowable-ui/index.html`
+- legacy paths `/flowable-modeler/`, `/flowable-admin/`, `/flowable-idm/` redirect to the unified Flowable UI entry page
 
 Рекомендуемый режим:
 
 - `FLOWABLE_AUTO_DEPLOY_BPMN=false`
 
-Тогда BPMN source of truth находится в Flowable DB / Flowable UI.
+Тогда BPMN source of truth находится в Flowable DB / unified Flowable UI.
 
 ## Проверка после изменения routing или pipeline
 
