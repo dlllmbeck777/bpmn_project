@@ -217,14 +217,15 @@ X-Request-Id: ${request_id}</flowable:expression>
 
     <scriptTask id="task_prepare_decision_body" name="Prepare decision body" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
-        import groovy.json.JsonOutput
-        import groovy.json.JsonSlurper
+        import com.fasterxml.jackson.databind.ObjectMapper
+
+        def mapper = new ObjectMapper()
 
         def parseStep = { rawKey, statusKey, reasonKey, serviceId ->
           def rawValue = (execution.getVariable(rawKey) ?: '{}') as String
           def parsed
           try {
-            parsed = new JsonSlurper().parseText(rawValue)
+            parsed = mapper.readValue(rawValue, java.util.LinkedHashMap)
           } catch (Exception ignored) {
             parsed = [:]
           }
@@ -250,7 +251,7 @@ X-Request-Id: ${request_id}</flowable:expression>
             plaid: parseStep('plaidRawBody', 'plaid_status', 'skip_reason_plaid', 'plaid'),
           ],
         ]
-        execution.setVariable('decision_request_body', JsonOutput.toJson(payload))
+        execution.setVariable('decision_request_body', mapper.writeValueAsString(payload))
       ]]></script>
     </scriptTask>
     <sequenceFlow id="flow_prep_decision_to_call" sourceRef="task_prepare_decision_body" targetRef="task_decision_service"/>
@@ -275,7 +276,9 @@ X-Request-Id: ${request_id}</flowable:expression>
     </boundaryEvent>
     <scriptTask id="task_decision_degrade" name="Decision degrade" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
-        import groovy.json.JsonOutput
+        import com.fasterxml.jackson.databind.ObjectMapper
+
+        def mapper = new ObjectMapper()
         def decisionReason = 'Decision service unavailable'
         def payload = [
           status: 'ENGINE_ERROR',
@@ -292,7 +295,7 @@ X-Request-Id: ${request_id}</flowable:expression>
             plaid_status: execution.getVariable('plaid_status') ?: 'UNKNOWN',
           ],
         ]
-        execution.setVariable('decisionRawBody', JsonOutput.toJson(payload))
+        execution.setVariable('decisionRawBody', mapper.writeValueAsString(payload))
       ]]></script>
     </scriptTask>
     <sequenceFlow id="flow_err_decision" sourceRef="err_decision" targetRef="task_decision_degrade"/>
@@ -300,13 +303,14 @@ X-Request-Id: ${request_id}</flowable:expression>
 
     <scriptTask id="task_parse_decision" name="Parse decision" scriptFormat="groovy" flowable:autoStoreVariables="false">
       <script><![CDATA[
-        import groovy.json.JsonOutput
-        import groovy.json.JsonSlurper
+        import com.fasterxml.jackson.databind.ObjectMapper
+
+        def mapper = new ObjectMapper()
 
         def raw = (execution.getVariable('decisionRawBody') ?: '{}') as String
         def parsed
         try {
-          parsed = new JsonSlurper().parseText(raw)
+          parsed = mapper.readValue(raw, java.util.LinkedHashMap)
         } catch (Exception ignored) {
           parsed = [
             status: 'ENGINE_ERROR',
@@ -324,7 +328,7 @@ X-Request-Id: ${request_id}</flowable:expression>
           ]
         }
         execution.setVariable('decision_status', parsed['status'] ?: 'ENGINE_ERROR')
-        execution.setVariable('orchestration_result', JsonOutput.toJson(parsed))
+        execution.setVariable('orchestration_result', mapper.writeValueAsString(parsed))
       ]]></script>
     </scriptTask>
     <sequenceFlow id="flow_decision_to_parse" sourceRef="task_decision_service" targetRef="task_parse_decision"/>
