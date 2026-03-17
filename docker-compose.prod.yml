@@ -224,8 +224,10 @@ services:
     ports: !reset []
     environment:
       - SERVER_FORWARD_HEADERS_STRATEGY=framework
+      - "JAVA_TOOL_OPTIONS=${FLOWABLE_UI_JAVA_TOOL_OPTIONS:--Xms256m -Xmx512m -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError}"
     networks: [frontend, flowable]
     restart: always
+    mem_limit: 1g
     logging: *logging
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/flowable-ui/index.html"]
@@ -235,7 +237,7 @@ services:
       start_period: 120s
     deploy:
       resources:
-        limits: { cpus: '0.75', memory: 512M }
+        limits: { cpus: '0.75', memory: 1G }
 
   admin-ui:
     build:

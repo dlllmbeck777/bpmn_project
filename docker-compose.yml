@@ -237,6 +237,7 @@ services:
       - FLOWABLE_COMMON_APP_IDM-ADMIN_PASSWORD=${FLOWABLE_PASSWORD:-test}
       - FLOWABLE_ASYNC_EXECUTOR_ACTIVATE=true
       - SERVER_FORWARD_HEADERS_STRATEGY=framework
+      - "JAVA_TOOL_OPTIONS=${FLOWABLE_UI_JAVA_TOOL_OPTIONS:--Xms256m -Xmx512m -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError}"
     depends_on:
       - flowable-db
     restart: unless-stopped
