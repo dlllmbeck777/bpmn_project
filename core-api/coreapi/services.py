@@ -81,7 +81,6 @@ FLOWABLE_STEP_MAP = (
     ("isoftpull", "isoRawBody", "iso_status", "skip_reason_isoftpull"),
     ("creditsafe", "csRawBody", "creditsafe_status", "skip_reason_creditsafe"),
     ("plaid", "plaidRawBody", "plaid_status", "skip_reason_plaid"),
-    ("crm", "crmRawBody", "crm_status", "skip_reason_crm"),
 )
 PASSWORD_SCHEME = "pbkdf2_sha256"
 PASSWORD_ITERATIONS = 480_000

@@ -168,6 +168,7 @@ class FlowableOpsHelperTests(unittest.TestCase):
         self.assertTrue(services.request_needs_operator_action(row))
 
     def test_build_request_view_respects_ignored_flag_for_needs_action(self):
+        original_credit_backend_service = services._credit_backend_service
         row = {
             "request_id": "REQ-1",
             "status": "ENGINE_UNREACHABLE",
@@ -175,10 +176,14 @@ class FlowableOpsHelperTests(unittest.TestCase):
             "applicant_profile": {},
             "result": {"status": "ENGINE_UNREACHABLE"},
         }
-        view = services.build_request_view(row)
-        self.assertEqual(view["error_class"], "technical")
-        self.assertFalse(view["needs_operator_action"])
-        self.assertTrue(view["ops"]["can_restore"])
+        try:
+            services._credit_backend_service = lambda: {"base_url": "http://mock-bureaus:8110"}
+            view = services.build_request_view(row)
+            self.assertEqual(view["error_class"], "technical")
+            self.assertFalse(view["needs_operator_action"])
+            self.assertTrue(view["ops"]["can_restore"])
+        finally:
+            services._credit_backend_service = original_credit_backend_service
 
     def test_flowable_operator_hint_explains_running_activity(self):
         summary = {
@@ -202,6 +207,7 @@ class FlowableOpsHelperTests(unittest.TestCase):
         self.assertEqual(result["engine"]["instance_id"], "instance-55")
         self.assertEqual(result["steps"]["isoftpull"]["bureau"], "isoftpull")
         self.assertEqual(result["steps"]["creditsafe"]["status"], "SKIPPED")
+        self.assertNotIn("crm", result["steps"])
         self.assertEqual(result["summary"]["request_id"], "REQ-55")
 
     def test_resolve_mode_supports_deterministic_canary_rules(self):

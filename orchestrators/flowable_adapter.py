@@ -38,7 +38,6 @@ FLOWABLE_STEPS = (
     {"service_id": "isoftpull", "raw_key": "isoRawBody", "status_key": "iso_status", "request_key": None, "skip_key": "skip_isoftpull", "reason_key": "skip_reason_isoftpull"},
     {"service_id": "creditsafe", "raw_key": "csRawBody", "status_key": "creditsafe_status", "request_key": "creditsafe_request_body", "skip_key": "skip_creditsafe", "reason_key": "skip_reason_creditsafe"},
     {"service_id": "plaid", "raw_key": "plaidRawBody", "status_key": "plaid_status", "request_key": "plaid_request_body", "skip_key": "skip_plaid", "reason_key": "skip_reason_plaid"},
-    {"service_id": "crm", "raw_key": "crmRawBody", "status_key": "crm_status", "request_key": "crm_request_body", "skip_key": "skip_crm", "reason_key": "skip_reason_crm"},
 )
 
 
@@ -190,7 +189,6 @@ def _build_steps(process_variables: Dict[str, Any]):
         "isoftpull": ("isoRawBody", "iso_status"),
         "creditsafe": ("csRawBody", "creditsafe_status"),
         "plaid": ("plaidRawBody", "plaid_status"),
-        "crm": ("crmRawBody", "crm_status"),
     }
     steps = {}
     for service_id, (raw_key, status_key) in raw_map.items():
@@ -597,7 +595,12 @@ async def orchestrate(body: RequestIn, request: Request):
     meta = flowable_cfg.get("meta", {})
     process_key = meta.get("process_key", "creditServiceChainOrchestration") if isinstance(meta, dict) else "creditServiceChainOrchestration"
     connector_urls = await _acfg("/api/v1/connector-urls") or {}
-    pipeline_steps, skip_flags, skip_reasons, skip_policies = await _pipeline_skip_flags(connector_urls)
+    flowable_connector_urls = {
+        step["service_id"]: connector_urls.get(step["service_id"])
+        for step in FLOWABLE_STEPS
+        if connector_urls.get(step["service_id"])
+    }
+    pipeline_steps, skip_flags, skip_reasons, skip_policies = await _pipeline_skip_flags(flowable_connector_urls)
 
     variables = [
         {"name": "request_id", "value": body.request_id},
@@ -609,7 +612,7 @@ async def orchestrate(body: RequestIn, request: Request):
     ]
     applicant_payload = body.applicant or (body.payload.get("applicant", {}) if isinstance(body.payload, dict) else {})
     variables.append({"name": "applicant_json", "value": json.dumps(applicant_payload or {})})
-    for service_id, url in connector_urls.items():
+    for service_id, url in flowable_connector_urls.items():
         variables.append({"name": f"{service_id}_url", "value": url})
     for service_id, skip in skip_flags.items():
         variables.append({"name": f"skip_{service_id}", "value": skip})
@@ -627,7 +630,7 @@ async def orchestrate(body: RequestIn, request: Request):
         payload={
             "process_key": process_key,
             "flowable_url": flowable_url,
-            "connector_urls": connector_urls,
+            "connector_urls": flowable_connector_urls,
             "skip_flags": skip_flags,
             "skip_policies": skip_policies,
             "pipeline_steps": pipeline_steps,
@@ -729,17 +732,17 @@ async def orchestrate(body: RequestIn, request: Request):
             pass
 
     if not completed:
-        _track_task(asyncio.create_task(_watch_process_completion(flowable_url, instance_id, body, cid, connector_urls)))
+        _track_task(asyncio.create_task(_watch_process_completion(flowable_url, instance_id, body, cid, flowable_connector_urls)))
         return {
             "status": "RUNNING",
             "adapter": "flowable",
             "request_id": body.request_id,
             "external_applicant_id": body.external_applicant_id or "",
             "engine": {"engine": "flowable", "started": True, "instance_id": instance_id, "completed": False},
-            "connector_urls_injected": connector_urls,
+            "connector_urls_injected": flowable_connector_urls,
             "callback_expected": True,
         }
 
-    result = await _build_result_payload(body, instance_id, process_variables, connector_urls, cid)
+    result = await _build_result_payload(body, instance_id, process_variables, flowable_connector_urls, cid)
     await _emit_flowable_trace(body, process_variables, result.get("parsed_report", {}), cid)
     return result
