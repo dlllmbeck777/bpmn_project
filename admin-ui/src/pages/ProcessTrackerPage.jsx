@@ -36,6 +36,11 @@ function finalOutcomeEvent(group) {
   return [...events].reverse().find((ev) => ev.stage === 'request' && ['COMPLETED', 'REVIEW', 'REJECTED', 'FAILED', 'ENGINE_ERROR', 'ENGINE_UNREACHABLE'].includes(ev.status))
 }
 
+function outcomeDecision(payload) {
+  if (!payload || typeof payload !== 'object') return ''
+  return payload.decision || payload.summary?.decision || ''
+}
+
 export default function ProcessTrackerPage() {
   const [items, setItems] = useState([])
   const [requestId, setRequestId] = useState('')
@@ -115,6 +120,7 @@ export default function ProcessTrackerPage() {
       <>
         <div className="summary-bar">
           <div className="sum-card"><div className="sum-label">Current status</div><div className="sum-val">{group.status}</div></div>
+          <div className="sum-card"><div className="sum-label">Decision value</div><div className="sum-val" style={{ fontSize: 13 }}>{outcomeDecision(outcomePayload) || '—'}</div></div>
           <div className="sum-card"><div className="sum-label">Decision</div><div className="sum-val" style={{ fontSize: 13 }}>{outcomePayload.decision_reason || (group.status === 'RUNNING' ? 'Waiting for async completion callback' : '—')}</div></div>
           <div className="sum-card"><div className="sum-label">Credit score</div><div className="sum-val">{outcomeSummary.credit_score ?? '—'}</div></div>
           <div className="sum-card"><div className="sum-label">Collections</div><div className="sum-val">{outcomeSummary.collection_count ?? '—'}</div></div>

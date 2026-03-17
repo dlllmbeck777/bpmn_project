@@ -4,9 +4,11 @@ import { get, getUserRole, post } from '../lib/api'
 function StatusBadge({ status }) {
   const m = {
     COMPLETED: 'badge-green',
+    APPROVED: 'badge-green',
     REJECTED: 'badge-red',
     FAILED: 'badge-red',
     REVIEW: 'badge-amber',
+    'PASS TO CUSTOM': 'badge-amber',
     RUNNING: 'badge-blue',
     SUBMITTED: 'badge-blue',
     ENGINE_ERROR: 'badge-red',
@@ -21,6 +23,16 @@ function StatusBadge({ status }) {
     RESTORED: 'badge-teal',
   }
   return <span className={`badge ${m[status] || 'badge-gray'}`}>{(status || '').toLowerCase() || 'n/a'}</span>
+}
+
+function DecisionBadge({ decision }) {
+  if (!decision) return <span className="badge badge-gray">n/a</span>
+  const palette = {
+    APPROVED: 'badge-green',
+    REJECTED: 'badge-red',
+    'PASS TO CUSTOM': 'badge-amber',
+  }
+  return <span className={`badge ${palette[decision] || 'badge-gray'}`}>{decision}</span>
 }
 
 function ModeBadge({ mode }) {
@@ -319,6 +331,7 @@ export default function RequestsPage() {
             <div className="card">
               <div className="card-title">Outcome</div>
               <div className="kv-row"><span className="kv-key">Final status</span><span className="kv-val"><StatusBadge status={detail.status} /></span></div>
+              <div className="kv-row"><span className="kv-key">Decision value</span><span className="kv-val"><DecisionBadge decision={detail.result?.decision} /></span></div>
               <div className="kv-row"><span className="kv-key">Decision</span><span className="kv-val">{engineHint(detail)}</span></div>
               <div className="kv-row"><span className="kv-key">Decision source</span><span className="kv-val">{detail.result?.decision_source || '-'}</span></div>
               <div className="kv-row"><span className="kv-key">Matched rule</span><span className="kv-val">{matchedRuleLabel(detail.result)}</span></div>

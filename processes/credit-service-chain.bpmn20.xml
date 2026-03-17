@@ -309,6 +309,7 @@ X-Request-Id: ${request_id}</flowable:expression>
         def payload = [
           status: 'ENGINE_ERROR',
           request_id: execution.getVariable('request_id'),
+          decision: null,
           decision_reason: decisionReason,
           decision_source: 'decision-service',
           request_context: [
@@ -326,6 +327,7 @@ X-Request-Id: ${request_id}</flowable:expression>
           summary: [
             request_id: execution.getVariable('request_id'),
             route_mode: execution.getVariable('route_mode'),
+            decision: null,
             decision_source: 'decision-service',
             decision_reason: decisionReason,
             rules_evaluated: 0,

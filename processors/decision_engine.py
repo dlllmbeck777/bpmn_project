@@ -13,6 +13,10 @@ INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 
 app = FastAPI(title="decision-service", version="1.0.0")
 
+DECISION_APPROVED = "APPROVED"
+DECISION_REJECTED = "REJECTED"
+DECISION_PASS_TO_CUSTOM = "PASS TO CUSTOM"
+
 
 class DecideRequest(BaseModel):
     request_id: str
@@ -114,6 +118,19 @@ def _step_statuses(steps: Dict[str, Any]) -> Dict[str, str]:
     return statuses
 
 
+def _decision_value(status: str, *, enabled_rules_count: int) -> Optional[str]:
+    normalized = str(status or "").upper()
+    if enabled_rules_count <= 0:
+        return DECISION_PASS_TO_CUSTOM
+    if normalized == "REJECTED":
+        return DECISION_REJECTED
+    if normalized == "COMPLETED":
+        return DECISION_APPROVED
+    if normalized == "REVIEW":
+        return DECISION_PASS_TO_CUSTOM
+    return None
+
+
 def _build_decision_inputs(parsed_report: Dict[str, Any], steps: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "result": {
@@ -184,6 +201,8 @@ async def decide(body: DecideRequest):
     parsed_report = _ensure_parsed_report(body)
     rules = await _fetch_rules()
     step_statuses = _step_statuses(body.steps)
+    enabled_rules = [rule for rule in (rules or []) if rule.get("enabled", True)]
+    enabled_rules_count = len(enabled_rules)
     request_context = {
         "request_id": body.request_id,
         "route_mode": body.route_mode,
@@ -205,6 +224,7 @@ async def decide(body: DecideRequest):
                 "request_id": body.request_id,
                 "decision_source": "decision-service",
                 "decision_reason": "Decision rules are unavailable",
+                "decision": None,
                 "rules_evaluated": 0,
                 "matched_rule": None,
                 **{f"{service_id}_status": status for service_id, status in step_statuses.items()},
@@ -214,15 +234,20 @@ async def decide(body: DecideRequest):
     baseline_status, baseline_reason = _baseline_decision(parsed_report)
     status, reason = baseline_status, baseline_reason
     matched_rule: Dict[str, Any] = {}
-    if status == "COMPLETED":
+    if enabled_rules_count <= 0:
+        if status == "COMPLETED":
+            reason = "No active decision rules configured"
+    elif status == "COMPLETED":
         status, reason, matched_rule = _apply_rules(parsed_report, rules, body.steps)
+    decision = _decision_value(status, enabled_rules_count=enabled_rules_count)
 
     summary = {
         **(parsed_report.get("summary") if isinstance(parsed_report.get("summary"), dict) else {}),
         "request_id": body.request_id,
+        "decision": decision,
         "decision_source": "decision-service",
         "decision_reason": reason,
-        "rules_evaluated": len([rule for rule in rules if rule.get("enabled", True)]),
+        "rules_evaluated": enabled_rules_count,
         "matched_rule": matched_rule or None,
         "plaid_considered": False,
         **{f"{service_id}_status": status_value for service_id, status_value in step_statuses.items()},
@@ -230,6 +255,7 @@ async def decide(body: DecideRequest):
     return {
         "status": status,
         "request_id": body.request_id,
+        "decision": decision,
         "decision_reason": reason,
         "decision_source": "decision-service",
         "matched_rule": matched_rule or None,

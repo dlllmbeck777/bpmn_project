@@ -433,6 +433,7 @@ async def _build_result_payload(body: "RequestIn", instance_id: str, process_var
         "adapter": "flowable",
         "request_id": body.request_id,
         "external_applicant_id": body.external_applicant_id or "",
+        "decision": decision_payload.get("decision"),
         "decision_reason": decision_payload.get("decision_reason"),
         "decision_source": decision_payload.get("decision_source"),
         "matched_rule": decision_payload.get("matched_rule"),

@@ -144,6 +144,7 @@ class DecisionEngineTests(unittest.TestCase):
             )
             self.assertEqual(response["status"], "REVIEW")
             self.assertIn("required report providers", response["decision_reason"])
+            self.assertEqual(response["decision"], "PASS TO CUSTOM")
         finally:
             decision_engine._fetch_rules = original_fetch_rules
 
@@ -167,6 +168,30 @@ class DecisionEngineTests(unittest.TestCase):
             )
             self.assertEqual(response["status"], "ENGINE_ERROR")
             self.assertIn("rules are unavailable", response["decision_reason"])
+        finally:
+            decision_engine._fetch_rules = original_fetch_rules
+
+    def test_decision_returns_pass_to_custom_when_no_rules_configured(self):
+        original_fetch_rules = decision_engine._fetch_rules
+        try:
+            async def fake_fetch_rules():
+                return []
+
+            decision_engine._fetch_rules = fake_fetch_rules
+            response = asyncio.run(
+                decision_engine.decide(
+                    decision_engine.DecideRequest(
+                        request_id="REQ-4",
+                        steps={
+                            "isoftpull": {"status": "OK", "creditScore": 775},
+                            "creditsafe": {"status": "OK", "creditScore": 72},
+                        },
+                    )
+                )
+            )
+            self.assertEqual(response["status"], "COMPLETED")
+            self.assertEqual(response["decision"], "PASS TO CUSTOM")
+            self.assertEqual(response["decision_reason"], "No active decision rules configured")
         finally:
             decision_engine._fetch_rules = original_fetch_rules
 

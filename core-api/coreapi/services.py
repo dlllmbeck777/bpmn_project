@@ -976,6 +976,12 @@ def normalize_result_payload(result: Dict[str, Any]):
             reason = normalized["summary"].get("decision_reason")
         if reason:
             normalized["decision_reason"] = reason
+    if not normalized.get("decision"):
+        decision_value = decision_payload.get("decision")
+        if not decision_value and isinstance(normalized.get("summary"), dict):
+            decision_value = normalized["summary"].get("decision")
+        if decision_value:
+            normalized["decision"] = decision_value
 
     if not normalized.get("decision_source") and decision_payload.get("decision_source"):
         normalized["decision_source"] = decision_payload.get("decision_source")
@@ -1126,6 +1132,7 @@ async def finalize_request(request_id: str, mode: str, result: Dict[str, Any], c
         payload={
             "mode": mode,
             "status": final_status,
+            "decision": normalized_result.get("decision"),
             "decision_reason": decision_reason,
             "summary": summary,
             "decision_source": normalized_result.get("decision_source"),

@@ -234,6 +234,7 @@ class FlowableOpsHelperTests(unittest.TestCase):
             "route_mode": "FLOWABLE",
             "decisionRawBody": {
                 "status": "COMPLETED",
+                "decision": "APPROVED",
                 "decision_reason": "Decision rules passed",
                 "decision_source": "decision-service",
                 "matched_rule": None,
@@ -273,6 +274,7 @@ class FlowableOpsHelperTests(unittest.TestCase):
         }
         result = services.build_flowable_result_from_variables("REQ-56", "instance-56", variables)
         self.assertEqual(result["status"], "COMPLETED")
+        self.assertEqual(result["decision"], "APPROVED")
         self.assertEqual(result["decision_reason"], "Decision rules passed")
         self.assertEqual(result["decision_source"], "decision-service")
         self.assertEqual(result["summary"]["credit_score"], 775)
