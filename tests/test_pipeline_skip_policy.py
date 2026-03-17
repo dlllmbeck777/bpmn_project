@@ -193,6 +193,33 @@ class PipelineSkipPolicyTests(unittest.TestCase):
         self.assertIn("failed job", result["decision_reason"].lower())
         self.assertEqual(result["summary"]["failed_jobs"], 2)
 
+    def test_flowable_start_context_includes_decision_service_url(self):
+        body = flowable_adapter.RequestIn(
+            request_id="REQ-FLOW-1",
+            customer_id="CUST-1",
+            iin="IIN-1",
+            external_applicant_id="APP-1",
+            product_type="loan",
+            orchestration_mode="flowable",
+            applicant={"firstName": "John"},
+        )
+        variables, tracker_payload = flowable_adapter._build_flowable_start_context(
+            body,
+            process_key="creditServiceChainOrchestration",
+            flowable_url="http://flowable-rest:8080/flowable-rest/service",
+            flowable_connector_urls={"isoftpull": "http://isoftpull:8101/api/pull"},
+            decision_service_url="http://processors:8107/api/v1/decide",
+            pipeline_steps=[{"service_id": "isoftpull"}],
+            skip_flags={"isoftpull": False, "creditsafe": False, "plaid": True},
+            skip_reasons={"isoftpull": "", "creditsafe": "", "plaid": "pipeline step bypassed for flowable mode"},
+            skip_policies={"plaid": {"skip": True, "reason": "pipeline step bypassed for flowable mode", "source": "skip_in_flowable"}},
+        )
+        variables_by_name = {item["name"]: item["value"] for item in variables}
+        self.assertEqual(variables_by_name["decision_service_url"], "http://processors:8107/api/v1/decide")
+        self.assertEqual(tracker_payload["decision_service_url"], "http://processors:8107/api/v1/decide")
+        self.assertEqual(variables_by_name["external_applicant_id"], "APP-1")
+        self.assertEqual(variables_by_name["applicant_json"], '{"firstName": "John"}')
+
 
 if __name__ == '__main__':
     unittest.main()

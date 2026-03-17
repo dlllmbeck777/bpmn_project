@@ -13,6 +13,11 @@ class BpmnContractTests(unittest.TestCase):
         self.assertNotIn("groovy.json.JsonSlurper", xml)
         self.assertIn("com.fasterxml.jackson.databind.ObjectMapper", xml)
 
+    def test_init_task_sets_decision_defaults(self):
+        xml = BPMN_PATH.read_text(encoding="utf-8")
+        self.assertIn("execution.setVariable('decision_service_url'", xml)
+        self.assertIn("execution.setVariable('decision_request_body'", xml)
+
 
 if __name__ == "__main__":
     unittest.main()

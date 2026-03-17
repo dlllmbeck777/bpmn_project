@@ -557,6 +557,48 @@ async def _watch_process_completion(flowable_url: str, instance_id: str, body: "
     )
 
 
+def _build_flowable_start_context(
+    body: "RequestIn",
+    *,
+    process_key: str,
+    flowable_url: str,
+    flowable_connector_urls: Dict[str, str],
+    decision_service_url: str,
+    pipeline_steps: Any,
+    skip_flags: Dict[str, bool],
+    skip_reasons: Dict[str, str],
+    skip_policies: Dict[str, Dict[str, Any]],
+):
+    variables = [
+        {"name": "request_id", "value": body.request_id},
+        {"name": "customer_id", "value": body.customer_id},
+        {"name": "iin", "value": body.iin},
+        {"name": "external_applicant_id", "value": body.external_applicant_id or ""},
+        {"name": "product_type", "value": body.product_type},
+        {"name": "route_mode", "value": "FLOWABLE"},
+    ]
+    applicant_payload = body.applicant or (body.payload.get("applicant", {}) if isinstance(body.payload, dict) else {})
+    variables.append({"name": "applicant_json", "value": json.dumps(applicant_payload or {})})
+    for service_id, url in flowable_connector_urls.items():
+        variables.append({"name": f"{service_id}_url", "value": url})
+    variables.append({"name": "decision_service_url", "value": decision_service_url})
+    for service_id, skip in skip_flags.items():
+        variables.append({"name": f"skip_{service_id}", "value": skip})
+    for service_id, reason in skip_reasons.items():
+        variables.append({"name": f"skip_reason_{service_id}", "value": reason})
+
+    tracker_payload = {
+        "process_key": process_key,
+        "flowable_url": flowable_url,
+        "connector_urls": flowable_connector_urls,
+        "decision_service_url": decision_service_url,
+        "skip_flags": skip_flags,
+        "skip_policies": skip_policies,
+        "pipeline_steps": pipeline_steps,
+    }
+    return variables, tracker_payload
+
+
 @app.on_event("startup")
 async def auto_deploy_bpmn():
     if not FLOWABLE_AUTO_DEPLOY_BPMN:
@@ -625,24 +667,17 @@ async def orchestrate(body: RequestIn, request: Request):
     if decision_service.get("base_url"):
         decision_service_url = f"{decision_service.get('base_url')}{decision_service.get('endpoint_path', '/api/v1/decide')}"
     pipeline_steps, skip_flags, skip_reasons, skip_policies = await _pipeline_skip_flags(flowable_connector_urls)
-
-    variables = [
-        {"name": "request_id", "value": body.request_id},
-        {"name": "customer_id", "value": body.customer_id},
-        {"name": "iin", "value": body.iin},
-        {"name": "external_applicant_id", "value": body.external_applicant_id or ""},
-        {"name": "product_type", "value": body.product_type},
-        {"name": "route_mode", "value": "FLOWABLE"},
-    ]
-    applicant_payload = body.applicant or (body.payload.get("applicant", {}) if isinstance(body.payload, dict) else {})
-    variables.append({"name": "applicant_json", "value": json.dumps(applicant_payload or {})})
-    for service_id, url in flowable_connector_urls.items():
-        variables.append({"name": f"{service_id}_url", "value": url})
-    variables.append({"name": "decision_service_url", "value": decision_service_url})
-    for service_id, skip in skip_flags.items():
-        variables.append({"name": f"skip_{service_id}", "value": skip})
-    for service_id, reason in skip_reasons.items():
-        variables.append({"name": f"skip_reason_{service_id}", "value": reason})
+    variables, tracker_payload = _build_flowable_start_context(
+        body,
+        process_key=process_key,
+        flowable_url=flowable_url,
+        flowable_connector_urls=flowable_connector_urls,
+        decision_service_url=decision_service_url,
+        pipeline_steps=pipeline_steps,
+        skip_flags=skip_flags,
+        skip_reasons=skip_reasons,
+        skip_policies=skip_policies,
+    )
 
     await _track(
         body.request_id,
@@ -652,15 +687,7 @@ async def orchestrate(body: RequestIn, request: Request):
         cid=cid,
         service_id="flowable-rest",
         status="SUBMITTED",
-        payload={
-            "process_key": process_key,
-            "flowable_url": flowable_url,
-            "connector_urls": flowable_connector_urls,
-            "decision_service_url": decision_service_url,
-            "skip_flags": skip_flags,
-            "skip_policies": skip_policies,
-            "pipeline_steps": pipeline_steps,
-        },
+        payload=tracker_payload,
     )
 
     try:

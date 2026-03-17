@@ -25,6 +25,8 @@
         execution.setVariable('external_applicant_id', execution.getVariable('external_applicant_id') ?: '')
         execution.setVariable('product_type', execution.getVariable('product_type') ?: '')
         execution.setVariable('applicant_json', execution.getVariable('applicant_json') ?: '{}')
+        execution.setVariable('decision_service_url', execution.getVariable('decision_service_url') ?: '')
+        execution.setVariable('decision_request_body', execution.getVariable('decision_request_body') ?: '{}')
       ]]></script>
     </scriptTask>
 
