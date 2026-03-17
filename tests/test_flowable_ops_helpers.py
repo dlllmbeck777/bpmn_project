@@ -167,6 +167,22 @@ class FlowableOpsHelperTests(unittest.TestCase):
         self.assertEqual(services.classify_request_error(row), "integration")
         self.assertTrue(services.request_needs_operator_action(row))
 
+    def test_resolve_request_decision_reason_does_not_mask_engine_error_with_post_check_pass(self):
+        reason = services._resolve_request_decision_reason(
+            {"status": "ENGINE_ERROR"},
+            {"reason": "all checks passed", "decision": "PASS"},
+            "ENGINE_ERROR",
+        )
+        self.assertEqual(reason, "Orchestration engine returned an error")
+
+    def test_resolve_request_decision_reason_uses_post_check_reason_for_business_outcome(self):
+        reason = services._resolve_request_decision_reason(
+            {"status": "COMPLETED"},
+            {"reason": "all checks passed", "decision": "PASS"},
+            "COMPLETED",
+        )
+        self.assertEqual(reason, "all checks passed")
+
     def test_build_request_view_respects_ignored_flag_for_needs_action(self):
         original_credit_backend_service = services._credit_backend_service
         row = {

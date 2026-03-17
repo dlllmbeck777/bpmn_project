@@ -1064,7 +1064,7 @@ async def finalize_request(request_id: str, mode: str, result: Dict[str, Any], c
     execute("UPDATE requests SET snp_result=%s WHERE request_id=%s", (json.dumps(snp), request_id))
     metrics.inc("requests_completed", f'mode="{mode}",status="{final_status}"')
     summary = normalized_result.get("summary") if isinstance(normalized_result.get("summary"), dict) else {}
-    decision_reason = normalized_result.get("decision_reason") or summary.get("decision_reason") or sf_post.get("reason")
+    decision_reason = _resolve_request_decision_reason(normalized_result, sf_post, final_status)
     track_request_event(
         request_id,
         "request",
@@ -1088,6 +1088,38 @@ async def finalize_request(request_id: str, mode: str, result: Dict[str, Any], c
         "post_stop_factor": sf_post,
         "snp_result": snp,
     }
+
+
+def _resolve_request_decision_reason(normalized_result: Dict[str, Any], sf_post: Dict[str, Any], final_status: str) -> Optional[str]:
+    summary = normalized_result.get("summary") if isinstance(normalized_result.get("summary"), dict) else {}
+    explicit_reason = normalized_result.get("decision_reason") or summary.get("decision_reason")
+    if explicit_reason:
+        return str(explicit_reason)
+
+    error = normalized_result.get("error")
+    if isinstance(error, str) and error.strip():
+        return error.strip()
+    if isinstance(error, dict):
+        for key in ("detail", "reason", "error", "message", "status"):
+            value = error.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        try:
+            return json.dumps(error)
+        except Exception:
+            return str(error)
+
+    status = str(normalized_result.get("status") or final_status or "").upper()
+    if status in REQUEST_BUSINESS_STATUSES:
+        return sf_post.get("reason")
+    if status == "ENGINE_UNREACHABLE":
+        return "Orchestration engine is unreachable"
+    if status == "ENGINE_ERROR":
+        return "Orchestration engine returned an error"
+    if status == "FAILED":
+        return "Processing failed before a final business decision was produced"
+
+    return sf_post.get("reason")
 
 
 def list_request_notes(request_id: str) -> List[Dict[str, Any]]:
