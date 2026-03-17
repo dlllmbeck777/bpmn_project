@@ -209,35 +209,39 @@ services:
       - SPRING_DATASOURCE_USERNAME=flowable
       - SPRING_DATASOURCE_PASSWORD=${FLOWABLE_DB_PASSWORD}
       - SPRING_DATASOURCE_DRIVER-CLASS-NAME=org.postgresql.Driver
+      - SERVER_FORWARD_HEADERS_STRATEGY=framework
       - FLOWABLE_COMMON_APP_IDM-ADMIN_USER=admin
       - FLOWABLE_COMMON_APP_IDM-ADMIN_PASSWORD=${FLOWABLE_PASSWORD}
       - FLOWABLE_ASYNC_EXECUTOR_ACTIVATE=true
+      - "JAVA_TOOL_OPTIONS=${FLOWABLE_REST_JAVA_TOOL_OPTIONS:--Xms384m -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+ExitOnOutOfMemoryError}"
     networks: [flowable, backend]
     restart: always
+    mem_limit: 1536m
     logging: *logging
     deploy:
       resources:
-        limits: { cpus: '1.0', memory: 1G }
-        reservations: { memory: 512M }
+        limits: { cpus: '1.25', memory: 1536M }
+        reservations: { cpus: '0.5', memory: 768M }
 
   flowable-ui:
     ports: !reset []
     environment:
       - SERVER_FORWARD_HEADERS_STRATEGY=framework
-      - "JAVA_TOOL_OPTIONS=${FLOWABLE_UI_JAVA_TOOL_OPTIONS:--Xms256m -Xmx512m -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError}"
+      - "JAVA_TOOL_OPTIONS=${FLOWABLE_UI_JAVA_TOOL_OPTIONS:--Xms512m -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+ExitOnOutOfMemoryError}"
     networks: [frontend, flowable]
     restart: always
-    mem_limit: 1g
+    mem_limit: 2g
     logging: *logging
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/flowable-ui/index.html"]
       interval: 15s
       timeout: 5s
       retries: 20
-      start_period: 120s
+      start_period: 180s
     deploy:
       resources:
-        limits: { cpus: '0.75', memory: 1G }
+        limits: { cpus: '1.0', memory: 2G }
+        reservations: { cpus: '0.5', memory: 1G }
 
   admin-ui:
     build:

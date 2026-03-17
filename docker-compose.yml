@@ -218,6 +218,7 @@ services:
       - FLOWABLE_COMMON_APP_IDM-ADMIN_USER=admin
       - FLOWABLE_COMMON_APP_IDM-ADMIN_PASSWORD=${FLOWABLE_PASSWORD:-test}
       - FLOWABLE_ASYNC_EXECUTOR_ACTIVATE=true
+      - "JAVA_TOOL_OPTIONS=${FLOWABLE_REST_JAVA_TOOL_OPTIONS:--Xms384m -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+ExitOnOutOfMemoryError}"
     depends_on:
       - flowable-db
     restart: unless-stopped
@@ -237,7 +238,7 @@ services:
       - FLOWABLE_COMMON_APP_IDM-ADMIN_PASSWORD=${FLOWABLE_PASSWORD:-test}
       - FLOWABLE_ASYNC_EXECUTOR_ACTIVATE=true
       - SERVER_FORWARD_HEADERS_STRATEGY=framework
-      - "JAVA_TOOL_OPTIONS=${FLOWABLE_UI_JAVA_TOOL_OPTIONS:--Xms256m -Xmx512m -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError}"
+      - "JAVA_TOOL_OPTIONS=${FLOWABLE_UI_JAVA_TOOL_OPTIONS:--Xms512m -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+ExitOnOutOfMemoryError}"
     depends_on:
       - flowable-db
     restart: unless-stopped
@@ -247,7 +248,7 @@ services:
       interval: 15s
       timeout: 5s
       retries: 20
-      start_period: 120s
+      start_period: 180s
 
   # ── Admin UI ──────────────────────────────────────────
   admin-ui:
