@@ -83,14 +83,14 @@
 Официальный путь:
 
 ```text
-https://YOUR_DOMAIN/flowable-ui/
+https://YOUR_DOMAIN/flowable-modeler/
 ```
+
+Как основной путь для BPMN-работ используем именно `flowable-modeler`.
 
 Не используем как основной вход:
 - `/flowable-ui/index.html`
-- `/flowable-modeler/`
-- `/flowable-admin/`
-- `/flowable-idm/`
+- `/flowable-ui/` only as compatibility redirect
 
 Legacy paths допустимы только как redirect compatibility.
 
@@ -155,7 +155,7 @@ credit-backend.base_url
    - `flowable-ui`
    - `nginx`
 3. Проверить:
-   - `/flowable-ui/`
+   - `/flowable-modeler/`
    - отсутствие mixed content
    - что `app/rest/*` и `idm/*` отвечают JSON, а не HTML
 
@@ -181,7 +181,7 @@ credit-backend.base_url
 
 Система считается приведённой в порядок, если одновременно выполнено всё ниже:
 
-1. `flowable-ui` открывается по `/flowable-ui/` без белого экрана.
+1. `flowable-modeler` открывается по `/flowable-modeler/` без белого экрана.
 2. `flowable-rest` стартует процесс без `401`.
 3. `flowable-rest` видит connector DNS.
 4. UI показывает:
