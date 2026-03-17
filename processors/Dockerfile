@@ -6,5 +6,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py .
 COPY start.sh .
 RUN chmod +x start.sh
-EXPOSE 8105 8106
+EXPOSE 8105 8106 8107
 CMD ["./start.sh"]

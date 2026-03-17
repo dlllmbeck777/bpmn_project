@@ -86,7 +86,7 @@ services:
     restart: always
     logging: *logging
     healthcheck:
-      test: ["CMD", "sh", "-c", "curl -sf http://localhost:8105/health && curl -sf http://localhost:8106/health"]
+      test: ["CMD", "sh", "-c", "curl -sf http://localhost:8105/health && curl -sf http://localhost:8106/health && curl -sf http://localhost:8107/health"]
       interval: 10s
       timeout: 5s
       retries: 3
