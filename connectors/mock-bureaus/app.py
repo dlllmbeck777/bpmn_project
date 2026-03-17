@@ -1,22 +1,53 @@
-"""Temporary mock service for iSoftPull, Creditsafe, and Plaid."""
+"""Unified mock applicant backend for iSoftPull, Creditsafe, and Plaid."""
+from __future__ import annotations
+
+import os
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
-from threading import Lock
-from typing import Any, Dict
+from threading import RLock
+from typing import Any, Dict, List
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-app = FastAPI(title="mock-bureaus", version="1.0.0")
+app = FastAPI(title="mock-bureaus", version="2.0.0")
+
+SERVICE_NAME = "mock-bureaus"
+MOCK_PUBLIC_BASE_URL = (os.getenv("MOCK_PUBLIC_BASE_URL", "http://mock-bureaus:8110") or "http://mock-bureaus:8110").strip().rstrip("/")
+MOCK_UPSTREAM_LABEL = (os.getenv("MOCK_UPSTREAM_LABEL", MOCK_PUBLIC_BASE_URL) or MOCK_PUBLIC_BASE_URL).strip().rstrip("/")
+APPLICANT_FIELDS = (
+    "firstName",
+    "lastName",
+    "address",
+    "city",
+    "state",
+    "zipCode",
+    "ssn",
+    "dateOfBirth",
+    "email",
+    "phone",
+)
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _iso(dt: datetime) -> str:
-    return dt.isoformat().replace("+00:00", "Z")
+def _iso(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    normalized = str(value).replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
 
 
 def _deep_merge(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -27,6 +58,17 @@ def _deep_merge(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]
         else:
             merged[key] = deepcopy(value)
     return merged
+
+
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _to_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _provider_key(provider: str) -> str:
@@ -50,10 +92,65 @@ def _customer_id(body: Dict[str, Any]) -> str:
 
 
 def _applicant_names(body: Dict[str, Any]) -> Dict[str, str]:
-    applicant = body.get("applicant") if isinstance(body.get("applicant"), dict) else {}
+    applicant = body.get("applicant") if isinstance(body.get("applicant"), dict) else body
     first_name = applicant.get("firstName") or applicant.get("first_name") or "John"
     last_name = applicant.get("lastName") or applicant.get("last_name") or "Doe"
     return {"first_name": str(first_name), "last_name": str(last_name)}
+
+
+def _public_applicant_record(applicant: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": applicant["id"],
+        "firstName": applicant["firstName"],
+        "lastName": applicant["lastName"],
+        "address": applicant["address"],
+        "city": applicant["city"],
+        "state": applicant["state"],
+        "zipCode": applicant["zipCode"],
+        "createdAt": applicant["createdAt"],
+        "updatedAt": applicant["updatedAt"],
+    }
+
+
+def _provider_catalog() -> List[Dict[str, Any]]:
+    return [
+        {
+            "code": "ISOFTPULL",
+            "providerCode": "ISOFTPULL",
+            "providerName": "iSoftPull",
+            "name": "iSoftPull",
+            "enabled": True,
+            "available": True,
+            "status": "ENABLED",
+            "type": "consumer_credit",
+            "server": MOCK_UPSTREAM_LABEL,
+            "endpoint": f"{MOCK_PUBLIC_BASE_URL}/api/v1/applicants/{{id}}/credit-check/isoftpull",
+        },
+        {
+            "code": "CREDITSAFE",
+            "providerCode": "CREDITSAFE",
+            "providerName": "Creditsafe",
+            "name": "Creditsafe",
+            "enabled": True,
+            "available": True,
+            "status": "ENABLED",
+            "type": "business_credit",
+            "server": MOCK_UPSTREAM_LABEL,
+            "endpoint": f"{MOCK_PUBLIC_BASE_URL}/api/v1/applicants/{{id}}/credit-check/creditsafe",
+        },
+        {
+            "code": "PLAID",
+            "providerCode": "PLAID",
+            "providerName": "Plaid",
+            "name": "Plaid",
+            "enabled": True,
+            "available": True,
+            "status": "ENABLED",
+            "type": "bank_link",
+            "server": MOCK_UPSTREAM_LABEL,
+            "endpoint": f"{MOCK_PUBLIC_BASE_URL}/api/v1/applicants/{{id}}/credit-check/plaid",
+        },
+    ]
 
 
 def _iso_trade_accounts(collection_count: int) -> list[Dict[str, Any]]:
@@ -89,11 +186,23 @@ def _iso_trade_accounts(collection_count: int) -> list[Dict[str, Any]]:
     return accounts
 
 
-def _build_isoftpull_response(body: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+def _plaid_tracking_url(tracking_id: str) -> str:
+    return f"{MOCK_PUBLIC_BASE_URL}/api/v1/plaid/link/{tracking_id}"
+
+
+def _build_isoftpull_response(
+    body: Dict[str, Any],
+    config: Dict[str, Any],
+    *,
+    applicant_id: int = 42,
+    report_id: int = 9001,
+    requested_at: datetime | None = None,
+    completed_at: datetime | None = None,
+) -> Dict[str, Any]:
     names = _applicant_names(body)
     request_id = _request_id(body)
     customer_id = _customer_id(body)
-    now = _utcnow()
+    now = requested_at or _utcnow()
     scenario = config["scenario"]
     controls = deepcopy(config.get("controls", {}))
 
@@ -101,21 +210,21 @@ def _build_isoftpull_response(body: Dict[str, Any], config: Dict[str, Any]) -> D
         "pass_775": {"status": "COMPLETED", "creditScore": 775, "collectionCount": 0, "bureauHit": True, "intelligenceIndicator": "PASS"},
         "reject_score_550": {"status": "COMPLETED", "creditScore": 550, "collectionCount": 0, "bureauHit": True, "intelligenceIndicator": "PASS"},
         "reject_collections_6": {"status": "COMPLETED", "creditScore": 720, "collectionCount": 6, "bureauHit": True, "intelligenceIndicator": "PASS"},
-        "no_hit": {"status": "COMPLETED", "creditScore": None, "collectionCount": 0, "bureauHit": False, "intelligenceIndicator": "NO_HIT"},
+        "no_hit": {"status": "NO_HIT", "creditScore": None, "collectionCount": 0, "bureauHit": False, "intelligenceIndicator": "NO_HIT"},
     }
     controls = _deep_merge(defaults.get(scenario, defaults["pass_775"]), controls)
 
     credit_score = controls.get("creditScore")
-    collection_count = int(controls.get("collectionCount", 0) or 0)
+    collection_count = _to_int(controls.get("collectionCount", 0))
     bureau_hit = bool(controls.get("bureauHit", credit_score is not None))
     status = str(controls.get("status", "COMPLETED"))
     intelligence = str(controls.get("intelligenceIndicator", "PASS"))
-    report_url = f"https://mock-bureaus.local/isoftpull/reports/{request_id}"
+    report_url = f"{MOCK_PUBLIC_BASE_URL}/api/v1/applicants/{applicant_id}/credit-reports"
 
     if not bureau_hit or scenario == "no_hit":
         response = {
-            "id": 9001,
-            "applicantId": 42,
+            "id": report_id,
+            "applicantId": applicant_id,
             "providerCode": "ISOFTPULL",
             "providerName": "iSoftPull",
             "status": status,
@@ -133,24 +242,25 @@ def _build_isoftpull_response(body: Dict[str, Any], config: Dict[str, Any]) -> D
                 "intelligenceIndicator": intelligence,
             },
             "requestedAt": _iso(now),
-            "completedAt": _iso(now + timedelta(seconds=3)),
+            "completedAt": _iso(completed_at or (now + timedelta(seconds=3))),
             "result": {"bureau_hit": False, "score": None, "creditScore": None, "collectionCount": 0},
             "mockScenario": scenario,
             "received_request_id": request_id,
             "customer_id": customer_id,
+            "server": MOCK_UPSTREAM_LABEL,
         }
         return _deep_merge(response, config.get("overrides", {}))
 
-    transunion_score = int(controls.get("transunionScore", (credit_score or 0) + 5))
-    equifax_score = int(controls.get("equifaxScore", credit_score or transunion_score))
+    transunion_score = _to_int(controls.get("transunionScore", (_to_int(credit_score) or 0) + 5))
+    equifax_score = _to_int(controls.get("equifaxScore", _to_int(credit_score, transunion_score)))
     accounts = _iso_trade_accounts(collection_count)
     response = {
-        "id": 9001,
-        "applicantId": 42,
+        "id": report_id,
+        "applicantId": applicant_id,
         "providerCode": "ISOFTPULL",
         "providerName": "iSoftPull",
         "status": status,
-        "creditScore": int(credit_score),
+        "creditScore": _to_int(credit_score),
         "equifaxScore": equifax_score,
         "transunionScore": transunion_score,
         "intelligenceIndicator": intelligence,
@@ -158,7 +268,7 @@ def _build_isoftpull_response(body: Dict[str, Any], config: Dict[str, Any]) -> D
         "rawResponse": {
             "equifaxScore": equifax_score,
             "transunionScore": transunion_score,
-            "firstScore": int(credit_score),
+            "firstScore": _to_int(credit_score),
             "intelligenceIndicator": intelligence,
             "reportUrl": report_url,
             "applicant": names,
@@ -183,25 +293,34 @@ def _build_isoftpull_response(body: Dict[str, Any], config: Dict[str, Any]) -> D
             },
         },
         "requestedAt": _iso(now),
-        "completedAt": _iso(now + timedelta(seconds=5)),
+        "completedAt": _iso(completed_at or (now + timedelta(seconds=5))),
         "result": {
             "bureau_hit": True,
-            "score": int(credit_score),
-            "creditScore": int(credit_score),
+            "score": _to_int(credit_score),
+            "creditScore": _to_int(credit_score),
             "collectionCount": collection_count,
         },
         "mockScenario": scenario,
         "received_request_id": request_id,
         "customer_id": customer_id,
+        "server": MOCK_UPSTREAM_LABEL,
     }
     return _deep_merge(response, config.get("overrides", {}))
 
 
-def _build_creditsafe_response(body: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+def _build_creditsafe_response(
+    body: Dict[str, Any],
+    config: Dict[str, Any],
+    *,
+    applicant_id: int = 42,
+    report_id: int = 9002,
+    requested_at: datetime | None = None,
+    completed_at: datetime | None = None,
+) -> Dict[str, Any]:
     names = _applicant_names(body)
     request_id = _request_id(body)
     customer_id = _customer_id(body)
-    now = _utcnow()
+    now = requested_at or _utcnow()
     scenario = config["scenario"]
     controls = deepcopy(config.get("controls", {}))
 
@@ -223,32 +342,34 @@ def _build_creditsafe_response(body: Dict[str, Any], config: Dict[str, Any]) -> 
             "totalDirectorMatches": 5,
         },
         "no_data": {
-            "status": "COMPLETED",
+            "status": "NO_HIT",
             "creditScore": None,
             "complianceAlertCount": 0,
             "derogatoryCount": 0,
-            "intelligenceIndicator": "NO_DATA",
+            "intelligenceIndicator": "NO_HIT",
             "totalDirectorMatches": 0,
         },
     }
     controls = _deep_merge(defaults.get(scenario, defaults["clean_72"]), controls)
 
     credit_score = controls.get("creditScore")
-    compliance_alert_count = int(controls.get("complianceAlertCount", 0) or 0)
-    derogatory_count = int(controls.get("derogatoryCount", compliance_alert_count) or 0)
+    compliance_alert_count = _to_int(controls.get("complianceAlertCount", 0))
+    derogatory_count = _to_int(controls.get("derogatoryCount", compliance_alert_count))
     status = str(controls.get("status", "COMPLETED"))
     intelligence = str(controls.get("intelligenceIndicator", "MULTIPLE_MATCHES"))
-    total_matches = int(controls.get("totalDirectorMatches", 5) or 0)
+    total_matches = _to_int(controls.get("totalDirectorMatches", 5))
     alerts = [{"id": f"alert-{index + 1}", "severity": "HIGH"} for index in range(compliance_alert_count)]
+    report_url = f"{MOCK_PUBLIC_BASE_URL}/api/v1/applicants/{applicant_id}/credit-reports"
 
     response = {
-        "id": 9002,
-        "applicantId": 42,
+        "id": report_id,
+        "applicantId": applicant_id,
         "providerCode": "CREDITSAFE",
         "providerName": "Creditsafe",
         "status": status,
         "creditScore": credit_score,
         "intelligenceIndicator": intelligence,
+        "reportUrl": report_url,
         "rawResponse": {
             "bestMatch": {
                 "peopleId": "US-S1283486724",
@@ -277,9 +398,9 @@ def _build_creditsafe_response(body: Dict[str, Any], config: Dict[str, Any]) -> 
             },
             "directors": [],
             "businessCredit": {
-                "riskScoreDescription": "Very Low Risk" if (credit_score or 0) >= 70 else "Medium Risk",
+                "riskScoreDescription": "Very Low Risk" if (_to_int(credit_score) >= 70) else "Moderate Risk",
                 "companyName": f"{names['first_name'].upper()} {names['last_name'].upper()} HOLDINGS LLC",
-                "riskScoreGrade": "A" if (credit_score or 0) >= 70 else "C",
+                "riskScoreGrade": "A" if (_to_int(credit_score) >= 70) else "C",
                 "riskScore": credit_score,
                 "derogatoryCount": derogatory_count,
             },
@@ -287,7 +408,7 @@ def _build_creditsafe_response(body: Dict[str, Any], config: Dict[str, Any]) -> 
             "totalDirectorMatches": total_matches,
         },
         "requestedAt": _iso(now),
-        "completedAt": _iso(now + timedelta(seconds=8)),
+        "completedAt": _iso(completed_at or (now + timedelta(seconds=8))),
         "result": {
             "creditScore": credit_score,
             "company_score": credit_score,
@@ -297,6 +418,7 @@ def _build_creditsafe_response(body: Dict[str, Any], config: Dict[str, Any]) -> 
         "mockScenario": scenario,
         "received_request_id": request_id,
         "customer_id": customer_id,
+        "server": MOCK_UPSTREAM_LABEL,
     }
 
     if scenario == "no_data":
@@ -312,10 +434,19 @@ def _build_creditsafe_response(body: Dict[str, Any], config: Dict[str, Any]) -> 
     return _deep_merge(response, config.get("overrides", {}))
 
 
-def _build_plaid_response(body: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+def _build_plaid_response(
+    body: Dict[str, Any],
+    config: Dict[str, Any],
+    *,
+    applicant_id: int = 42,
+    report_id: int = 9003,
+    requested_at: datetime | None = None,
+    completed_at: datetime | None = None,
+    tracking_state: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
     request_id = _request_id(body)
     customer_id = _customer_id(body)
-    now = _utcnow()
+    now = requested_at or _utcnow()
     scenario = config["scenario"]
     controls = deepcopy(config.get("controls", {}))
 
@@ -326,6 +457,8 @@ def _build_plaid_response(body: Dict[str, Any], config: Dict[str, Any]) -> Dict[
             "accountsFound": 0,
             "cashflowStability": "PENDING",
             "errorMessage": None,
+            "autoCompleteOnClick": False,
+            "autoCompleteAfterSeconds": 0,
         },
         "accounts_3": {
             "status": "COMPLETED",
@@ -351,41 +484,61 @@ def _build_plaid_response(body: Dict[str, Any], config: Dict[str, Any]) -> Dict[
     }
     controls = _deep_merge(defaults.get(scenario, defaults["pending_link"]), controls)
 
-    tracking_id = controls.get("trackingId") or str(uuid4())
-    status = str(controls.get("status", "PENDING"))
-    intelligence = str(controls.get("intelligenceIndicator", "PENDING_LINK"))
-    accounts_found = int(controls.get("accountsFound", 0) or 0)
-    cashflow_stability = str(controls.get("cashflowStability", "PENDING"))
-    error_message = controls.get("errorMessage")
+    if tracking_state:
+        tracking_id = tracking_state["trackingId"]
+        link_state = tracking_state["status"]
+        accounts_found = _to_int(tracking_state.get("accountsFound", 0))
+        cashflow_stability = str(tracking_state.get("cashflowStability", "PENDING"))
+        error_message = tracking_state.get("errorMessage")
+        if link_state in {"CREATED", "CLICKED"}:
+            status = "PENDING"
+            intelligence = "PENDING_LINK"
+        elif link_state == "REPORT_READY":
+            status = "COMPLETED"
+            intelligence = "PASS" if accounts_found > 0 else "NO_ACCOUNTS"
+        else:
+            status = "FAILED"
+            intelligence = "FAILED"
+        requested_at = _parse_iso(tracking_state.get("requestedAt")) or now
+        completed_at = _parse_iso(tracking_state.get("completedAt")) if tracking_state.get("completedAt") else completed_at
+    else:
+        tracking_id = controls.get("trackingId") or str(uuid4())
+        status = str(controls.get("status", "PENDING"))
+        intelligence = str(controls.get("intelligenceIndicator", "PENDING_LINK"))
+        accounts_found = _to_int(controls.get("accountsFound", 0))
+        cashflow_stability = str(controls.get("cashflowStability", "PENDING"))
+        error_message = controls.get("errorMessage")
 
+    report_url = _plaid_tracking_url(tracking_id)
     response = {
-        "id": 9003,
-        "applicantId": 42,
+        "id": report_id,
+        "applicantId": applicant_id,
         "providerCode": "PLAID",
         "providerName": "Plaid",
         "status": status,
         "intelligenceIndicator": intelligence,
-        "reportUrl": f"http://mock-bureaus:8110/api/v1/plaid/link/{tracking_id}",
+        "reportUrl": report_url,
         "rawResponse": {
             "sessionId": 100,
             "trackingId": tracking_id,
             "plaidUserId": "usr_mock_plaid_user",
-            "trackingUrl": f"http://mock-bureaus:8110/api/v1/plaid/link/{tracking_id}",
+            "trackingUrl": report_url,
             "hostedLinkUrl": f"https://secure.plaid.com/hl/{tracking_id.replace('-', '')}",
             "linkToken": f"link-sandbox-{tracking_id}",
             "linkTokenExpiration": _iso(now + timedelta(minutes=30)),
             "accounts": [{"accountId": f"mock-{index + 1}"} for index in range(accounts_found)],
         },
-        "requestedAt": _iso(now),
-        "completedAt": _iso(now + timedelta(seconds=2)) if status in {"COMPLETED", "FAILED"} else None,
+        "requestedAt": _iso(requested_at or now),
+        "completedAt": _iso(completed_at or (now + timedelta(seconds=2))) if status in {"COMPLETED", "FAILED"} else None,
         "result": {
             "accounts_found": accounts_found,
             "cashflow_stability": cashflow_stability,
-            "status": "OK" if status == "COMPLETED" and accounts_found > 0 else status,
+            "status": "OK" if status == "COMPLETED" else ("PENDING_LINK" if status == "PENDING" else status),
         },
         "mockScenario": scenario,
         "received_request_id": request_id,
         "customer_id": customer_id,
+        "server": MOCK_UPSTREAM_LABEL,
     }
     if error_message:
         response["errorMessage"] = error_message
@@ -402,10 +555,10 @@ SCENARIO_CATALOG = {
     "creditsafe": {
         "clean_72": "Completed response with score 72 and zero compliance alerts.",
         "reject_alerts_2": "Completed response with two compliance alerts for reject testing.",
-        "no_data": "Completed response without match or score.",
+        "no_data": "No-hit business lookup without company score.",
     },
     "plaid": {
-        "pending_link": "Pending link flow similar to hosted Plaid Link responses.",
+        "pending_link": "Pending link flow with trackingUrl and status transitions.",
         "accounts_3": "Completed response with three linked accounts.",
         "no_accounts": "Completed response with zero linked accounts.",
         "failed_missing_ssn": "Failed response for missing SSN validation.",
@@ -418,8 +571,17 @@ DEFAULT_CONFIG = {
     "plaid": {"scenario": "pending_link", "controls": {}, "overrides": {}},
 }
 
-_state_lock = Lock()
+DEFAULT_RUNTIME = {
+    "next_applicant_id": 42,
+    "next_report_id": 100,
+    "applicants": {},
+    "reports": {},
+    "plaid_links": {},
+}
+
+_state_lock = RLock()
 _state = deepcopy(DEFAULT_CONFIG)
+_runtime = deepcopy(DEFAULT_RUNTIME)
 
 
 class ProviderConfigUpdate(BaseModel):
@@ -434,6 +596,38 @@ class BulkConfigUpdate(BaseModel):
     plaid: ProviderConfigUpdate | None = None
 
 
+class ApplicantIn(BaseModel):
+    firstName: str = ""
+    lastName: str = ""
+    address: str = ""
+    city: str = ""
+    state: str = ""
+    zipCode: str = ""
+    ssn: str = ""
+    dateOfBirth: str = ""
+    email: str = ""
+    phone: str = ""
+
+
+class ApplicantUpdateIn(BaseModel):
+    firstName: str | None = None
+    lastName: str | None = None
+    address: str | None = None
+    city: str | None = None
+    state: str | None = None
+    zipCode: str | None = None
+    ssn: str | None = None
+    dateOfBirth: str | None = None
+    email: str | None = None
+    phone: str | None = None
+
+
+class PlaidLinkActionIn(BaseModel):
+    accountsFound: int | None = None
+    cashflowStability: str | None = None
+    errorMessage: str | None = None
+
+
 def get_current_config() -> Dict[str, Any]:
     with _state_lock:
         return deepcopy(_state)
@@ -443,6 +637,8 @@ def reset_config() -> Dict[str, Any]:
     with _state_lock:
         _state.clear()
         _state.update(deepcopy(DEFAULT_CONFIG))
+        _runtime.clear()
+        _runtime.update(deepcopy(DEFAULT_RUNTIME))
         return deepcopy(_state)
 
 
@@ -470,29 +666,287 @@ def _build_response(provider: str, body: Dict[str, Any]) -> Dict[str, Any]:
     return builders[provider](body, config)
 
 
+def _require_applicant(applicant_id: int) -> Dict[str, Any]:
+    applicant = _runtime["applicants"].get(applicant_id)
+    if not applicant:
+        raise HTTPException(404, f"applicant {applicant_id} not found")
+    return applicant
+
+
+def _next_applicant_id() -> int:
+    applicant_id = _runtime["next_applicant_id"]
+    _runtime["next_applicant_id"] += 1
+    return applicant_id
+
+
+def _next_report_id() -> int:
+    report_id = _runtime["next_report_id"]
+    _runtime["next_report_id"] += 1
+    return report_id
+
+
+def _store_report(applicant_id: int, report: Dict[str, Any]) -> Dict[str, Any]:
+    reports = _runtime["reports"].setdefault(applicant_id, [])
+    for index, current in enumerate(reports):
+        if current.get("id") == report.get("id"):
+            reports[index] = deepcopy(report)
+            return deepcopy(report)
+    reports.append(deepcopy(report))
+    reports.sort(key=lambda item: item.get("requestedAt") or "", reverse=True)
+    return deepcopy(report)
+
+
+def _list_reports(applicant_id: int) -> List[Dict[str, Any]]:
+    return deepcopy(_runtime["reports"].get(applicant_id, []))
+
+
+def _refresh_plaid_link_state(tracking_id: str) -> Dict[str, Any]:
+    state = _runtime["plaid_links"].get(tracking_id)
+    if not state:
+        raise HTTPException(404, f"tracking id {tracking_id} not found")
+    auto_seconds = _to_int(state.get("autoCompleteAfterSeconds", 0))
+    clicked_at = _parse_iso(state.get("clickedAt"))
+    if state.get("status") == "CLICKED" and auto_seconds > 0 and clicked_at:
+        if (_utcnow() - clicked_at).total_seconds() >= auto_seconds:
+            _complete_plaid_link(
+                tracking_id,
+                accounts_found=_to_int(state.get("accountsFound", 0)),
+                cashflow_stability=str(state.get("cashflowStability", "GOOD")),
+            )
+            state = _runtime["plaid_links"][tracking_id]
+    return deepcopy(state)
+
+
+def _sync_plaid_report(tracking_id: str) -> Dict[str, Any]:
+    state = _refresh_plaid_link_state(tracking_id)
+    applicant_id = state["applicantId"]
+    applicant = _require_applicant(applicant_id)
+    config = {"scenario": state.get("scenario", "pending_link"), "controls": state.get("configControls", {}), "overrides": state.get("overrides", {})}
+    body = dict(applicant)
+    body["request_id"] = state.get("request_id") or f"TRACK-{tracking_id}"
+    report = _build_plaid_response(
+        body,
+        config,
+        applicant_id=applicant_id,
+        report_id=state["reportId"],
+        requested_at=_parse_iso(state.get("requestedAt")),
+        completed_at=_parse_iso(state.get("completedAt")),
+        tracking_state=state,
+    )
+    _store_report(applicant_id, report)
+    return report
+
+
+def _create_plaid_link(applicant_id: int, request_id: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    controls = deepcopy(config.get("controls", {}))
+    tracking_id = str(controls.get("trackingId") or uuid4())
+    now = _utcnow()
+    state = {
+        "trackingId": tracking_id,
+        "applicantId": applicant_id,
+        "reportId": _next_report_id(),
+        "requestedAt": _iso(now),
+        "clickedAt": None,
+        "completedAt": None,
+        "status": "CREATED",
+        "clicked": False,
+        "reportReady": False,
+        "scenario": config["scenario"],
+        "request_id": request_id,
+        "configControls": controls,
+        "overrides": deepcopy(config.get("overrides", {})),
+        "accountsFound": _to_int(controls.get("accountsFound", 0)),
+        "cashflowStability": str(controls.get("cashflowStability", "PENDING")),
+        "errorMessage": controls.get("errorMessage"),
+        "autoCompleteOnClick": bool(controls.get("autoCompleteOnClick", False)),
+        "autoCompleteAfterSeconds": _to_int(controls.get("autoCompleteAfterSeconds", 0)),
+        "trackingUrl": _plaid_tracking_url(tracking_id),
+        "hostedLinkUrl": f"https://secure.plaid.com/hl/{tracking_id.replace('-', '')}",
+    }
+    _runtime["plaid_links"][tracking_id] = state
+    return deepcopy(state)
+
+
+def _click_plaid_link(tracking_id: str) -> Dict[str, Any]:
+    state = _refresh_plaid_link_state(tracking_id)
+    if state["status"] not in {"CREATED", "CLICKED"}:
+        return state
+    current = _runtime["plaid_links"][tracking_id]
+    current["status"] = "CLICKED"
+    current["clicked"] = True
+    current["clickedAt"] = current.get("clickedAt") or _iso(_utcnow())
+    if current.get("autoCompleteOnClick"):
+        _complete_plaid_link(
+            tracking_id,
+            accounts_found=_to_int(current.get("accountsFound", 0)),
+            cashflow_stability=str(current.get("cashflowStability", "GOOD")),
+        )
+    return deepcopy(_runtime["plaid_links"][tracking_id])
+
+
+def _complete_plaid_link(tracking_id: str, *, accounts_found: int | None = None, cashflow_stability: str | None = None) -> Dict[str, Any]:
+    state = _runtime["plaid_links"].get(tracking_id)
+    if not state:
+        raise HTTPException(404, f"tracking id {tracking_id} not found")
+    current = _runtime["plaid_links"][tracking_id]
+    current["status"] = "REPORT_READY"
+    current["clicked"] = True
+    current["reportReady"] = True
+    if not current.get("clickedAt"):
+        current["clickedAt"] = _iso(_utcnow())
+    current["completedAt"] = _iso(_utcnow())
+    if accounts_found is not None:
+        current["accountsFound"] = _to_int(accounts_found)
+    if cashflow_stability is not None:
+        current["cashflowStability"] = str(cashflow_stability)
+    _sync_plaid_report(tracking_id)
+    return deepcopy(current)
+
+
+def _fail_plaid_link(tracking_id: str, *, error_message: str | None = None) -> Dict[str, Any]:
+    state = _runtime["plaid_links"].get(tracking_id)
+    if not state:
+        raise HTTPException(404, f"tracking id {tracking_id} not found")
+    current = _runtime["plaid_links"][tracking_id]
+    current["status"] = "FAILED"
+    current["clicked"] = bool(current.get("clickedAt"))
+    current["reportReady"] = False
+    if not current.get("clickedAt"):
+        current["clickedAt"] = _iso(_utcnow())
+    current["completedAt"] = _iso(_utcnow())
+    current["errorMessage"] = error_message or current.get("errorMessage") or "Plaid link flow failed"
+    _sync_plaid_report(tracking_id)
+    return deepcopy(current)
+
+
+def _plaid_status_payload(state: Dict[str, Any]) -> Dict[str, Any]:
+    link_state = _refresh_plaid_link_state(state["trackingId"])
+    payload = {
+        "trackingId": link_state["trackingId"],
+        "status": link_state["status"],
+        "clicked": bool(link_state.get("clicked")),
+        "clickedAt": link_state.get("clickedAt"),
+        "reportReady": bool(link_state.get("reportReady")),
+        "reportUrl": link_state.get("trackingUrl"),
+        "trackingUrl": link_state.get("trackingUrl"),
+        "hostedLinkUrl": link_state.get("hostedLinkUrl"),
+        "applicantId": link_state["applicantId"],
+    }
+    if link_state.get("completedAt"):
+        payload["completedAt"] = link_state["completedAt"]
+    if link_state.get("errorMessage"):
+        payload["errorMessage"] = link_state["errorMessage"]
+    return payload
+
+
+def _create_applicant_record(payload: Dict[str, Any]) -> Dict[str, Any]:
+    now = _utcnow()
+    applicant_id = _next_applicant_id()
+    record = {field: _clean_text(payload.get(field)) for field in APPLICANT_FIELDS}
+    record["id"] = applicant_id
+    record["createdAt"] = _iso(now)
+    record["updatedAt"] = _iso(now)
+    _runtime["applicants"][applicant_id] = record
+    _runtime["reports"].setdefault(applicant_id, [])
+    return deepcopy(record)
+
+
+def _update_applicant_record(applicant_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+    current = _require_applicant(applicant_id)
+    for field in APPLICANT_FIELDS:
+        if field in payload and payload[field] is not None:
+            current[field] = _clean_text(payload[field])
+    current["updatedAt"] = _iso(_utcnow())
+    _runtime["applicants"][applicant_id] = current
+    return deepcopy(current)
+
+
+def _trigger_isoftpull(applicant_id: int) -> Dict[str, Any]:
+    applicant = _require_applicant(applicant_id)
+    report = _build_isoftpull_response(applicant, get_current_config()["isoftpull"], applicant_id=applicant_id, report_id=_next_report_id())
+    return _store_report(applicant_id, report)
+
+
+def _trigger_creditsafe(applicant_id: int) -> Dict[str, Any]:
+    applicant = _require_applicant(applicant_id)
+    report = _build_creditsafe_response(applicant, get_current_config()["creditsafe"], applicant_id=applicant_id, report_id=_next_report_id())
+    return _store_report(applicant_id, report)
+
+
+def _trigger_plaid(applicant_id: int) -> Dict[str, Any]:
+    applicant = _require_applicant(applicant_id)
+    config = get_current_config()["plaid"]
+    body = dict(applicant)
+    request_id = f"PLAID-{applicant_id}-{uuid4().hex[:8].upper()}"
+    scenario = config["scenario"]
+    if scenario == "failed_missing_ssn":
+        report = _build_plaid_response(body, config, applicant_id=applicant_id, report_id=_next_report_id())
+        return _store_report(applicant_id, report)
+    if scenario == "pending_link":
+        link_state = _create_plaid_link(applicant_id, request_id, config)
+        report = _build_plaid_response(
+            body,
+            config,
+            applicant_id=applicant_id,
+            report_id=link_state["reportId"],
+            requested_at=_parse_iso(link_state["requestedAt"]),
+            tracking_state=link_state,
+        )
+        return _store_report(applicant_id, report)
+    report = _build_plaid_response(body, config, applicant_id=applicant_id, report_id=_next_report_id())
+    return _store_report(applicant_id, report)
+
+
+def _run_provider_check(applicant_id: int, provider: str) -> Dict[str, Any]:
+    provider = _provider_key(provider)
+    if provider == "isoftpull":
+        return _trigger_isoftpull(applicant_id)
+    if provider == "creditsafe":
+        return _trigger_creditsafe(applicant_id)
+    return _trigger_plaid(applicant_id)
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "mock-bureaus"}
+    return {
+        "status": "ok",
+        "service": SERVICE_NAME,
+        "mode": "unified-mock-backend",
+        "upstream_label": MOCK_UPSTREAM_LABEL,
+    }
 
 
 @app.get("/api/v1/mock/catalog")
 def catalog():
     return {
-        "service": "mock-bureaus",
+        "service": SERVICE_NAME,
+        "base_url": MOCK_PUBLIC_BASE_URL,
+        "upstream_label": MOCK_UPSTREAM_LABEL,
         "providers": {
             "isoftpull": {
                 "endpoint_path": "/api/pull",
+                "credit_check_path": "/api/v1/applicants/{id}/credit-check/isoftpull",
                 "config_controls": ["creditScore", "collectionCount", "bureauHit", "status", "intelligenceIndicator"],
                 "scenarios": SCENARIO_CATALOG["isoftpull"],
             },
             "creditsafe": {
                 "endpoint_path": "/api/report",
+                "credit_check_path": "/api/v1/applicants/{id}/credit-check/creditsafe",
                 "config_controls": ["creditScore", "complianceAlertCount", "derogatoryCount", "status", "intelligenceIndicator"],
                 "scenarios": SCENARIO_CATALOG["creditsafe"],
             },
             "plaid": {
                 "endpoint_path": "/api/accounts",
-                "config_controls": ["accountsFound", "cashflowStability", "status", "intelligenceIndicator", "errorMessage"],
+                "credit_check_path": "/api/v1/applicants/{id}/credit-check/plaid",
+                "config_controls": [
+                    "accountsFound",
+                    "cashflowStability",
+                    "status",
+                    "intelligenceIndicator",
+                    "errorMessage",
+                    "autoCompleteOnClick",
+                    "autoCompleteAfterSeconds",
+                ],
                 "scenarios": SCENARIO_CATALOG["plaid"],
             },
         },
@@ -501,7 +955,18 @@ def catalog():
 
 @app.get("/api/v1/mock/config")
 def current_config():
-    return {"service": "mock-bureaus", "config": get_current_config()}
+    return {"service": SERVICE_NAME, "config": get_current_config()}
+
+
+@app.get("/api/v1/mock/runtime")
+def runtime_snapshot():
+    with _state_lock:
+        return {
+            "service": SERVICE_NAME,
+            "applicants": [_public_applicant_record(item) for item in _runtime["applicants"].values()],
+            "plaid_links": deepcopy(list(_runtime["plaid_links"].values())),
+            "reports": deepcopy(_runtime["reports"]),
+        }
 
 
 @app.put("/api/v1/mock/config/{provider}")
@@ -525,6 +990,143 @@ def reset_mock():
     return {"config": reset_config()}
 
 
+@app.post("/api/v1/mock/plaid/{tracking_id}/click")
+def click_plaid_link(tracking_id: str):
+    with _state_lock:
+        state = _click_plaid_link(tracking_id)
+        return _plaid_status_payload(state)
+
+
+@app.post("/api/v1/mock/plaid/{tracking_id}/complete")
+def complete_plaid_link(tracking_id: str, body: PlaidLinkActionIn):
+    with _state_lock:
+        state = _complete_plaid_link(
+            tracking_id,
+            accounts_found=body.accountsFound,
+            cashflow_stability=body.cashflowStability,
+        )
+        return _plaid_status_payload(state)
+
+
+@app.post("/api/v1/mock/plaid/{tracking_id}/fail")
+def fail_plaid_link(tracking_id: str, body: PlaidLinkActionIn):
+    with _state_lock:
+        state = _fail_plaid_link(tracking_id, error_message=body.errorMessage)
+        return _plaid_status_payload(state)
+
+
+@app.post("/api/v1/applicants")
+def create_applicant(body: ApplicantIn):
+    with _state_lock:
+        record = _create_applicant_record(body.__dict__)
+        return _public_applicant_record(record)
+
+
+@app.get("/api/v1/applicants")
+def list_applicants():
+    with _state_lock:
+        items = [_public_applicant_record(item) for item in _runtime["applicants"].values()]
+        items.sort(key=lambda item: item["id"])
+        return items
+
+
+@app.get("/api/v1/applicants/{applicant_id}")
+def get_applicant(applicant_id: int):
+    with _state_lock:
+        return _public_applicant_record(_require_applicant(applicant_id))
+
+
+@app.put("/api/v1/applicants/{applicant_id}")
+def update_applicant(applicant_id: int, body: ApplicantUpdateIn):
+    with _state_lock:
+        record = _update_applicant_record(applicant_id, body.__dict__)
+        return _public_applicant_record(record)
+
+
+@app.delete("/api/v1/applicants/{applicant_id}")
+def delete_applicant(applicant_id: int):
+    with _state_lock:
+        _require_applicant(applicant_id)
+        _runtime["applicants"].pop(applicant_id, None)
+        _runtime["reports"].pop(applicant_id, None)
+        stale_links = [tracking_id for tracking_id, state in _runtime["plaid_links"].items() if state.get("applicantId") == applicant_id]
+        for tracking_id in stale_links:
+            _runtime["plaid_links"].pop(tracking_id, None)
+        return {"status": "deleted", "id": applicant_id}
+
+
+@app.post("/api/v1/applicants/{applicant_id}/credit-check")
+def run_all_credit_checks(applicant_id: int):
+    with _state_lock:
+        _require_applicant(applicant_id)
+        return [
+            _run_provider_check(applicant_id, "isoftpull"),
+            _run_provider_check(applicant_id, "creditsafe"),
+            _run_provider_check(applicant_id, "plaid"),
+        ]
+
+
+@app.post("/api/v1/applicants/{applicant_id}/credit-check/isoftpull")
+def run_isoftpull_check(applicant_id: int):
+    with _state_lock:
+        return _run_provider_check(applicant_id, "isoftpull")
+
+
+@app.post("/api/v1/applicants/{applicant_id}/credit-check/creditsafe")
+def run_creditsafe_check(applicant_id: int):
+    with _state_lock:
+        return _run_provider_check(applicant_id, "creditsafe")
+
+
+@app.post("/api/v1/applicants/{applicant_id}/credit-check/plaid")
+def run_plaid_check(applicant_id: int):
+    with _state_lock:
+        return _run_provider_check(applicant_id, "plaid")
+
+
+@app.get("/api/v1/applicants/{applicant_id}/credit-reports")
+def get_credit_reports(applicant_id: int):
+    with _state_lock:
+        _require_applicant(applicant_id)
+        for tracking_id, state in list(_runtime["plaid_links"].items()):
+            if state.get("applicantId") == applicant_id:
+                _sync_plaid_report(tracking_id)
+        return _list_reports(applicant_id)
+
+
+@app.get("/api/v1/credit-providers")
+def list_credit_providers():
+    return _provider_catalog()
+
+
+@app.get("/api/v1/credit-providers/enabled")
+def list_enabled_credit_providers():
+    return [item for item in _provider_catalog() if item.get("enabled")]
+
+
+@app.get("/api/v1/credit-providers/available")
+def list_available_credit_providers():
+    return [item for item in _provider_catalog() if item.get("available")]
+
+
+@app.get("/api/v1/plaid/link/{tracking_id}")
+def plaid_tracking(tracking_id: str):
+    with _state_lock:
+        state = _click_plaid_link(tracking_id)
+        return {
+            **_plaid_status_payload(state),
+            "redirectUrl": state.get("hostedLinkUrl"),
+            "message": "Mock Plaid link clicked. In real mode the client would be redirected to Plaid Link.",
+        }
+
+
+@app.get("/api/v1/plaid/link/{tracking_id}/status")
+def plaid_tracking_status(tracking_id: str):
+    with _state_lock:
+        state = _refresh_plaid_link_state(tracking_id)
+        return _plaid_status_payload(state)
+
+
 @app.post("/api/pull")
 def isoftpull_mock(body: Dict[str, Any]):
     return _build_response("isoftpull", body)
@@ -538,22 +1140,6 @@ def creditsafe_mock(body: Dict[str, Any]):
 @app.post("/api/accounts")
 def plaid_mock(body: Dict[str, Any]):
     return _build_response("plaid", body)
-
-
-@app.get("/api/v1/plaid/link/{tracking_id}")
-def plaid_tracking(tracking_id: str):
-    response = _build_response("plaid", {"request_id": f"TRACK-{tracking_id}"})
-    response["reportUrl"] = f"http://mock-bureaus:8110/api/v1/plaid/link/{tracking_id}"
-    if isinstance(response.get("rawResponse"), dict):
-        response["rawResponse"]["trackingId"] = tracking_id
-        response["rawResponse"]["trackingUrl"] = response["reportUrl"]
-    return {
-        "trackingId": tracking_id,
-        "status": response.get("status"),
-        "intelligenceIndicator": response.get("intelligenceIndicator"),
-        "mockScenario": response.get("mockScenario"),
-        "response": response,
-    }
 
 
 if __name__ == "__main__":

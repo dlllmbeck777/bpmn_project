@@ -174,6 +174,9 @@ services:
     container_name: mock-bureaus
     ports:
       - "8110:8110"
+    environment:
+      - MOCK_PUBLIC_BASE_URL=${MOCK_PUBLIC_BASE_URL:-http://localhost:8110}
+      - MOCK_UPSTREAM_LABEL=${MOCK_UPSTREAM_LABEL:-http://18.119.38.114}
     restart: unless-stopped
     networks: [backend]
     healthcheck:

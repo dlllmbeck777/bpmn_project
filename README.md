@@ -67,7 +67,7 @@ For production modeling workflows, `flowable-ui` is available behind nginx at `h
 | `isoftpull` | 8101 | Mock bureau connector |
 | `creditsafe` | 8102 | Mock company score connector |
 | `plaid` | 8103 | Mock accounts connector |
-| `mock-bureaus` | 8110 | Built-in demo/test double for iSoftPull, Creditsafe, and Plaid |
+| `mock-bureaus` | 8110 | Built-in unified mock applicant backend for iSoftPull, Creditsafe, and Plaid |
 | `crm` | 8104 | Mock CRM connector |
 | `flowable-db` | 5434 | PostgreSQL for Flowable |
 | `flowable-rest` | 8085 | Flowable REST engine |
@@ -97,7 +97,8 @@ For production modeling workflows, `flowable-ui` is available behind nginx at `h
 
 - `admin-ui` stores API base URL and session data in `localStorage`.
 - The external input contract is documented as `Applicant Input v2` in `docs/INTEGRATION_SPEC_IT_RU.md`.
-- For leadership demos and connector QA without paid external calls, use the built-in `mock-bureaus` service and switch connectors from `Services` with `Use demo mock connectors`.
+- For leadership demos and connector QA without paid external calls, use the built-in `mock-bureaus` service and switch `credit-backend` from `Services` with `Use unified mock backend`.
 - Locally `mock-bureaus` is available on `http://localhost:8110`; in production use `https://<host>/mock-bureaus` through nginx.
+- The fast switch between demo and real upstream is now a one-line change in service registry: `credit-backend.base_url`.
 - The Flowable path uses callback completion via `/internal/cases/complete`.
 - For production, use the dedicated UI image in `admin-ui/Dockerfile.prod`.

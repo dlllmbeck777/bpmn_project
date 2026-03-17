@@ -159,6 +159,7 @@ services:
     environment:
       - CONFIG_SERVICE_URL=http://core-api:8000
       - INTERNAL_API_KEY=${INTERNAL_API_KEY}
+      - CREDIT_BACKEND_DEFAULT_URL=${CREDIT_BACKEND_DEFAULT_URL:-http://18.119.38.114}
     networks: [backend]
     restart: always
     logging: *logging
@@ -173,6 +174,9 @@ services:
 
   mock-bureaus:
     ports: !reset []
+    environment:
+      - MOCK_PUBLIC_BASE_URL=${MOCK_PUBLIC_BASE_URL:-https://${DOMAIN}/mock-bureaus}
+      - MOCK_UPSTREAM_LABEL=${MOCK_UPSTREAM_LABEL:-http://18.119.38.114}
     networks: [backend, frontend]
     restart: always
     logging: *logging

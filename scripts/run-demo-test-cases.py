@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run predefined demo test cases against mock-bureaus and the platform API."""
+"""Run predefined demo test cases against the unified mock backend and platform API."""
 
 from __future__ import annotations
 
@@ -14,13 +14,9 @@ from typing import Any, Dict, Iterable, Optional
 from urllib import error, request
 
 
-DEMO_CONNECTOR_IDS = ("isoftpull", "creditsafe", "plaid")
-DEMO_CONNECTOR_BASE_URL = "http://mock-bureaus:8110"
-DEFAULT_LIVE_BASE_URLS = {
-    "isoftpull": "http://isoftpull:8101",
-    "creditsafe": "http://creditsafe:8102",
-    "plaid": "http://plaid:8103",
-}
+DEMO_SERVICE_ID = "credit-backend"
+DEMO_SERVICE_BASE_URL = "http://mock-bureaus:8110"
+DEFAULT_LIVE_BASE_URL = "http://18.119.38.114"
 FINAL_STATUSES = {"COMPLETED", "REVIEW", "REJECTED", "FAILED"}
 
 
@@ -64,22 +60,21 @@ def _http_request(method: str, url: str, *, headers: Optional[Dict[str, str]] = 
 def _switch_demo_connectors(api_base: str, admin_api_key: str, *, insecure: bool, enable_demo: bool) -> None:
     headers = {"X-Api-Key": admin_api_key, "X-User-Role": "admin"}
     services = _http_request("GET", f"{api_base}/api/v1/services", headers=headers, insecure=insecure).get("items", [])
-    for service_id in DEMO_CONNECTOR_IDS:
-        service = next((item for item in services if item.get("id") == service_id), None)
-        if not service:
-            continue
-        meta = dict(service.get("meta") or {})
-        if enable_demo:
-            if service.get("base_url") and service.get("base_url") != DEMO_CONNECTOR_BASE_URL:
-                meta["live_base_url"] = service["base_url"]
-            meta["demo_mode"] = True
-            meta["demo_base_url"] = DEMO_CONNECTOR_BASE_URL
-            service["base_url"] = DEMO_CONNECTOR_BASE_URL
-        else:
-            service["base_url"] = meta.get("live_base_url") or DEFAULT_LIVE_BASE_URLS.get(service_id) or service.get("base_url")
-            meta["demo_mode"] = False
-        service["meta"] = meta
-        _http_request("PUT", f"{api_base}/api/v1/services/{service_id}", headers=headers, payload=service, insecure=insecure)
+    service = next((item for item in services if item.get("id") == DEMO_SERVICE_ID), None)
+    if not service:
+        raise RuntimeError("Service credit-backend is missing in service registry")
+    meta = dict(service.get("meta") or {})
+    if enable_demo:
+        if service.get("base_url") and service.get("base_url") != DEMO_SERVICE_BASE_URL:
+            meta["live_base_url"] = service["base_url"]
+        meta["demo_mode"] = True
+        meta["demo_base_url"] = DEMO_SERVICE_BASE_URL
+        service["base_url"] = DEMO_SERVICE_BASE_URL
+    else:
+        service["base_url"] = meta.get("live_base_url") or DEFAULT_LIVE_BASE_URL or service.get("base_url")
+        meta["demo_mode"] = False
+    service["meta"] = meta
+    _http_request("PUT", f"{api_base}/api/v1/services/{DEMO_SERVICE_ID}", headers=headers, payload=service, insecure=insecure)
 
 
 def _prepare_mock_config(case: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[str, Any]:
@@ -134,16 +129,16 @@ def _print_case_result(case: Dict[str, Any], created: Dict[str, Any], final: Dic
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run demo cases against mock-bureaus and Credit Platform.")
+    parser = argparse.ArgumentParser(description="Run demo cases against the unified mock credit backend and Credit Platform.")
     parser.add_argument("--api-base", default="https://65.109.174.58", help="Base URL of platform API")
-    parser.add_argument("--mock-base", help="Base URL of mock-bureaus service; defaults to <api-base>/mock-bureaus")
+    parser.add_argument("--mock-base", help="Base URL of mock credit backend; defaults to <api-base>/mock-bureaus")
     parser.add_argument("--gateway-api-key", help="Gateway API key for POST/GET requests")
     parser.add_argument("--admin-api-key", help="Admin API key, required only for --enable-demo-connectors or --restore-live-connectors")
     parser.add_argument("--cases-file", default="scripts/demo-test-cases.json", help="Path to JSON case catalog")
     parser.add_argument("--case", dest="case_id", help="Run a single case by id")
     parser.add_argument("--list", action="store_true", help="List available cases and exit")
-    parser.add_argument("--enable-demo-connectors", action="store_true", help="Switch platform connectors to built-in demo mock URLs before running")
-    parser.add_argument("--restore-live-connectors", action="store_true", help="Restore saved live connector URLs and exit")
+    parser.add_argument("--enable-demo-connectors", action="store_true", help="Switch service credit-backend to the built-in demo mock URL before running")
+    parser.add_argument("--restore-live-connectors", action="store_true", help="Restore the saved live credit-backend URL and exit")
     parser.add_argument("--timeout-seconds", type=int, default=60, help="Polling timeout for request completion")
     parser.add_argument("--poll-interval", type=float, default=2.0, help="Polling interval in seconds")
     parser.add_argument("--insecure", action="store_true", help="Disable TLS certificate verification")
@@ -166,7 +161,7 @@ def main() -> int:
         if not args.admin_api_key:
             raise SystemExit("--admin-api-key is required with --restore-live-connectors")
         _switch_demo_connectors(api_base, args.admin_api_key, insecure=args.insecure, enable_demo=False)
-        print("Live connector URLs restored.")
+        print("Live credit-backend URL restored.")
         return 0
 
     if not args.gateway_api_key:
@@ -176,7 +171,7 @@ def main() -> int:
         if not args.admin_api_key:
             raise SystemExit("--admin-api-key is required with --enable-demo-connectors")
         _switch_demo_connectors(api_base, args.admin_api_key, insecure=args.insecure, enable_demo=True)
-        print("Demo mock connectors enabled.")
+        print("Unified mock backend enabled.")
 
     selected_cases = cases
     if args.case_id:
