@@ -237,6 +237,7 @@ services:
       - FLOWABLE_COMMON_APP_IDM-ADMIN_USER=admin
       - FLOWABLE_COMMON_APP_IDM-ADMIN_PASSWORD=${FLOWABLE_PASSWORD:-test}
       - FLOWABLE_ASYNC_EXECUTOR_ACTIVATE=true
+      - SERVER_FORWARD_HEADERS_STRATEGY=native
     depends_on:
       - flowable-db
     restart: unless-stopped
