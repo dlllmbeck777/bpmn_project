@@ -144,6 +144,77 @@ class MockBureausTests(unittest.TestCase):
         self.assertEqual(response["intelligenceIndicator"], "NO_ACCOUNTS")
         self.assertEqual(response["result"]["accounts_found"], 0)
 
+    def test_random_mode_allows_exact_isoftpull_values(self):
+        updated = mock_bureaus.update_provider_config(
+            "isoftpull",
+            mock_bureaus.ProviderConfigUpdate(
+                mode="random",
+                controls={"seed": "demo", "creditScore": 333, "collectionCount": 4, "bureauHit": True},
+            ),
+        )
+
+        response = mock_bureaus._build_response("isoftpull", {"request_id": "REQ-RAND-ISO"})
+
+        self.assertEqual(updated["mode"], "random")
+        self.assertEqual(response["mockMode"], "random")
+        self.assertEqual(response["creditScore"], 333)
+        self.assertEqual(response["result"]["collectionCount"], 4)
+
+    def test_custom_mode_uses_manual_creditsafe_values(self):
+        updated = mock_bureaus.update_provider_config(
+            "creditsafe",
+            mock_bureaus.ProviderConfigUpdate(
+                mode="custom",
+                scenario="clean_72",
+                controls={"creditScore": 17, "complianceAlertCount": 3, "derogatoryCount": 3},
+            ),
+        )
+
+        response = mock_bureaus._build_response("creditsafe", {"request_id": "REQ-CUSTOM-CS"})
+
+        self.assertEqual(updated["mode"], "custom")
+        self.assertEqual(response["mockMode"], "custom")
+        self.assertEqual(response["creditScore"], 17)
+        self.assertEqual(response["result"]["complianceAlertCount"], 3)
+
+    def test_random_plaid_mode_can_be_pinned_and_persists_link_state(self):
+        mock_bureaus.update_provider_config(
+            "plaid",
+            mock_bureaus.ProviderConfigUpdate(
+                mode="random",
+                controls={
+                    "seed": "demo",
+                    "status": "PENDING",
+                    "accountsFound": 2,
+                    "cashflowStability": "FAIR",
+                    "autoCompleteOnClick": True,
+                },
+            ),
+        )
+        created = mock_bureaus.create_applicant(
+            mock_bureaus.ApplicantIn(
+                firstName="John",
+                lastName="Doe",
+                address="123 Main Street",
+                city="New York",
+                state="NY",
+                zipCode="10001",
+            )
+        )
+
+        report = mock_bureaus.run_plaid_check(created["id"])
+        tracking_id = report["rawResponse"]["trackingId"]
+        clicked = mock_bureaus.plaid_tracking(tracking_id)
+        stored = mock_bureaus.get_credit_reports(created["id"])
+        latest = next(item for item in stored if item["providerCode"] == "PLAID")
+
+        self.assertEqual(report["mockMode"], "random")
+        self.assertEqual(report["status"], "PENDING")
+        self.assertEqual(clicked["status"], "REPORT_READY")
+        self.assertEqual(latest["status"], "COMPLETED")
+        self.assertEqual(latest["result"]["accounts_found"], 2)
+        self.assertEqual(latest["result"]["cashflow_stability"], "FAIR")
+
     def test_applicant_crud_roundtrip(self):
         created = mock_bureaus.create_applicant(
             mock_bureaus.ApplicantIn(

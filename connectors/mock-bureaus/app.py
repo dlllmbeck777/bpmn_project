@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import random
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from threading import RLock
@@ -17,6 +18,7 @@ app = FastAPI(title="mock-bureaus", version="2.0.0")
 SERVICE_NAME = "mock-bureaus"
 MOCK_PUBLIC_BASE_URL = (os.getenv("MOCK_PUBLIC_BASE_URL", "http://mock-bureaus:8110") or "http://mock-bureaus:8110").strip().rstrip("/")
 MOCK_UPSTREAM_LABEL = (os.getenv("MOCK_UPSTREAM_LABEL", MOCK_PUBLIC_BASE_URL) or MOCK_PUBLIC_BASE_URL).strip().rstrip("/")
+MOCK_MODES = {"scenario", "random", "custom"}
 APPLICANT_FIELDS = (
     "firstName",
     "lastName",
@@ -72,6 +74,29 @@ def _to_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _to_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off"}:
+            return False
+    return None
+
+
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
 def _provider_key(provider: str) -> str:
     normalized = (provider or "").strip().lower()
     aliases = {
@@ -103,6 +128,51 @@ def _scenario_supported(provider: str, scenario: str) -> bool:
         ),
     }
     return any(re.fullmatch(pattern, scenario) for pattern in dynamic_patterns.get(provider, ()))
+
+
+def _normalize_mode(mode: Any) -> str:
+    normalized = str(mode or "scenario").strip().lower() or "scenario"
+    if normalized not in MOCK_MODES:
+        raise HTTPException(400, f"unsupported mock mode '{mode}'")
+    return normalized
+
+
+def _rng(provider: str, controls: Dict[str, Any]) -> random.Random:
+    seed = controls.get("seed")
+    if seed in (None, ""):
+        return random.Random()
+    return random.Random(f"{provider}:{seed}")
+
+
+def _random_int(controls: Dict[str, Any], key: str, minimum: int, maximum: int, rng: random.Random) -> int:
+    exact_value = controls.get(key)
+    if exact_value is not None:
+        return _to_int(exact_value, minimum)
+    lower = _to_int(controls.get(f"{key}Min"), minimum)
+    upper = _to_int(controls.get(f"{key}Max"), maximum)
+    if upper < lower:
+        lower, upper = upper, lower
+    return rng.randint(lower, upper)
+
+
+def _random_choice(controls: Dict[str, Any], key: str, options: List[Any], rng: random.Random, default: Any = None) -> Any:
+    exact_value = controls.get(key)
+    if exact_value not in (None, ""):
+        return exact_value
+    custom_options = controls.get(f"{key}Options")
+    if isinstance(custom_options, list) and custom_options:
+        options = custom_options
+    if not options:
+        return default
+    return rng.choice(options)
+
+
+def _random_bool(controls: Dict[str, Any], key: str, *, chance_key: str, default_chance: float, rng: random.Random) -> bool:
+    exact_value = _to_bool(controls.get(key))
+    if exact_value is not None:
+        return exact_value
+    chance = _clamp(_to_float(controls.get(chance_key), default_chance), 0.0, 1.0)
+    return rng.random() < chance
 
 
 def _request_id(body: Dict[str, Any]) -> str:
@@ -262,22 +332,7 @@ def _plaid_tracking_url(tracking_id: str) -> str:
     return f"{MOCK_PUBLIC_BASE_URL}/api/v1/plaid/link/{tracking_id}"
 
 
-def _build_isoftpull_response(
-    body: Dict[str, Any],
-    config: Dict[str, Any],
-    *,
-    applicant_id: int = 42,
-    report_id: int = 9001,
-    requested_at: datetime | None = None,
-    completed_at: datetime | None = None,
-) -> Dict[str, Any]:
-    names = _applicant_names(body)
-    request_id = _request_id(body)
-    customer_id = _customer_id(body)
-    now = requested_at or _utcnow()
-    scenario = config["scenario"]
-    controls = deepcopy(config.get("controls", {}))
-
+def _iso_defaults_for_scenario(scenario: str) -> Dict[str, Any]:
     defaults = {
         "pass_775": {"status": "COMPLETED", "creditScore": 775, "collectionCount": 0, "bureauHit": True, "intelligenceIndicator": "PASS"},
         "reject_score_550": {"status": "COMPLETED", "creditScore": 550, "collectionCount": 0, "bureauHit": True, "intelligenceIndicator": "PASS"},
@@ -309,16 +364,275 @@ def _build_isoftpull_response(
                 "bureauHit": True,
                 "intelligenceIndicator": "PASS",
             }
-    controls = _deep_merge(defaults.get(scenario, defaults["pass_775"]), controls)
+    return defaults.get(scenario, defaults["pass_775"])
+
+
+def _resolve_iso_controls(config: Dict[str, Any]) -> Dict[str, Any]:
+    scenario = str(config.get("scenario") or "pass_775")
+    controls = deepcopy(config.get("controls", {}))
+    mode = _normalize_mode(config.get("mode"))
+    if mode != "random":
+        return _deep_merge(_iso_defaults_for_scenario(scenario), controls)
+
+    randomizer = _rng("isoftpull", controls)
+    explicit_bureau_hit = _to_bool(controls.get("bureauHit"))
+    if explicit_bureau_hit is None:
+        bureau_hit = not _random_bool(controls, "noHit", chance_key="noHitChance", default_chance=0.12, rng=randomizer)
+    else:
+        bureau_hit = explicit_bureau_hit
+    if not bureau_hit:
+        return {
+            "status": str(controls.get("status") or "NO_HIT"),
+            "creditScore": None,
+            "collectionCount": 0,
+            "bureauHit": False,
+            "intelligenceIndicator": str(controls.get("intelligenceIndicator") or "NO_HIT"),
+        }
+
+    credit_score = _random_int(controls, "creditScore", 300, 850, randomizer)
+    collection_count = _random_int(controls, "collectionCount", 0, 8, randomizer)
+    return {
+        "status": str(controls.get("status") or "COMPLETED"),
+        "creditScore": credit_score,
+        "collectionCount": collection_count,
+        "bureauHit": True,
+        "intelligenceIndicator": str(controls.get("intelligenceIndicator") or "PASS"),
+    }
+
+
+def _creditsafe_defaults_for_scenario(scenario: str) -> Dict[str, Any]:
+    defaults = {
+        "clean_72": {
+            "status": "COMPLETED",
+            "creditScore": 72,
+            "complianceAlertCount": 0,
+            "derogatoryCount": 0,
+            "intelligenceIndicator": "MULTIPLE_MATCHES",
+            "totalDirectorMatches": 5,
+        },
+        "reject_alerts_2": {
+            "status": "COMPLETED",
+            "creditScore": 72,
+            "complianceAlertCount": 2,
+            "derogatoryCount": 2,
+            "intelligenceIndicator": "MULTIPLE_MATCHES",
+            "totalDirectorMatches": 5,
+        },
+        "no_data": {
+            "status": "NO_HIT",
+            "creditScore": None,
+            "complianceAlertCount": 0,
+            "derogatoryCount": 0,
+            "intelligenceIndicator": "NO_HIT",
+            "totalDirectorMatches": 0,
+        },
+    }
+    if scenario not in defaults:
+        if match := re.fullmatch(r"clean_(\d+)", scenario):
+            defaults[scenario] = {
+                "status": "COMPLETED",
+                "creditScore": _to_int(match.group(1)),
+                "complianceAlertCount": 0,
+                "derogatoryCount": 0,
+                "intelligenceIndicator": "MULTIPLE_MATCHES",
+                "totalDirectorMatches": 5,
+            }
+        elif match := re.fullmatch(r"reject_alerts_(\d+)", scenario):
+            alert_count = _to_int(match.group(1))
+            defaults[scenario] = {
+                "status": "COMPLETED",
+                "creditScore": 72,
+                "complianceAlertCount": alert_count,
+                "derogatoryCount": alert_count,
+                "intelligenceIndicator": "MULTIPLE_MATCHES",
+                "totalDirectorMatches": 5,
+            }
+    return defaults.get(scenario, defaults["clean_72"])
+
+
+def _resolve_creditsafe_controls(config: Dict[str, Any]) -> Dict[str, Any]:
+    scenario = str(config.get("scenario") or "clean_72")
+    controls = deepcopy(config.get("controls", {}))
+    mode = _normalize_mode(config.get("mode"))
+    if mode != "random":
+        return _deep_merge(_creditsafe_defaults_for_scenario(scenario), controls)
+
+    randomizer = _rng("creditsafe", controls)
+    no_data = _random_bool(controls, "noData", chance_key="noDataChance", default_chance=0.08, rng=randomizer)
+    if no_data:
+        return {
+            "status": str(controls.get("status") or "NO_HIT"),
+            "creditScore": None,
+            "complianceAlertCount": 0,
+            "derogatoryCount": 0,
+            "intelligenceIndicator": str(controls.get("intelligenceIndicator") or "NO_HIT"),
+            "totalDirectorMatches": 0,
+        }
+
+    total_matches = _random_int(controls, "totalDirectorMatches", 1, 6, randomizer)
+    compliance_alert_count = _random_int(controls, "complianceAlertCount", 0, 3, randomizer)
+    derogatory_count = controls.get("derogatoryCount")
+    if derogatory_count is None:
+        derogatory_count = _random_int(controls, "derogatoryCount", compliance_alert_count, max(compliance_alert_count, 4), randomizer)
+    intelligence = controls.get("intelligenceIndicator")
+    if intelligence in (None, ""):
+        intelligence = "MATCH_FOUND" if total_matches == 1 else "MULTIPLE_MATCHES"
+    return {
+        "status": str(controls.get("status") or "COMPLETED"),
+        "creditScore": _random_int(controls, "creditScore", 0, 100, randomizer),
+        "complianceAlertCount": compliance_alert_count,
+        "derogatoryCount": _to_int(derogatory_count, compliance_alert_count),
+        "intelligenceIndicator": str(intelligence),
+        "totalDirectorMatches": total_matches,
+    }
+
+
+def _plaid_defaults_for_scenario(scenario: str) -> Dict[str, Any]:
+    defaults = {
+        "pending_link": {
+            "status": "PENDING",
+            "intelligenceIndicator": "PENDING_LINK",
+            "accountsFound": 0,
+            "cashflowStability": "PENDING",
+            "errorMessage": None,
+            "autoCompleteOnClick": False,
+            "autoCompleteAfterSeconds": 0,
+        },
+        "accounts_3": {
+            "status": "COMPLETED",
+            "intelligenceIndicator": "PASS",
+            "accountsFound": 3,
+            "cashflowStability": "GOOD",
+            "errorMessage": None,
+        },
+        "no_accounts": {
+            "status": "COMPLETED",
+            "intelligenceIndicator": "NO_ACCOUNTS",
+            "accountsFound": 0,
+            "cashflowStability": "LOW",
+            "errorMessage": None,
+        },
+        "failed_missing_ssn": {
+            "status": "FAILED",
+            "intelligenceIndicator": "FAILED",
+            "accountsFound": 0,
+            "cashflowStability": "UNKNOWN",
+            "errorMessage": "SSN is required for Plaid CRA credit check",
+        },
+    }
+    if scenario not in defaults and (match := re.fullmatch(r"accounts_(\d+)", scenario)):
+        accounts_found = _to_int(match.group(1))
+        defaults[scenario] = {
+            "status": "COMPLETED",
+            "intelligenceIndicator": "PASS" if accounts_found > 0 else "NO_ACCOUNTS",
+            "accountsFound": accounts_found,
+            "cashflowStability": "GOOD" if accounts_found > 0 else "LOW",
+            "errorMessage": None,
+        }
+    return defaults.get(scenario, defaults["pending_link"])
+
+
+def _resolve_plaid_controls(config: Dict[str, Any]) -> Dict[str, Any]:
+    scenario = str(config.get("scenario") or "pending_link")
+    controls = deepcopy(config.get("controls", {}))
+    mode = _normalize_mode(config.get("mode"))
+    if mode != "random":
+        return _deep_merge(_plaid_defaults_for_scenario(scenario), controls)
+
+    randomizer = _rng("plaid", controls)
+    status = str(controls.get("status") or "").upper()
+    if not status:
+        failed = _random_bool(controls, "failed", chance_key="failedChance", default_chance=0.05, rng=randomizer)
+        pending = _random_bool(controls, "pending", chance_key="pendingChance", default_chance=0.15, rng=randomizer)
+        if failed:
+            status = "FAILED"
+        elif pending:
+            status = "PENDING"
+        else:
+            status = "COMPLETED"
+
+    accounts_found = _random_int(controls, "accountsFound", 0, 6, randomizer)
+    cashflow = _random_choice(
+        controls,
+        "cashflowStability",
+        ["GOOD", "FAIR", "LOW"],
+        randomizer,
+        default="GOOD" if accounts_found > 0 else "LOW",
+    )
+    if status == "PENDING":
+        return {
+            "status": "PENDING",
+            "intelligenceIndicator": str(controls.get("intelligenceIndicator") or "PENDING_LINK"),
+            "accountsFound": accounts_found,
+            "cashflowStability": str(cashflow or "PENDING"),
+            "errorMessage": controls.get("errorMessage"),
+            "autoCompleteOnClick": bool(controls.get("autoCompleteOnClick", False)),
+            "autoCompleteAfterSeconds": _to_int(controls.get("autoCompleteAfterSeconds", 0)),
+        }
+    if status == "FAILED":
+        return {
+            "status": "FAILED",
+            "intelligenceIndicator": str(controls.get("intelligenceIndicator") or "FAILED"),
+            "accountsFound": 0,
+            "cashflowStability": str(cashflow or "UNKNOWN"),
+            "errorMessage": controls.get("errorMessage") or "Plaid link flow failed",
+        }
+    return {
+        "status": "COMPLETED",
+        "intelligenceIndicator": str(controls.get("intelligenceIndicator") or ("PASS" if accounts_found > 0 else "NO_ACCOUNTS")),
+        "accountsFound": accounts_found,
+        "cashflowStability": str(cashflow or ("GOOD" if accounts_found > 0 else "LOW")),
+        "errorMessage": controls.get("errorMessage"),
+    }
+
+
+def _resolve_provider_controls(provider: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    if provider == "isoftpull":
+        return _resolve_iso_controls(config)
+    if provider == "creditsafe":
+        return _resolve_creditsafe_controls(config)
+    if provider == "plaid":
+        return _resolve_plaid_controls(config)
+    raise HTTPException(404, f"unsupported provider: {provider}")
+
+
+def _materialize_provider_config(provider: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    mode = _normalize_mode(config.get("mode"))
+    return {
+        "scenario": str(config.get("scenario") or DEFAULT_CONFIG[provider]["scenario"]),
+        # Freeze random mode into concrete controls for a single request lifecycle.
+        "mode": "custom" if mode == "random" else mode,
+        "controls": _resolve_provider_controls(provider, config),
+        "overrides": deepcopy(config.get("overrides", {})),
+    }
+
+
+def _build_isoftpull_response(
+    body: Dict[str, Any],
+    config: Dict[str, Any],
+    *,
+    applicant_id: int = 42,
+    report_id: int = 9001,
+    requested_at: datetime | None = None,
+    completed_at: datetime | None = None,
+) -> Dict[str, Any]:
+    names = _applicant_names(body)
+    request_id = _request_id(body)
+    customer_id = _customer_id(body)
+    now = requested_at or _utcnow()
+    mode = _normalize_mode(config.get("mode"))
+    resolved = _materialize_provider_config("isoftpull", config)
+    scenario = resolved["scenario"]
+    controls = deepcopy(resolved.get("controls", {}))
 
     credit_score = controls.get("creditScore")
     collection_count = _to_int(controls.get("collectionCount", 0))
     bureau_hit = bool(controls.get("bureauHit", credit_score is not None))
-    status = str(controls.get("status", "COMPLETED"))
+    status = str(controls.get("status", "COMPLETED")).upper()
     intelligence = str(controls.get("intelligenceIndicator", "PASS"))
     report_url = f"{MOCK_PUBLIC_BASE_URL}/api/v1/applicants/{applicant_id}/credit-reports"
 
-    if not bureau_hit or scenario == "no_hit":
+    if not bureau_hit or credit_score is None or status == "NO_HIT":
         response = {
             "id": report_id,
             "applicantId": applicant_id,
@@ -327,6 +641,7 @@ def _build_isoftpull_response(
             "status": status,
             "intelligenceIndicator": intelligence,
             "reportUrl": report_url,
+            "mockMode": mode,
             "rawResponse": {
                 "reports": {
                     "link": report_url,
@@ -362,6 +677,7 @@ def _build_isoftpull_response(
         "transunionScore": transunion_score,
         "intelligenceIndicator": intelligence,
         "reportUrl": report_url,
+        "mockMode": mode,
         "rawResponse": {
             "equifaxScore": equifax_score,
             "transunionScore": transunion_score,
@@ -418,61 +734,15 @@ def _build_creditsafe_response(
     request_id = _request_id(body)
     customer_id = _customer_id(body)
     now = requested_at or _utcnow()
-    scenario = config["scenario"]
-    controls = deepcopy(config.get("controls", {}))
-
-    defaults = {
-        "clean_72": {
-            "status": "COMPLETED",
-            "creditScore": 72,
-            "complianceAlertCount": 0,
-            "derogatoryCount": 0,
-            "intelligenceIndicator": "MULTIPLE_MATCHES",
-            "totalDirectorMatches": 5,
-        },
-        "reject_alerts_2": {
-            "status": "COMPLETED",
-            "creditScore": 72,
-            "complianceAlertCount": 2,
-            "derogatoryCount": 2,
-            "intelligenceIndicator": "MULTIPLE_MATCHES",
-            "totalDirectorMatches": 5,
-        },
-        "no_data": {
-            "status": "NO_HIT",
-            "creditScore": None,
-            "complianceAlertCount": 0,
-            "derogatoryCount": 0,
-            "intelligenceIndicator": "NO_HIT",
-            "totalDirectorMatches": 0,
-        },
-    }
-    if scenario not in defaults:
-        if match := re.fullmatch(r"clean_(\d+)", scenario):
-            defaults[scenario] = {
-                "status": "COMPLETED",
-                "creditScore": _to_int(match.group(1)),
-                "complianceAlertCount": 0,
-                "derogatoryCount": 0,
-                "intelligenceIndicator": "MULTIPLE_MATCHES",
-                "totalDirectorMatches": 5,
-            }
-        elif match := re.fullmatch(r"reject_alerts_(\d+)", scenario):
-            alert_count = _to_int(match.group(1))
-            defaults[scenario] = {
-                "status": "COMPLETED",
-                "creditScore": 72,
-                "complianceAlertCount": alert_count,
-                "derogatoryCount": alert_count,
-                "intelligenceIndicator": "MULTIPLE_MATCHES",
-                "totalDirectorMatches": 5,
-            }
-    controls = _deep_merge(defaults.get(scenario, defaults["clean_72"]), controls)
+    mode = _normalize_mode(config.get("mode"))
+    resolved = _materialize_provider_config("creditsafe", config)
+    scenario = resolved["scenario"]
+    controls = deepcopy(resolved.get("controls", {}))
 
     credit_score = controls.get("creditScore")
     compliance_alert_count = _to_int(controls.get("complianceAlertCount", 0))
     derogatory_count = _to_int(controls.get("derogatoryCount", compliance_alert_count))
-    status = str(controls.get("status", "COMPLETED"))
+    status = str(controls.get("status", "COMPLETED")).upper()
     intelligence = str(controls.get("intelligenceIndicator", "MULTIPLE_MATCHES"))
     total_matches = _to_int(controls.get("totalDirectorMatches", 5))
     alerts = [{"id": f"alert-{index + 1}", "severity": "HIGH"} for index in range(compliance_alert_count)]
@@ -487,6 +757,7 @@ def _build_creditsafe_response(
         "creditScore": credit_score,
         "intelligenceIndicator": intelligence,
         "reportUrl": report_url,
+        "mockMode": mode,
         "rawResponse": {
             "bestMatch": {
                 "peopleId": "US-S1283486724",
@@ -538,7 +809,7 @@ def _build_creditsafe_response(
         "server": MOCK_UPSTREAM_LABEL,
     }
 
-    if scenario == "no_data":
+    if status == "NO_HIT" or credit_score is None or total_matches <= 0:
         response["rawResponse"] = {
             "bestMatch": None,
             "directors": [],
@@ -564,51 +835,10 @@ def _build_plaid_response(
     request_id = _request_id(body)
     customer_id = _customer_id(body)
     now = requested_at or _utcnow()
-    scenario = config["scenario"]
-    controls = deepcopy(config.get("controls", {}))
-
-    defaults = {
-        "pending_link": {
-            "status": "PENDING",
-            "intelligenceIndicator": "PENDING_LINK",
-            "accountsFound": 0,
-            "cashflowStability": "PENDING",
-            "errorMessage": None,
-            "autoCompleteOnClick": False,
-            "autoCompleteAfterSeconds": 0,
-        },
-        "accounts_3": {
-            "status": "COMPLETED",
-            "intelligenceIndicator": "PASS",
-            "accountsFound": 3,
-            "cashflowStability": "GOOD",
-            "errorMessage": None,
-        },
-        "no_accounts": {
-            "status": "COMPLETED",
-            "intelligenceIndicator": "NO_ACCOUNTS",
-            "accountsFound": 0,
-            "cashflowStability": "LOW",
-            "errorMessage": None,
-        },
-        "failed_missing_ssn": {
-            "status": "FAILED",
-            "intelligenceIndicator": "FAILED",
-            "accountsFound": 0,
-            "cashflowStability": "UNKNOWN",
-            "errorMessage": "SSN is required for Plaid CRA credit check",
-        },
-    }
-    if scenario not in defaults and (match := re.fullmatch(r"accounts_(\d+)", scenario)):
-        accounts_found = _to_int(match.group(1))
-        defaults[scenario] = {
-            "status": "COMPLETED",
-            "intelligenceIndicator": "PASS" if accounts_found > 0 else "NO_ACCOUNTS",
-            "accountsFound": accounts_found,
-            "cashflowStability": "GOOD" if accounts_found > 0 else "LOW",
-            "errorMessage": None,
-        }
-    controls = _deep_merge(defaults.get(scenario, defaults["pending_link"]), controls)
+    mode = _normalize_mode(config.get("mode"))
+    resolved = _materialize_provider_config("plaid", config)
+    scenario = resolved["scenario"]
+    controls = deepcopy(resolved.get("controls", {}))
 
     if tracking_state:
         tracking_id = tracking_state["trackingId"]
@@ -644,6 +874,7 @@ def _build_plaid_response(
         "status": status,
         "intelligenceIndicator": intelligence,
         "reportUrl": report_url,
+        "mockMode": mode,
         "rawResponse": {
             "sessionId": 100,
             "trackingId": tracking_id,
@@ -698,9 +929,9 @@ SCENARIO_CATALOG = {
 }
 
 DEFAULT_CONFIG = {
-    "isoftpull": {"scenario": "pass_775", "controls": {}, "overrides": {}},
-    "creditsafe": {"scenario": "clean_72", "controls": {}, "overrides": {}},
-    "plaid": {"scenario": "pending_link", "controls": {}, "overrides": {}},
+    "isoftpull": {"mode": "scenario", "scenario": "pass_775", "controls": {}, "overrides": {}},
+    "creditsafe": {"mode": "scenario", "scenario": "clean_72", "controls": {}, "overrides": {}},
+    "plaid": {"mode": "scenario", "scenario": "pending_link", "controls": {}, "overrides": {}},
 }
 
 DEFAULT_RUNTIME = {
@@ -717,6 +948,7 @@ _runtime = deepcopy(DEFAULT_RUNTIME)
 
 
 class ProviderConfigUpdate(BaseModel):
+    mode: str | None = None
     scenario: str | None = None
     controls: Dict[str, Any] = {}
     overrides: Dict[str, Any] = {}
@@ -778,6 +1010,7 @@ def update_provider_config(provider: str, update: ProviderConfigUpdate) -> Dict[
     provider = _provider_key(provider)
     with _state_lock:
         current = deepcopy(_state[provider])
+        current["mode"] = _normalize_mode(update.mode or current.get("mode"))
         scenario = update.scenario or current["scenario"]
         if not _scenario_supported(provider, scenario):
             raise HTTPException(400, f"unsupported scenario '{scenario}' for provider '{provider}'")
@@ -853,7 +1086,12 @@ def _sync_plaid_report(tracking_id: str) -> Dict[str, Any]:
     state = _refresh_plaid_link_state(tracking_id)
     applicant_id = state["applicantId"]
     applicant = _require_applicant(applicant_id)
-    config = {"scenario": state.get("scenario", "pending_link"), "controls": state.get("configControls", {}), "overrides": state.get("overrides", {})}
+    config = {
+        "mode": state.get("mode", "custom"),
+        "scenario": state.get("scenario", "pending_link"),
+        "controls": state.get("configControls", {}),
+        "overrides": state.get("overrides", {}),
+    }
     body = dict(applicant)
     body["request_id"] = state.get("request_id") or f"TRACK-{tracking_id}"
     report = _build_plaid_response(
@@ -883,7 +1121,8 @@ def _create_plaid_link(applicant_id: int, request_id: str, config: Dict[str, Any
         "status": "CREATED",
         "clicked": False,
         "reportReady": False,
-        "scenario": config["scenario"],
+        "mode": _normalize_mode(config.get("mode")),
+        "scenario": str(config.get("scenario") or "pending_link"),
         "request_id": request_id,
         "configControls": controls,
         "overrides": deepcopy(config.get("overrides", {})),
@@ -1035,14 +1274,20 @@ def _trigger_creditsafe(applicant_id: int, body: Dict[str, Any] | None = None) -
 
 def _trigger_plaid(applicant_id: int, body: Dict[str, Any] | None = None) -> Dict[str, Any]:
     applicant = _require_applicant(applicant_id)
-    config = get_current_config()["plaid"]
+    current_config = get_current_config()["plaid"]
+    config = {
+        "mode": _normalize_mode(current_config.get("mode")),
+        "scenario": str(current_config.get("scenario") or "pending_link"),
+        "controls": _resolve_plaid_controls(current_config),
+        "overrides": deepcopy(current_config.get("overrides", {})),
+    }
     request_body = _provider_request_body(applicant, body)
     request_id = str(request_body.get("request_id") or f"PLAID-{applicant_id}-{uuid4().hex[:8].upper()}")
-    scenario = config["scenario"]
-    if scenario == "failed_missing_ssn":
+    status = str(config.get("controls", {}).get("status", "PENDING")).upper()
+    if status == "FAILED":
         report = _build_plaid_response(request_body, config, applicant_id=applicant_id, report_id=_next_report_id())
         return _store_report(applicant_id, report)
-    if scenario == "pending_link":
+    if status == "PENDING":
         link_state = _create_plaid_link(applicant_id, request_id, config)
         report = _build_plaid_response(
             request_body,
@@ -1082,30 +1327,69 @@ def catalog():
         "service": SERVICE_NAME,
         "base_url": MOCK_PUBLIC_BASE_URL,
         "upstream_label": MOCK_UPSTREAM_LABEL,
+        "available_modes": sorted(MOCK_MODES),
         "providers": {
             "isoftpull": {
                 "endpoint_path": "/api/pull",
                 "credit_check_path": "/api/v1/applicants/{id}/credit-check/isoftpull",
-                "config_controls": ["creditScore", "collectionCount", "bureauHit", "status", "intelligenceIndicator"],
+                "available_modes": sorted(MOCK_MODES),
+                "config_controls": [
+                    "creditScore",
+                    "creditScoreMin",
+                    "creditScoreMax",
+                    "collectionCount",
+                    "collectionCountMin",
+                    "collectionCountMax",
+                    "bureauHit",
+                    "noHitChance",
+                    "status",
+                    "intelligenceIndicator",
+                    "seed",
+                ],
                 "scenarios": SCENARIO_CATALOG["isoftpull"],
             },
             "creditsafe": {
                 "endpoint_path": "/api/report",
                 "credit_check_path": "/api/v1/applicants/{id}/credit-check/creditsafe",
-                "config_controls": ["creditScore", "complianceAlertCount", "derogatoryCount", "status", "intelligenceIndicator"],
+                "available_modes": sorted(MOCK_MODES),
+                "config_controls": [
+                    "creditScore",
+                    "creditScoreMin",
+                    "creditScoreMax",
+                    "complianceAlertCount",
+                    "complianceAlertCountMin",
+                    "complianceAlertCountMax",
+                    "derogatoryCount",
+                    "derogatoryCountMin",
+                    "derogatoryCountMax",
+                    "totalDirectorMatches",
+                    "totalDirectorMatchesMin",
+                    "totalDirectorMatchesMax",
+                    "status",
+                    "intelligenceIndicator",
+                    "noDataChance",
+                    "seed",
+                ],
                 "scenarios": SCENARIO_CATALOG["creditsafe"],
             },
             "plaid": {
                 "endpoint_path": "/api/accounts",
                 "credit_check_path": "/api/v1/applicants/{id}/credit-check/plaid",
+                "available_modes": sorted(MOCK_MODES),
                 "config_controls": [
                     "accountsFound",
+                    "accountsFoundMin",
+                    "accountsFoundMax",
                     "cashflowStability",
+                    "cashflowStabilityOptions",
                     "status",
                     "intelligenceIndicator",
                     "errorMessage",
                     "autoCompleteOnClick",
                     "autoCompleteAfterSeconds",
+                    "pendingChance",
+                    "failedChance",
+                    "seed",
                 ],
                 "scenarios": SCENARIO_CATALOG["plaid"],
             },
