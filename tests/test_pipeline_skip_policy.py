@@ -226,6 +226,40 @@ class PipelineSkipPolicyTests(unittest.TestCase):
             "http://flowable-rest:8080/flowable-rest/actuator/health",
         )
 
+    def test_flowable_reports_by_provider_prefers_newest_report(self):
+        reports = flowable_adapter._reports_by_provider([
+            {
+                "providerCode": "ISOFTPULL",
+                "requestedAt": "2026-03-18T08:00:00Z",
+                "completedAt": "2026-03-18T08:00:05Z",
+                "creditScore": 333,
+            },
+            {
+                "providerCode": "ISOFTPULL",
+                "requestedAt": "2026-03-18T07:00:00Z",
+                "completedAt": "2026-03-18T07:00:05Z",
+                "creditScore": 712,
+            },
+        ])
+        self.assertEqual(reports["isoftpull"]["creditScore"], 333)
+
+    def test_custom_reports_by_provider_prefers_newest_report(self):
+        reports = custom_adapter._reports_by_provider([
+            {
+                "providerCode": "PLAID",
+                "requestedAt": "2026-03-18T08:00:00Z",
+                "completedAt": "2026-03-18T08:00:05Z",
+                "result": {"accounts_found": 1},
+            },
+            {
+                "providerCode": "PLAID",
+                "requestedAt": "2026-03-18T07:00:00Z",
+                "completedAt": "2026-03-18T07:00:05Z",
+                "result": {"accounts_found": 3},
+            },
+        ])
+        self.assertEqual(reports["plaid"]["result"]["accounts_found"], 1)
+
     def test_wait_for_flowable_ready_accepts_healthy_response(self):
         original_request = flowable_adapter._flowable_request
         try:

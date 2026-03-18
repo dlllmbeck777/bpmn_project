@@ -204,6 +204,14 @@ def _provider_key(value: Any) -> str:
     return aliases.get(normalized, normalized)
 
 
+def _report_rank(report: Dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(report.get("completedAt") or ""),
+        str(report.get("requestedAt") or ""),
+        str(report.get("updatedAt") or ""),
+    )
+
+
 def _reports_by_provider(payload: Any) -> Dict[str, Any]:
     if not isinstance(payload, list):
         return {}
@@ -222,6 +230,9 @@ def _reports_by_provider(payload: Any) -> Dict[str, Any]:
             continue
         report_payload = dict(item)
         report_payload.setdefault("service", provider_key)
+        existing = reports.get(provider_key)
+        if isinstance(existing, dict) and _report_rank(existing) >= _report_rank(report_payload):
+            continue
         reports[provider_key] = report_payload
     return reports
 
