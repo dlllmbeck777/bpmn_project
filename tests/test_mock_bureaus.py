@@ -107,6 +107,43 @@ class MockBureausTests(unittest.TestCase):
         self.assertEqual(response["creditScore"], 540)
         self.assertEqual(response["result"]["collectionCount"], 8)
 
+    def test_parameterized_isoftpull_pass_scenario_is_supported(self):
+        updated = mock_bureaus.update_provider_config(
+            "isoftpull",
+            mock_bureaus.ProviderConfigUpdate(scenario="pass_200"),
+        )
+
+        response = mock_bureaus._build_response("isoftpull", {"request_id": "REQ-ISO-200"})
+
+        self.assertEqual(updated["scenario"], "pass_200")
+        self.assertEqual(response["creditScore"], 200)
+        self.assertEqual(response["result"]["collectionCount"], 0)
+
+    def test_parameterized_creditsafe_clean_scenario_is_supported(self):
+        updated = mock_bureaus.update_provider_config(
+            "creditsafe",
+            mock_bureaus.ProviderConfigUpdate(scenario="clean_1"),
+        )
+
+        response = mock_bureaus._build_response("creditsafe", {"request_id": "REQ-CS-1"})
+
+        self.assertEqual(updated["scenario"], "clean_1")
+        self.assertEqual(response["creditScore"], 1)
+        self.assertEqual(response["result"]["complianceAlertCount"], 0)
+
+    def test_parameterized_plaid_accounts_scenario_supports_zero_accounts(self):
+        updated = mock_bureaus.update_provider_config(
+            "plaid",
+            mock_bureaus.ProviderConfigUpdate(scenario="accounts_0"),
+        )
+
+        response = mock_bureaus._build_response("plaid", {"request_id": "REQ-PLAID-0"})
+
+        self.assertEqual(updated["scenario"], "accounts_0")
+        self.assertEqual(response["status"], "COMPLETED")
+        self.assertEqual(response["intelligenceIndicator"], "NO_ACCOUNTS")
+        self.assertEqual(response["result"]["accounts_found"], 0)
+
     def test_applicant_crud_roundtrip(self):
         created = mock_bureaus.create_applicant(
             mock_bureaus.ApplicantIn(

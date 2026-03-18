@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from threading import RLock
@@ -81,6 +82,27 @@ def _provider_key(provider: str) -> str:
     if normalized not in aliases:
         raise HTTPException(404, f"unsupported provider: {provider}")
     return aliases[normalized]
+
+
+def _scenario_supported(provider: str, scenario: str) -> bool:
+    scenario = str(scenario or "").strip()
+    if scenario in SCENARIO_CATALOG.get(provider, {}):
+        return True
+    dynamic_patterns = {
+        "isoftpull": (
+            r"pass_\d+",
+            r"reject_score_\d+",
+            r"reject_collections_\d+",
+        ),
+        "creditsafe": (
+            r"clean_\d+",
+            r"reject_alerts_\d+",
+        ),
+        "plaid": (
+            r"accounts_\d+",
+        ),
+    }
+    return any(re.fullmatch(pattern, scenario) for pattern in dynamic_patterns.get(provider, ()))
 
 
 def _request_id(body: Dict[str, Any]) -> str:
@@ -262,6 +284,31 @@ def _build_isoftpull_response(
         "reject_collections_6": {"status": "COMPLETED", "creditScore": 720, "collectionCount": 6, "bureauHit": True, "intelligenceIndicator": "PASS"},
         "no_hit": {"status": "NO_HIT", "creditScore": None, "collectionCount": 0, "bureauHit": False, "intelligenceIndicator": "NO_HIT"},
     }
+    if scenario not in defaults:
+        if match := re.fullmatch(r"pass_(\d+)", scenario):
+            defaults[scenario] = {
+                "status": "COMPLETED",
+                "creditScore": _to_int(match.group(1)),
+                "collectionCount": 0,
+                "bureauHit": True,
+                "intelligenceIndicator": "PASS",
+            }
+        elif match := re.fullmatch(r"reject_score_(\d+)", scenario):
+            defaults[scenario] = {
+                "status": "COMPLETED",
+                "creditScore": _to_int(match.group(1)),
+                "collectionCount": 0,
+                "bureauHit": True,
+                "intelligenceIndicator": "PASS",
+            }
+        elif match := re.fullmatch(r"reject_collections_(\d+)", scenario):
+            defaults[scenario] = {
+                "status": "COMPLETED",
+                "creditScore": 720,
+                "collectionCount": _to_int(match.group(1)),
+                "bureauHit": True,
+                "intelligenceIndicator": "PASS",
+            }
     controls = _deep_merge(defaults.get(scenario, defaults["pass_775"]), controls)
 
     credit_score = controls.get("creditScore")
@@ -400,6 +447,26 @@ def _build_creditsafe_response(
             "totalDirectorMatches": 0,
         },
     }
+    if scenario not in defaults:
+        if match := re.fullmatch(r"clean_(\d+)", scenario):
+            defaults[scenario] = {
+                "status": "COMPLETED",
+                "creditScore": _to_int(match.group(1)),
+                "complianceAlertCount": 0,
+                "derogatoryCount": 0,
+                "intelligenceIndicator": "MULTIPLE_MATCHES",
+                "totalDirectorMatches": 5,
+            }
+        elif match := re.fullmatch(r"reject_alerts_(\d+)", scenario):
+            alert_count = _to_int(match.group(1))
+            defaults[scenario] = {
+                "status": "COMPLETED",
+                "creditScore": 72,
+                "complianceAlertCount": alert_count,
+                "derogatoryCount": alert_count,
+                "intelligenceIndicator": "MULTIPLE_MATCHES",
+                "totalDirectorMatches": 5,
+            }
     controls = _deep_merge(defaults.get(scenario, defaults["clean_72"]), controls)
 
     credit_score = controls.get("creditScore")
@@ -532,6 +599,15 @@ def _build_plaid_response(
             "errorMessage": "SSN is required for Plaid CRA credit check",
         },
     }
+    if scenario not in defaults and (match := re.fullmatch(r"accounts_(\d+)", scenario)):
+        accounts_found = _to_int(match.group(1))
+        defaults[scenario] = {
+            "status": "COMPLETED",
+            "intelligenceIndicator": "PASS" if accounts_found > 0 else "NO_ACCOUNTS",
+            "accountsFound": accounts_found,
+            "cashflowStability": "GOOD" if accounts_found > 0 else "LOW",
+            "errorMessage": None,
+        }
     controls = _deep_merge(defaults.get(scenario, defaults["pending_link"]), controls)
 
     if tracking_state:
@@ -598,18 +674,24 @@ def _build_plaid_response(
 SCENARIO_CATALOG = {
     "isoftpull": {
         "pass_775": "Completed report with score 775 and zero collections.",
+        "pass_<score>": "Completed report with the requested score and zero collections.",
         "reject_score_550": "Completed report with score 550 for Flowable reject-by-score testing.",
+        "reject_score_<score>": "Completed report with the requested score for reject-by-score testing.",
         "reject_collections_6": "Completed report with score 720 and collection_count 6 for reject-by-collections testing.",
+        "reject_collections_<count>": "Completed report with score 720 and the requested collection count.",
         "no_hit": "No-hit bureau response without score.",
     },
     "creditsafe": {
         "clean_72": "Completed response with score 72 and zero compliance alerts.",
+        "clean_<score>": "Completed response with the requested business score and zero compliance alerts.",
         "reject_alerts_2": "Completed response with two compliance alerts for reject testing.",
+        "reject_alerts_<count>": "Completed response with the requested compliance alert count.",
         "no_data": "No-hit business lookup without company score.",
     },
     "plaid": {
         "pending_link": "Pending link flow with trackingUrl and status transitions.",
         "accounts_3": "Completed response with three linked accounts.",
+        "accounts_<count>": "Completed response with the requested number of linked accounts.",
         "no_accounts": "Completed response with zero linked accounts.",
         "failed_missing_ssn": "Failed response for missing SSN validation.",
     },
@@ -697,7 +779,7 @@ def update_provider_config(provider: str, update: ProviderConfigUpdate) -> Dict[
     with _state_lock:
         current = deepcopy(_state[provider])
         scenario = update.scenario or current["scenario"]
-        if scenario not in SCENARIO_CATALOG[provider]:
+        if not _scenario_supported(provider, scenario):
             raise HTTPException(400, f"unsupported scenario '{scenario}' for provider '{provider}'")
         current["scenario"] = scenario
         current["controls"] = deepcopy(update.controls or {})
