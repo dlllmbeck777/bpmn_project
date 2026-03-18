@@ -6,6 +6,7 @@ import UsersPage from './pages/UsersPage'
 import ProcessTrackerPage from './pages/ProcessTrackerPage'
 import FlowableAdminPage from './pages/FlowableAdminPage'
 import RequestsPage from './pages/RequestsPage'
+import RequestsQueuePrototypePage from './pages/RequestsQueuePrototypePage'
 import AuditPage from './pages/AuditPage'
 import LoginPage from './pages/LoginPage'
 import SettingsPage from './pages/SettingsPage'
@@ -13,7 +14,7 @@ import ControlCenterPage from './pages/ControlCenterPage'
 import { getTheme, setTheme } from './lib/theme'
 import { clearAuth, getApiBase, getApiKey, getCurrentUsername, getRoleLabel, getUserRole, hasUiSession } from './lib/api'
 import { getStartPage } from './lib/preferences'
-import { IconGrid, IconSettings, IconRoute, IconUsers, IconClipboard, IconActivity, IconClock, IconGear, IconLayers } from './components/Icons'
+import { IconGrid, IconSettings, IconRoute, IconUsers, IconClipboard, IconInbox, IconActivity, IconClock, IconGear, IconLayers } from './components/Icons'
 
 const ROLE_LEVELS = { analyst: 1, senior_analyst: 2, admin: 3 }
 
@@ -34,6 +35,7 @@ const sections = [
     group: 'Operations',
     items: [
       { id: 'requests', label: 'Requests', Icon: IconClipboard, minRole: 'analyst' },
+      { id: 'queue', label: 'Ops inbox', Icon: IconInbox, minRole: 'analyst' },
       { id: 'tracker', label: 'Process tracker', Icon: IconActivity, minRole: 'analyst' },
       { id: 'flowable', label: 'Flowable engine', Icon: IconLayers, minRole: 'analyst' },
       { id: 'audit', label: 'Audit log', Icon: IconClock, minRole: 'analyst' },
@@ -50,6 +52,7 @@ const pageTitle = {
   flowable: ['Flowable engine', 'Inspect and manage Flowable instances, jobs and process definitions'],
   tracker: ['Process tracker', 'Trace request steps with waterfall timeline'],
   requests: ['Requests', 'Credit check request lifecycle'],
+  queue: ['Ops inbox', 'Prototype queue view for high-volume request triage'],
   audit: ['Audit log', 'Configuration change history'],
   settings: ['Settings', 'Workspace preferences, diagnostics, and quick navigation'],
 }
@@ -107,6 +110,7 @@ export default function App() {
       case 'flowable': return <FlowableAdminPage canManage={canManageConfig} />
       case 'tracker': return <ProcessTrackerPage />
       case 'requests': return <RequestsPage />
+      case 'queue': return <RequestsQueuePrototypePage onNavigate={setActive} />
       case 'audit': return <AuditPage />
       case 'settings': return <SettingsPage onSave={refresh} theme={theme} onThemeChange={handleThemeChange} availablePages={visibleItems} currentPage={current} onNavigate={setActive} />
       default: return <Dashboard />

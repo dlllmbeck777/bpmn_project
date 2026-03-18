@@ -8,6 +8,7 @@ export const IconAlert = () => <svg viewBox="0 0 24 24" {...s}><path d="M12 9v4m
 export const IconList = () => <svg viewBox="0 0 24 24" {...s}><path d="M4 6h16M4 12h16M4 18h16"/></svg>
 export const IconUsers = () => <svg viewBox="0 0 24 24" {...s}><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4V3"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
 export const IconClipboard = () => <svg viewBox="0 0 24 24" {...s}><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>
+export const IconInbox = () => <svg viewBox="0 0 24 24" {...s}><path d="M4 13h4l2 3h4l2-3h4"/><path d="M5 20h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2Z"/></svg>
 export const IconActivity = () => <svg viewBox="0 0 24 24" {...s}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
 export const IconClock = () => <svg viewBox="0 0 24 24" {...s}><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
 export const IconGear = () => <svg viewBox="0 0 24 24" {...s}><circle cx="12" cy="12" r="3"/><path d="M12 1v4m0 14v4m-7.8-3.2l2.8-2.8m10-10l2.8-2.8M1 12h4m14 0h4m-3.2 7.8l-2.8-2.8m-10-10L4.2 4.2"/></svg>
