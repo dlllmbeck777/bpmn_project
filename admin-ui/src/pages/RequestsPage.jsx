@@ -698,15 +698,27 @@ export default function RequestsPage() {
                   </div>
                   <div className="card" style={{margin:0}}>
                     <div className="rqb-sec-title">Decision inputs</div>
-                    {[
-                      ['Credit score',       metricVal(detail.result,'credit_score')],
-                      ['Collections',        metricVal(detail.result,'collection_count')],
-                      ['CS alerts',          metricVal(detail.result,'creditsafe_compliance_alert_count')],
-                      ['Rules evaluated',    metricVal(detail.result,'rules_evaluated')],
-                      ['Required reports',   metricVal(detail.result,'required_reports_available')],
-                    ].map(([k,v])=>(
-                      <div key={k} className="kv-row"><span className="kv-key">{k}</span><span className="kv-val">{v}</span></div>
-                    ))}
+                    {(() => {
+                      const raw = (key) => detail.result?.summary?.[key] ?? detail.result?.[key]
+                      const score = raw('credit_score')
+                      const scoreVal = (score === null || score === undefined) ? 0 : Number(score)
+                      const scoreMissing = score === null || score === undefined
+                      const rows = [
+                        { k: 'Credit score', v: String(scoreVal), color: scoreVal === 0 ? 'var(--red)' : scoreVal < 500 ? 'var(--amber)' : 'var(--green)', note: scoreMissing ? 'no data → 0' : null },
+                        { k: 'Collections',  v: metricVal(detail.result,'collection_count'), color: Number(raw('collection_count')) > 0 ? 'var(--red)' : null },
+                        { k: 'CS alerts',    v: metricVal(detail.result,'creditsafe_compliance_alert_count'), color: Number(raw('creditsafe_compliance_alert_count')) > 0 ? 'var(--amber)' : null },
+                        { k: 'Rules evaluated',  v: metricVal(detail.result,'rules_evaluated') },
+                        { k: 'Required reports', v: metricVal(detail.result,'required_reports_available'), color: raw('required_reports_available') === false ? 'var(--red)' : null },
+                      ]
+                      return rows.map(({k,v,color,note}) => (
+                        <div key={k} className="kv-row">
+                          <span className="kv-key">{k}</span>
+                          <span className="kv-val" style={color ? {color, fontWeight:600} : {}}>
+                            {v}{note && <span style={{fontSize:9,color:'var(--text-3)',fontWeight:400,marginLeft:4}}>({note})</span>}
+                          </span>
+                        </div>
+                      ))
+                    })()}
                   </div>
                 </div>
                 {(detail.notes||[]).length>0&&(
