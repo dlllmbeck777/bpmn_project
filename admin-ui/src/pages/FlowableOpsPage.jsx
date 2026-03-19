@@ -182,7 +182,7 @@ function BpmnCanvas2D({ model, tracedNodeIds, currentActivity, instanceStatus, o
         {edges.map(edge => {
           const sv = hasTrace && (tracedNodeIds.has(edge.sourceRef) || currentActivity === edge.sourceRef);
           const tv = hasTrace && (tracedNodeIds.has(edge.targetRef) || currentActivity === edge.targetRef);
-          const active = sv && tv;
+          const active = sv || tv;   // active if EITHER end is traced
           let pts = "";
           if (edge.waypoints?.length) {
             pts = edge.waypoints.map(wp => Array.isArray(wp) ? `${wp[0]},${wp[1]}` : `${wp.x},${wp.y}`).join(" ");
@@ -194,8 +194,8 @@ function BpmnCanvas2D({ model, tracedNodeIds, currentActivity, instanceStatus, o
           return (
             <polyline key={edge.id} points={pts} fill="none"
               stroke={active ? "#00e5a0" : "#1e2d45"}
-              strokeWidth={active ? 1.5 : 1}
-              opacity={hasTrace ? (active ? 0.9 : 0.2) : 0.55}
+              strokeWidth={active ? 2.5 : 0.7}
+              opacity={hasTrace ? (active ? 1 : 0.25) : 0.5}
               markerEnd={active ? "url(#fl2-arrG)" : "url(#fl2-arr)"} />
           );
         })}

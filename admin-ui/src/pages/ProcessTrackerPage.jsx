@@ -110,7 +110,7 @@ function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, sele
         {edges.map(edge => {
           const sv = hasTrace && (isTracedNode(edge.sourceRef) || isFailedNode(edge.sourceRef))
           const tv = hasTrace && (isTracedNode(edge.targetRef) || isFailedNode(edge.targetRef))
-          const active = sv && tv
+          const active = sv || tv   // active if EITHER end is traced (gateways not in tracker)
           const hasFail = active && (isFailedNode(edge.sourceRef) || isFailedNode(edge.targetRef))
           let pts = ''
           if (edge.waypoints?.length) {
@@ -123,8 +123,8 @@ function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, sele
           return (
             <polyline key={edge.id} points={pts} fill="none"
               stroke={hasFail ? 'var(--red)' : active ? 'var(--green)' : 'var(--border-1)'}
-              strokeWidth={active ? 1.5 : 0.8}
-              opacity={hasTrace ? (active ? 0.9 : 0.18) : 0.5}
+              strokeWidth={active ? 2.5 : 0.7}
+              opacity={hasTrace ? (active ? 1 : 0.25) : 0.5}
               markerEnd={hasFail ? 'url(#pt-arrR)' : active ? 'url(#pt-arrG)' : 'url(#pt-arr)'} />
           )
         })}

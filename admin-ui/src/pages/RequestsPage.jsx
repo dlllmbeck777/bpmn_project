@@ -108,14 +108,14 @@ function BpmnCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, selected
         {edges.map(edge => {
           const sv = hasTrace && (isTraced(edge.sourceRef)||isFailed(edge.sourceRef))
           const tv = hasTrace && (isTraced(edge.targetRef)||isFailed(edge.targetRef))
-          const active = sv&&tv
+          const active = sv || tv   // active if EITHER end is traced (gateways aren't in tracker)
           const hasFail = active&&(isFailed(edge.sourceRef)||isFailed(edge.targetRef))
           let pts = ''
           if (edge.waypoints?.length) pts = edge.waypoints.map(wp=>Array.isArray(wp)?`${wp[0]},${wp[1]}`:`${wp.x},${wp.y}`).join(' ')
           else { const s=nodeMap[edge.sourceRef],t=nodeMap[edge.targetRef]; if(!s||!t) return null; pts=`${s.x+(s.w||80)/2},${s.y+(s.h||50)/2} ${t.x+(t.w||80)/2},${t.y+(t.h||50)/2}` }
           return <polyline key={edge.id} points={pts} fill="none"
             stroke={hasFail?'var(--red)':active?'var(--green)':'var(--border-1)'}
-            strokeWidth={active?1.5:0.8} opacity={hasTrace?(active?0.9:0.15):0.45}
+            strokeWidth={active?2.5:0.7} opacity={hasTrace?(active?1:0.25):0.5}
             markerEnd={hasFail?'url(#rq-ar)':active?'url(#rq-ag)':'url(#rq-a)'} />
         })}
         {nodes.map(node => {
