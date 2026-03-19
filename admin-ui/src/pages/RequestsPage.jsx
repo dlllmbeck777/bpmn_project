@@ -243,22 +243,22 @@ export default function RequestsPage() {
     <>
       <style>{`
         .rq-layout { display: flex; gap: 0; height: calc(100vh - 170px); min-height: 500px; }
-        .rq-left  { width: 360px; min-width: 280px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border-1); }
+        .rq-left  { width: 300px; min-width: 240px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border-1); }
         .rq-right { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
-        .rq-left-toolbar { padding: 10px 12px; border-bottom: 1px solid var(--border-1); display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
-        .rq-search { width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-1); background: var(--bg-2); color: var(--text-1); font-size: 12px; outline: none; }
+        .rq-left-toolbar { padding: 6px 10px; border-bottom: 1px solid var(--border-1); display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+        .rq-search { width: 100%; padding: 4px 8px; border-radius: 5px; border: 1px solid var(--border-1); background: var(--bg-2); color: var(--text-1); font-size: 11px; outline: none; }
         .rq-search:focus { border-color: var(--blue); }
-        .rq-filter-row { display: flex; gap: 4px; flex-wrap: wrap; }
-        .rq-filter-btn { padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border-1); background: transparent; color: var(--text-3); font-size: 10px; font-weight: 600; cursor: pointer; transition: all 0.12s; }
+        .rq-filter-row { display: flex; gap: 3px; flex-wrap: wrap; }
+        .rq-filter-btn { padding: 1px 6px; border-radius: 3px; border: 1px solid var(--border-1); background: transparent; color: var(--text-3); font-size: 9px; font-weight: 600; cursor: pointer; transition: all 0.12s; }
         .rq-filter-btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
         .rq-filter-btn:hover:not(.active) { color: var(--text-1); border-color: var(--text-3); }
         .rq-list { flex: 1; overflow-y: auto; }
-        .rq-row { display: flex; flex-direction: column; gap: 2px; padding: 9px 12px; border-bottom: 1px solid var(--border-1); cursor: pointer; transition: background 0.1s; }
+        .rq-row { display: flex; flex-direction: column; gap: 1px; padding: 5px 10px; border-bottom: 1px solid var(--border-1); cursor: pointer; transition: background 0.1s; }
         .rq-row:hover { background: var(--bg-2); }
         .rq-row.active { background: color-mix(in srgb, var(--blue) 10%, transparent); border-left: 2px solid var(--blue); }
-        .rq-row-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-        .rq-row-id { font-size: 11px; font-family: monospace; font-weight: 700; color: var(--text-1); }
-        .rq-row-sub { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--text-3); }
+        .rq-row-top { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+        .rq-row-id { font-size: 10px; font-family: monospace; font-weight: 700; color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
+        .rq-row-sub { display: flex; align-items: center; gap: 4px; font-size: 9px; color: var(--text-3); }
         .rq-row-action { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); flex-shrink: 0; }
         .rq-empty { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--text-3); text-align: center; padding: 20px; }
         .rq-right-header { padding: 12px 16px; border-bottom: 1px solid var(--border-1); display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }

@@ -185,7 +185,7 @@ function BpmnCanvas2D({ model, tracedNodeIds, currentActivity, instanceStatus, o
           const active = sv && tv;
           let pts = "";
           if (edge.waypoints?.length) {
-            pts = edge.waypoints.map(([x, y]) => `${x},${y}`).join(" ");
+            pts = edge.waypoints.map(wp => Array.isArray(wp) ? `${wp[0]},${wp[1]}` : `${wp.x},${wp.y}`).join(" ");
           } else {
             const s = nodeMap[edge.sourceRef], t = nodeMap[edge.targetRef];
             if (!s || !t) return null;
