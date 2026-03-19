@@ -42,6 +42,20 @@ function wrapText(text, maxChars) {
   return lines.length ? lines : [text || '']
 }
 
+/* ── Flexible node ID matching (handles task_X vs X) ── */
+function buildIsTraced(tracedSet) {
+  return (nodeId) => {
+    if (!tracedSet?.size) return false
+    if (tracedSet.has(nodeId)) return true
+    const bare = nodeId.replace(/^task_/, '').replace(/^parse_/, '')
+    for (const t of tracedSet) {
+      const tBare = t.replace(/^task_/, '').replace(/^parse_/, '')
+      if (tBare === bare || t === bare || t === 'task_' + bare) return true
+    }
+    return false
+  }
+}
+
 /* ── BPMN 2D Canvas (app-themed) ── */
 function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, selectedNodeId }) {
   const { nodes = [], edges = [] } = model || {}
@@ -59,17 +73,21 @@ function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, sele
 
   const nodeMap = {}
   nodes.forEach(n => { nodeMap[n.id] = n })
-  const hasTrace = tracedNodeIds && tracedNodeIds.size > 0
+
+  const isTracedNode = buildIsTraced(tracedNodeIds)
+  const isFailedNode = (id) => failedNodeIds?.has(id) || buildIsTraced(failedNodeIds)(id)
+  const matchedCount = nodes.filter(n => isTracedNode(n.id)).length
+  const hasTrace = (tracedNodeIds?.size > 0) && matchedCount > 0
 
   const nodeColor = (node) => {
-    if (selectedNodeId === node.id)          return 'var(--blue)'
-    if (failedNodeIds?.has(node.id))         return 'var(--red)'
-    if (hasTrace && tracedNodeIds.has(node.id)) return 'var(--green)'
+    if (selectedNodeId === node.id)    return 'var(--blue)'
+    if (isFailedNode(node.id))         return 'var(--red)'
+    if (hasTrace && isTracedNode(node.id)) return 'var(--green)'
     return 'var(--border-2, var(--border-1))'
   }
   const nodeOp = (node) => {
     if (!hasTrace) return 0.85
-    return tracedNodeIds.has(node.id) || selectedNodeId === node.id ? 1 : 0.22
+    return isTracedNode(node.id) || selectedNodeId === node.id ? 1 : 0.22
   }
 
   return (
@@ -90,10 +108,10 @@ function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, sele
 
         {/* Edges */}
         {edges.map(edge => {
-          const sv = hasTrace && (tracedNodeIds.has(edge.sourceRef) || failedNodeIds?.has(edge.sourceRef))
-          const tv = hasTrace && (tracedNodeIds.has(edge.targetRef) || failedNodeIds?.has(edge.targetRef))
+          const sv = hasTrace && (isTracedNode(edge.sourceRef) || isFailedNode(edge.sourceRef))
+          const tv = hasTrace && (isTracedNode(edge.targetRef) || isFailedNode(edge.targetRef))
           const active = sv && tv
-          const hasFail = active && (failedNodeIds?.has(edge.sourceRef) || failedNodeIds?.has(edge.targetRef))
+          const hasFail = active && (isFailedNode(edge.sourceRef) || isFailedNode(edge.targetRef))
           let pts = ''
           if (edge.waypoints?.length) {
             pts = edge.waypoints.map(wp => Array.isArray(wp) ? `${wp[0]},${wp[1]}` : `${wp.x},${wp.y}`).join(' ')
@@ -115,9 +133,9 @@ function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, sele
         {nodes.map(node => {
           const col = nodeColor(node)
           const op  = nodeOp(node)
-          const vis = hasTrace && tracedNodeIds.has(node.id)
+          const vis = hasTrace && isTracedNode(node.id)
           const sel = selectedNodeId === node.id
-          const fail = failedNodeIds?.has(node.id)
+          const fail = isFailedNode(node.id)
           const fill = (vis || sel || fail) ? col + '20' : 'transparent'
           const sw = sel ? 2.5 : (vis || fail) ? 1.5 : 0.8
           const w = node.w || 80, h = node.h || 50
@@ -339,7 +357,6 @@ export default function ProcessTrackerPage() {
 
   useEffect(() => {
     get('/api/v1/process-model').then(setProcessModel).catch(() => {})
-    load('')
   }, [])
 
   // Group events by request_id
@@ -381,6 +398,12 @@ export default function ProcessTrackerPage() {
     })
     return s
   }, [selGroup?.request_id, items])
+
+  const tracedMatchCount = useMemo(() => {
+    if (!processModel?.nodes || !tracedNodeIds.size) return 0
+    const isTraced = buildIsTraced(tracedNodeIds)
+    return processModel.nodes.filter(n => isTraced(n.id)).length
+  }, [processModel, tracedNodeIds])
 
   const failedNodeIds = useMemo(() => {
     if (!selGroup) return new Set()
@@ -598,7 +621,7 @@ export default function ProcessTrackerPage() {
                           {selectedNode && <button className="btn btn-ghost btn-xs" style={{marginLeft:8}} onClick={() => setSelectedNode(null)}>clear</button>}
                         </span>
                         <span style={{ fontSize:10, color:'var(--text-3)' }}>
-                          {tracedNodeIds.size} nodes visited · click a node to inspect
+                          {tracedMatchCount || tracedNodeIds.size} nodes visited · click a node to inspect
                         </span>
                       </div>
                       <BpmnFlowCanvas
