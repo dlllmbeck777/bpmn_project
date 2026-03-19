@@ -119,6 +119,239 @@ function KV({ k, v, color, mono: m }) {
   );
 }
 
+/* ─── 2D BPMN Canvas ─── */
+function wrapText(text, maxChars) {
+  const words = (text || "").split(/\s+/);
+  const lines = [];
+  let line = "";
+  for (const word of words) {
+    if (!line) { line = word; continue; }
+    if ((line + " " + word).length <= maxChars) line += " " + word;
+    else { lines.push(line); line = word; }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : [text || ""];
+}
+
+function BpmnCanvas2D({ model, tracedNodeIds, currentActivity, instanceStatus, onNodeClick, selectedNodeId }) {
+  const { nodes = [], edges = [] } = model || {};
+  if (!nodes.length) return <div className="fl-canvas2d-empty">BPMN model not loaded</div>;
+
+  const allX = nodes.flatMap(n => [n.x, n.x + (n.w || 80)]);
+  const allY = nodes.flatMap(n => [n.y, n.y + (n.h || 50)]);
+  const PAD = 30;
+  const minX = Math.min(...allX) - PAD;
+  const minY = Math.min(...allY) - PAD;
+  const maxX = Math.max(...allX) + PAD;
+  const maxY = Math.max(...allY) + PAD + 22;
+  const vw = maxX - minX, vh = maxY - minY;
+
+  const nodeMap = {};
+  nodes.forEach(n => { nodeMap[n.id] = n; });
+
+  const hasTrace = tracedNodeIds && tracedNodeIds.size > 0;
+
+  const nodeColor = (node) => {
+    if (selectedNodeId === node.id) return "#3d8bfd";
+    if (currentActivity === node.id) {
+      if (["FAILED", "ENGINE_ERROR", "ORPHANED"].includes(instanceStatus)) return "#ff4d6a";
+      if (instanceStatus === "SUSPENDED") return "#ffb628";
+      return "#3d8bfd";
+    }
+    if (hasTrace && tracedNodeIds.has(node.id)) return "#00e5a0";
+    return "#2a3a55";
+  };
+
+  const nodeOp = (node) => {
+    if (!hasTrace) return 1;
+    if (tracedNodeIds.has(node.id) || currentActivity === node.id || selectedNodeId === node.id) return 1;
+    return 0.28;
+  };
+
+  return (
+    <div className="fl-canvas2d-wrap">
+      <svg viewBox={`${minX} ${minY} ${vw} ${vh}`}
+        width={Math.max(700, vw)} height={vh}
+        xmlns="http://www.w3.org/2000/svg" style={{ display: "block" }}>
+        <defs>
+          <marker id="fl2-arr"  markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="#1e2d45"/></marker>
+          <marker id="fl2-arrG" markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="#00e5a0"/></marker>
+        </defs>
+
+        {/* Edges */}
+        {edges.map(edge => {
+          const sv = hasTrace && (tracedNodeIds.has(edge.sourceRef) || currentActivity === edge.sourceRef);
+          const tv = hasTrace && (tracedNodeIds.has(edge.targetRef) || currentActivity === edge.targetRef);
+          const active = sv && tv;
+          let pts = "";
+          if (edge.waypoints?.length) {
+            pts = edge.waypoints.map(([x, y]) => `${x},${y}`).join(" ");
+          } else {
+            const s = nodeMap[edge.sourceRef], t = nodeMap[edge.targetRef];
+            if (!s || !t) return null;
+            pts = `${s.x+(s.w||80)/2},${s.y+(s.h||50)/2} ${t.x+(t.w||80)/2},${t.y+(t.h||50)/2}`;
+          }
+          return (
+            <polyline key={edge.id} points={pts} fill="none"
+              stroke={active ? "#00e5a0" : "#1e2d45"}
+              strokeWidth={active ? 1.5 : 1}
+              opacity={hasTrace ? (active ? 0.9 : 0.2) : 0.55}
+              markerEnd={active ? "url(#fl2-arrG)" : "url(#fl2-arr)"} />
+          );
+        })}
+
+        {/* Nodes */}
+        {nodes.map(node => {
+          const col = nodeColor(node);
+          const op  = nodeOp(node);
+          const vis = hasTrace && tracedNodeIds.has(node.id);
+          const cur = currentActivity === node.id;
+          const sel = selectedNodeId === node.id;
+          const fill = (vis || cur || sel) ? col + "22" : "transparent";
+          const sw   = (cur || sel) ? 2 : 1;
+          const w = node.w || 80, h = node.h || 50;
+          const cx = node.x + w / 2, cy = node.y + h / 2;
+          const onClick = () => onNodeClick?.(node);
+
+          if (node.type?.includes("Gateway")) {
+            return (
+              <g key={node.id} opacity={op} onClick={onClick} style={{ cursor: "pointer" }}>
+                <polygon points={`${cx},${node.y} ${node.x+w},${cy} ${cx},${node.y+h} ${node.x},${cy}`}
+                  fill={fill} stroke={col} strokeWidth={sw} />
+                <text x={cx} y={node.y + h + 13} textAnchor="middle" fill={col} fontSize={8} fontWeight={cur ? 700 : 400}>
+                  {(node.name || node.id).slice(0, 16)}
+                </text>
+              </g>
+            );
+          }
+
+          if (node.type?.includes("Event")) {
+            const r = w / 2;
+            return (
+              <g key={node.id} opacity={op} onClick={onClick} style={{ cursor: "pointer" }}>
+                <circle cx={cx} cy={cy} r={r} fill={fill} stroke={col} strokeWidth={sw} />
+                {node.type === "endEvent" && <circle cx={cx} cy={cy} r={r - 3} fill="none" stroke={col} strokeWidth={2} />}
+                {cur && <circle cx={cx} cy={cy} r={r} fill="none" stroke={col} strokeWidth={1} opacity={0.4}>
+                  <animate attributeName="r" values={`${r};${r+5};${r}`} dur="1.5s" repeatCount="indefinite" />
+                  <animate attributeName="opacity" values="0.4;0;0.4" dur="1.5s" repeatCount="indefinite" />
+                </circle>}
+                <text x={cx} y={node.y + h + 13} textAnchor="middle" fill={col} fontSize={8} fontWeight={cur ? 700 : 400}>
+                  {(node.name || node.id).slice(0, 16)}
+                </text>
+              </g>
+            );
+          }
+
+          // Task rect
+          const maxC = Math.max(6, Math.floor(w / 7));
+          const lines = wrapText(node.name || node.id, maxC);
+          const lh = 10, startY = cy - ((lines.length - 1) * lh / 2);
+
+          return (
+            <g key={node.id} opacity={op} onClick={onClick} style={{ cursor: "pointer" }}>
+              <rect x={node.x} y={node.y} width={w} height={h} rx={4}
+                fill={fill} stroke={col} strokeWidth={sw} />
+              {node.type === "serviceTask" &&
+                <rect x={node.x} y={node.y} width={3} height={h} rx={1} fill={col} opacity={0.7} />}
+              {sel && <rect x={node.x-2} y={node.y-2} width={w+4} height={h+4} rx={5}
+                fill="none" stroke={col} strokeWidth={1} opacity={0.5} />}
+              {cur && <rect x={node.x} y={node.y} width={w} height={h} rx={4}
+                fill="none" stroke={col} strokeWidth={2} opacity={0.4}>
+                <animate attributeName="opacity" values="0.4;0;0.4" dur="2s" repeatCount="indefinite" />
+              </rect>}
+              {lines.map((ln, i) => (
+                <text key={i} x={cx} y={startY + i * lh}
+                  textAnchor="middle" dominantBaseline="middle"
+                  fill={col} fontSize={9} fontWeight={cur ? 700 : vis ? 600 : 400}>{ln}</text>
+              ))}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+/* ─── Node detail drawer (shows tracker IN/OUT for clicked node) ─── */
+function NodeDetailDrawer({ node, tracker, onClose }) {
+  if (!node) return null;
+  const nodeId = node.id;
+
+  // Match tracker events: exact service_id match, then partial
+  const events = tracker.filter(ev =>
+    ev.service_id === nodeId ||
+    ev.stage === nodeId ||
+    (ev.service_id && nodeId.includes(ev.service_id.replace(/^task_/, ""))) ||
+    (ev.service_id && ev.service_id.includes(nodeId.replace(/^task_/, "")))
+  );
+
+  const inEv  = events.find(e => e.direction === "IN"  || e.direction === "REQUEST");
+  const outEv = events.find(e => e.direction === "OUT" || e.direction === "RESPONSE");
+
+  const elapsed = (a, b) => {
+    if (!a || !b) return null;
+    const ms = new Date(b) - new Date(a);
+    return ms < 1000 ? `${ms}ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms / 60000)}m`;
+  };
+
+  const typeTag = node.type?.includes("service") ? "http"
+    : node.type?.includes("Gateway") ? "gateway"
+    : node.type?.includes("Event")   ? "event" : "script";
+
+  return (
+    <div className="fl-ndd">
+      <div className="fl-ndd-hdr">
+        <div className="fl-ndd-title">
+          {node.name || node.id}
+          <span className={`fl-type-chip ${typeTag}`} style={{ marginLeft: 6 }}>{node.type}</span>
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <span className="mono fl-muted" style={{ fontSize: 9 }}>{node.id}</span>
+          <button className="fl-btn-ghost" onClick={onClose}>✕</button>
+        </div>
+      </div>
+
+      {events.length === 0 ? (
+        <div className="fl-ndd-empty">No tracker events for this activity in the selected instance</div>
+      ) : (
+        <div className="fl-ndd-body">
+          {inEv && (
+            <div className="fl-ndd-section">
+              <div className="fl-ndd-lbl in">→ Input <span className="mono fl-muted">{(inEv.created_at || "").slice(11, 19)}</span></div>
+              {inEv.title && <div className="fl-ndd-ev">{inEv.title}</div>}
+              {(inEv.payload || inEv.data || inEv.request_body) && (
+                <pre className="fl-pre">{JSON.stringify(inEv.payload ?? inEv.data ?? inEv.request_body, null, 2)}</pre>
+              )}
+            </div>
+          )}
+          {outEv && (
+            <div className="fl-ndd-section">
+              <div className="fl-ndd-lbl out">
+                ← Output
+                {inEv && outEv && elapsed(inEv.created_at, outEv.created_at) &&
+                  <span className="fl-ndd-dur">{elapsed(inEv.created_at, outEv.created_at)}</span>}
+                <span className="mono fl-muted">{(outEv.created_at || "").slice(11, 19)}</span>
+              </div>
+              {outEv.title && <div className="fl-ndd-ev">{outEv.title}</div>}
+              {outEv.status && <Chip s={outEv.status} />}
+              {(outEv.payload || outEv.data || outEv.response_body) && (
+                <pre className="fl-pre">{JSON.stringify(outEv.payload ?? outEv.data ?? outEv.response_body, null, 2)}</pre>
+              )}
+            </div>
+          )}
+          {events.filter(e => !["IN","OUT","REQUEST","RESPONSE"].includes(e.direction)).map((ev, i) => (
+            <div key={i} className="fl-ndd-section">
+              <div className="fl-ndd-lbl state">{ev.direction || "●"} {ev.title}</div>
+              {ev.status && <Chip s={ev.status} />}
+              <span className="mono fl-muted" style={{ fontSize: 9 }}>{(ev.created_at || "").slice(11, 19)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function FlowableOpsPage({ canManage }) {
   const [tab, setTab] = useState("health");
   const [items, setItems] = useState([]);
@@ -129,6 +362,7 @@ export default function FlowableOpsPage({ canManage }) {
   const [processModel, setProcessModel] = useState(null);
   const [activities, setActivities] = useState(FALLBACK_ACTIVITIES);
   const [instTab, setInstTab] = useState("overview");
+  const [selectedNode, setSelectedNode] = useState(null);
   const [reason, setReason] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -203,6 +437,16 @@ export default function FlowableOpsPage({ canManage }) {
   const selTracker = detail?.tracker || [];
   const varEntries = Object.entries(selVars);
   const failedJobs = selJobs.filter(j => j.exceptionMessage);
+
+  const tracedNodeIds = useMemo(() => {
+    const s = new Set();
+    selTracker.forEach(ev => {
+      if (ev.service_id) s.add(ev.service_id);
+      if (ev.stage) s.add(ev.stage);
+    });
+    if (selInst?.current_activity) s.add(selInst.current_activity);
+    return s;
+  }, [selTracker, selInst?.current_activity]);
 
   const stats = useMemo(() => {
     const bySt = {};
@@ -299,9 +543,9 @@ export default function FlowableOpsPage({ canManage }) {
               <div className="fl-card-title">
                 Process Model — {processModel ? `${processModel.process_key} v${processModel.version}` : "creditServiceChainOrchestration"}
               </div>
-              <BpmnFlow activities={activities} currentActivity="endEvent" engineStatus="COMPLETED" />
+              <BpmnCanvas2D model={processModel} />
               <div className="fl-muted" style={{ marginTop: 4 }}>
-                {activities.length} activities • {activities.filter(a => a.type === "http").length} HTTP tasks • {activities.filter(a => a.type === "gateway").length} gateways
+                {(processModel?.nodes?.length || activities.length)} activities • dynamic from Flowable
               </div>
             </div>
 
@@ -395,11 +639,15 @@ export default function FlowableOpsPage({ canManage }) {
           {/* ─── MODEL ─── */}
           {tab === "model" && (<>
             <div className="fl-card" style={{ marginBottom: 12 }}>
-              <div className="fl-card-title">
-                {processModel ? `${processModel.process_key} — v${processModel.version} (latest)` : "Loading process model…"}
+              <div className="fl-card-title" style={{ justifyContent: "space-between" }}>
+                <span>{processModel ? `${processModel.process_key} — v${processModel.version} (latest)` : "Loading process model…"}</span>
+                <button className="fl-btn-ghost" onClick={loadModel}>↺ Reload</button>
               </div>
-              <BpmnFlow activities={activities} currentActivity={null} engineStatus="COMPLETED" />
-              <div className="fl-muted" style={{ marginTop: 6 }}>Full process model loaded from Flowable. Select an instance to see its position.</div>
+              <BpmnCanvas2D model={processModel} onNodeClick={setSelectedNode} selectedNodeId={selectedNode?.id} />
+              <NodeDetailDrawer node={selectedNode} tracker={[]} onClose={() => setSelectedNode(null)} />
+              <div className="fl-muted" style={{ marginTop: 6 }}>
+                {processModel ? `${processModel.nodes?.length || 0} nodes · ${processModel.edges?.length || 0} edges · auto-updates when BPMN model changes` : "Loading…"}
+              </div>
             </div>
             {processModel && (
               <div className="fl-card fl-card-flush">
@@ -437,8 +685,23 @@ export default function FlowableOpsPage({ canManage }) {
             </div>
 
             <div className="fl-card" style={{ marginBottom: 10 }}>
-              <div className="fl-card-title">Process Position</div>
-              <BpmnFlow activities={activities} currentActivity={selInst.current_activity} engineStatus={selInst.engine_status} />
+              <div className="fl-card-title" style={{ marginBottom: 8 }}>
+                Process Path — click a node to inspect input/output
+                {selectedNode && <button className="fl-btn-ghost" style={{ marginLeft: 8 }} onClick={() => setSelectedNode(null)}>clear selection</button>}
+              </div>
+              <BpmnCanvas2D
+                model={processModel}
+                tracedNodeIds={tracedNodeIds}
+                currentActivity={selInst.current_activity}
+                instanceStatus={selInst.engine_status}
+                onNodeClick={setSelectedNode}
+                selectedNodeId={selectedNode?.id}
+              />
+              <NodeDetailDrawer
+                node={selectedNode}
+                tracker={selTracker}
+                onClose={() => setSelectedNode(null)}
+              />
             </div>
 
             {selInst.engine_status === "ORPHANED" && <div className="fl-alert warn">⚠ Runtime instance alive but platform request already finalized. Safe to terminate.</div>}
@@ -614,7 +877,7 @@ export default function FlowableOpsPage({ canManage }) {
         .fl-layout { display: flex; flex: 1; }
         .fl-main { flex: 1; padding: 14px 16px; }
         .fl-notice { padding: 8px 16px; background: var(--c-blue-bg); color: var(--c-blue); font-size: 12px; font-weight: 600; text-align: center; }
-        .fl-stat-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; margin-bottom: 12px; }
+        .fl-stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 6px; margin-bottom: 12px; }
         .fl-stat { background: var(--c-surface); border: 1px solid var(--c-border); border-radius: 8px; padding: 8px 10px; transition: all 0.15s; position: relative; overflow: hidden; }
         .fl-stat.active { border-color: var(--c-blue); }
         .fl-stat.active::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--c-blue); }
@@ -700,6 +963,20 @@ export default function FlowableOpsPage({ canManage }) {
         .fl-type-chip.script  { background: var(--c-surface3);  color: var(--c-muted);  }
         @keyframes flPulse  { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
         @keyframes flLive   { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
+        .fl-canvas2d-wrap { overflow-x: auto; overflow-y: hidden; background: var(--c-surface2); border-radius: 6px; padding: 8px 0; }
+        .fl-canvas2d-empty { padding: 20px; text-align: center; color: var(--c-muted); font-size: 12px; }
+        .fl-ndd { background: var(--c-surface2); border: 1px solid var(--c-border); border-radius: 6px; margin-top: 10px; overflow: hidden; }
+        .fl-ndd-hdr { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--c-border); background: var(--c-surface); }
+        .fl-ndd-title { font-size: 12px; font-weight: 700; color: var(--c-text); display: flex; align-items: center; }
+        .fl-ndd-empty { padding: 14px; font-size: 11px; color: var(--c-muted); text-align: center; }
+        .fl-ndd-body { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1px; background: var(--c-border); max-height: 320px; overflow-y: auto; }
+        .fl-ndd-section { padding: 10px 12px; background: var(--c-surface); }
+        .fl-ndd-lbl { font-size: 10px; font-weight: 700; margin-bottom: 5px; display: flex; align-items: center; gap: 6px; }
+        .fl-ndd-lbl.in    { color: var(--c-green); }
+        .fl-ndd-lbl.out   { color: var(--c-blue);  }
+        .fl-ndd-lbl.state { color: var(--c-amber); }
+        .fl-ndd-ev { font-size: 11px; color: var(--c-text2); margin-bottom: 4px; }
+        .fl-ndd-dur { font-size: 9px; font-family: var(--mono); background: var(--c-surface3); padding: 1px 5px; border-radius: 3px; color: var(--c-muted); }
         .fl-root ::-webkit-scrollbar { width: 5px; height: 5px; }
         .fl-root ::-webkit-scrollbar-track { background: var(--c-bg); }
         .fl-root ::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 3px; }
