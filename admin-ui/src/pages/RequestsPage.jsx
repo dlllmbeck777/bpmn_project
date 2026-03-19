@@ -54,19 +54,24 @@ function wrapSvg(text, maxC) {
   return lines.length ? lines : [text||'']
 }
 
-/* ── Infer full path through BPMN graph between traced nodes (fills in gateways etc.) ── */
-function inferPathNodes(allNodes, allEdges, isTracedFn, events) {
+/* ── Infer full execution path: BFS start→end avoiding skipped service nodes ── */
+function inferPathNodes(allNodes, allEdges, isTracedFn, skippedIds) {
   if (!allNodes?.length || !allEdges?.length) return new Set()
+  const isSkipNode = buildIsTraced(skippedIds)
   const fwd = {}
   allNodes.forEach(n => { fwd[n.id] = [] })
   allEdges.forEach(e => { if (fwd[e.sourceRef]) fwd[e.sourceRef].push(e.targetRef) })
-  function bfs(from, to) {
-    if (from === to) return [from]
+  const hasIncoming = new Set(allEdges.map(e => e.targetRef))
+  const hasOutgoing  = new Set(allEdges.map(e => e.sourceRef))
+  const startNode = allNodes.find(n => !hasIncoming.has(n.id))
+  const endNode   = allNodes.find(n => !hasOutgoing.has(n.id))
+  if (!startNode) return new Set(allNodes.filter(n => isTracedFn(n.id)).map(n => n.id))
+  function bfsPath(from, to) {
     const vis = new Set([from]); const q = [[from]]
     while (q.length) {
-      const path = q.shift()
-      for (const next of (fwd[path[path.length-1]] || [])) {
-        if (vis.has(next)) continue
+      const path = q.shift(); const curr = path[path.length-1]
+      for (const next of (fwd[curr] || [])) {
+        if (vis.has(next) || isSkipNode(next)) continue
         const np = [...path, next]
         if (next === to) return np
         vis.add(next); q.push(np)
@@ -74,19 +79,21 @@ function inferPathNodes(allNodes, allEdges, isTracedFn, events) {
     }
     return null
   }
-  const traced = allNodes.filter(n => isTracedFn(n.id))
-  const time = (n) => {
-    const bare = n.id.replace(/^task_/,'').replace(/^parse_/,'')
-    const ev = events.find(e => e.service_id===n.id||e.service_id===bare||e.stage===n.id||e.service_id==='task_'+bare)
-    return ev?.created_at || '9'
+  const result = new Set()
+  if (endNode) {
+    bfsPath(startNode.id, endNode.id)?.forEach(id => result.add(id))
+  } else {
+    const vis = new Set([startNode.id]); result.add(startNode.id)
+    const q = [startNode.id]
+    while (q.length) {
+      const curr = q.shift()
+      for (const next of (fwd[curr] || [])) {
+        if (vis.has(next) || isSkipNode(next)) continue
+        vis.add(next); result.add(next); q.push(next)
+      }
+    }
   }
-  const ordered = [...traced].sort((a,b) => time(a).localeCompare(time(b)))
-  const result = new Set(ordered.map(n => n.id))
-  if (!ordered.length) return result
-  const hasIncoming = new Set(allEdges.map(e => e.targetRef))
-  const startNode = allNodes.find(n => !hasIncoming.has(n.id))
-  if (startNode) bfs(startNode.id, ordered[0].id)?.forEach(id => result.add(id))
-  for (let i = 0; i < ordered.length-1; i++) bfs(ordered[i].id, ordered[i+1].id)?.forEach(id => result.add(id))
+  allNodes.filter(n => isTracedFn(n.id)).forEach(n => result.add(n.id))
   return result
 }
 
@@ -472,8 +479,8 @@ export default function RequestsPage() {
   },[tracker])
   const pathNodeIds = useMemo(()=>{
     if (!processModel) return tracedNodeIds
-    return inferPathNodes(processModel.nodes, processModel.edges, buildIsTraced(tracedNodeIds), tracker)
-  },[processModel, tracedNodeIds, tracker])
+    return inferPathNodes(processModel.nodes, processModel.edges, buildIsTraced(tracedNodeIds), skippedNodeIds)
+  },[processModel, tracedNodeIds, skippedNodeIds])
   const failedNodeIds = useMemo(()=>{
     const s=new Set(); tracker.filter(e=>SC.red.includes(e.status)).forEach(e=>{ if(e.service_id) s.add(e.service_id) }); return s
   },[tracker])
