@@ -54,6 +54,42 @@ function wrapSvg(text, maxC) {
   return lines.length ? lines : [text||'']
 }
 
+/* ── Infer full path through BPMN graph between traced nodes (fills in gateways etc.) ── */
+function inferPathNodes(allNodes, allEdges, isTracedFn, events) {
+  if (!allNodes?.length || !allEdges?.length) return new Set()
+  const fwd = {}
+  allNodes.forEach(n => { fwd[n.id] = [] })
+  allEdges.forEach(e => { if (fwd[e.sourceRef]) fwd[e.sourceRef].push(e.targetRef) })
+  function bfs(from, to) {
+    if (from === to) return [from]
+    const vis = new Set([from]); const q = [[from]]
+    while (q.length) {
+      const path = q.shift()
+      for (const next of (fwd[path[path.length-1]] || [])) {
+        if (vis.has(next)) continue
+        const np = [...path, next]
+        if (next === to) return np
+        vis.add(next); q.push(np)
+      }
+    }
+    return null
+  }
+  const traced = allNodes.filter(n => isTracedFn(n.id))
+  const time = (n) => {
+    const bare = n.id.replace(/^task_/,'').replace(/^parse_/,'')
+    const ev = events.find(e => e.service_id===n.id||e.service_id===bare||e.stage===n.id||e.service_id==='task_'+bare)
+    return ev?.created_at || '9'
+  }
+  const ordered = [...traced].sort((a,b) => time(a).localeCompare(time(b)))
+  const result = new Set(ordered.map(n => n.id))
+  if (!ordered.length) return result
+  const hasIncoming = new Set(allEdges.map(e => e.targetRef))
+  const startNode = allNodes.find(n => !hasIncoming.has(n.id))
+  if (startNode) bfs(startNode.id, ordered[0].id)?.forEach(id => result.add(id))
+  for (let i = 0; i < ordered.length-1; i++) bfs(ordered[i].id, ordered[i+1].id)?.forEach(id => result.add(id))
+  return result
+}
+
 /* ── isTracedNode: match "isoftpull" ↔ "task_isoftpull" ── */
 function buildIsTraced(tracedSet) {
   return (nodeId) => {
@@ -69,13 +105,14 @@ function buildIsTraced(tracedSet) {
 }
 
 /* ── BPMN canvas ── */
-function BpmnCanvas({ model, tracedNodeIds, failedNodeIds, skippedNodeIds, onNodeClick, selectedNodeId }) {
+function BpmnCanvas({ model, tracedNodeIds, pathNodeIds, failedNodeIds, skippedNodeIds, onNodeClick, selectedNodeId }) {
   const { nodes = [], edges = [] } = model || {}
   const isTraced  = useMemo(() => buildIsTraced(tracedNodeIds),  [tracedNodeIds])
+  const isPath    = useMemo(() => buildIsTraced(pathNodeIds?.size ? pathNodeIds : tracedNodeIds), [pathNodeIds, tracedNodeIds])
   const isFailed  = useMemo(() => buildIsTraced(failedNodeIds),  [failedNodeIds])
   const isSkipped = useMemo(() => buildIsTraced(skippedNodeIds), [skippedNodeIds])
-  const matchedCount = useMemo(() => nodes.filter(n => isTraced(n.id)).length, [nodes, isTraced])
-  const hasTrace = (tracedNodeIds?.size > 0) && matchedCount > 0
+  const matchedCount = useMemo(() => nodes.filter(n => isPath(n.id)).length, [nodes, isPath])
+  const hasTrace = ((pathNodeIds?.size || tracedNodeIds?.size) > 0) && matchedCount > 0
 
   if (!nodes.length) return <div className="rqb-empty">Loading BPMN model…</div>
 
@@ -87,15 +124,15 @@ function BpmnCanvas({ model, tracedNodeIds, failedNodeIds, skippedNodeIds, onNod
   const nodeMap = {}; nodes.forEach(n => { nodeMap[n.id]=n })
 
   const nodeCol = (node) => {
-    if (selectedNodeId === node.id)        return 'var(--blue)'
-    if (isFailed(node.id))                 return 'var(--red)'
-    if (hasTrace && isTraced(node.id))     return 'var(--green)'
-    if (isSkipped(node.id))                return 'var(--amber)'
+    if (selectedNodeId === node.id)       return 'var(--blue)'
+    if (isFailed(node.id))               return 'var(--red)'
+    if (hasTrace && isPath(node.id))     return 'var(--green)'
+    if (isSkipped(node.id))              return 'var(--amber)'
     return 'var(--text-3)'
   }
   const nodeOp = (node) => {
     if (!hasTrace) return 0.8
-    if (isTraced(node.id)||isFailed(node.id)||selectedNodeId===node.id) return 1
+    if (isPath(node.id)||isFailed(node.id)||selectedNodeId===node.id) return 1
     if (isSkipped(node.id)) return 0.65
     return 0.2
   }
@@ -111,9 +148,9 @@ function BpmnCanvas({ model, tracedNodeIds, failedNodeIds, skippedNodeIds, onNod
           <marker id="rq-aa" markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="var(--amber)"/></marker>
         </defs>
         {edges.map(edge => {
-          const sv = hasTrace && (isTraced(edge.sourceRef)||isFailed(edge.sourceRef))
-          const tv = hasTrace && (isTraced(edge.targetRef)||isFailed(edge.targetRef))
-          const active = sv || tv
+          const sv = hasTrace && (isPath(edge.sourceRef)||isFailed(edge.sourceRef))
+          const tv = hasTrace && (isPath(edge.targetRef)||isFailed(edge.targetRef))
+          const active = sv && tv   // both ends on path = definite path edge
           const hasFail = active&&(isFailed(edge.sourceRef)||isFailed(edge.targetRef))
           const isSkippedEdge = !active && hasTrace && (isSkipped(edge.sourceRef)||isSkipped(edge.targetRef))
           let pts = ''
@@ -129,10 +166,12 @@ function BpmnCanvas({ model, tracedNodeIds, failedNodeIds, skippedNodeIds, onNod
         })}
         {nodes.map(node => {
           const col = nodeCol(node), op = nodeOp(node)
-          const vis = hasTrace&&isTraced(node.id), sel = selectedNodeId===node.id
+          const vis = hasTrace&&isPath(node.id)
+          const isDirectTraced = hasTrace&&isTraced(node.id)
+          const sel = selectedNodeId===node.id
           const fail = isFailed(node.id), skip = isSkipped(node.id)
           const fill = (vis||sel||fail||skip) ? col+'22' : 'transparent'
-          const sw = sel?2.5:(vis||fail)?1.5:skip?1:0.7
+          const sw = sel?2.5:(isDirectTraced||fail)?1.5:vis?1.0:skip?1:0.7
           const w=node.w||80, h=node.h||50, cx=node.x+w/2, cy=node.y+h/2
           const click = ()=>onNodeClick?.(node)
           if (node.type?.includes('Gateway')) return (
@@ -156,7 +195,7 @@ function BpmnCanvas({ model, tracedNodeIds, failedNodeIds, skippedNodeIds, onNod
                 strokeDasharray={skip?'4,2':undefined}/>
               {node.type==='serviceTask'&&<rect x={node.x} y={node.y} width={3} height={h} rx={1} fill={col} opacity={0.7}/>}
               {sel&&<rect x={node.x-2} y={node.y-2} width={w+4} height={h+4} rx={5} fill="none" stroke={col} strokeWidth={1.5} opacity={0.6}/>}
-              {lines.map((ln,i)=><text key={i} x={cx} y={sy+i*lh} textAnchor="middle" dominantBaseline="middle" fill={col} fontSize={9} fontWeight={sel||fail?700:vis?600:400}>{ln}</text>)}
+              {lines.map((ln,i)=><text key={i} x={cx} y={sy+i*lh} textAnchor="middle" dominantBaseline="middle" fill={col} fontSize={9} fontWeight={sel||fail?700:isDirectTraced?600:vis?500:400}>{ln}</text>)}
             </g>
           )
         })}
@@ -431,6 +470,10 @@ export default function RequestsPage() {
   const skippedNodeIds = useMemo(()=>{
     const s=new Set(); tracker.filter(ev=>ev.status==='SKIPPED').forEach(ev=>{ if(ev.service_id) s.add(ev.service_id) }); return s
   },[tracker])
+  const pathNodeIds = useMemo(()=>{
+    if (!processModel) return tracedNodeIds
+    return inferPathNodes(processModel.nodes, processModel.edges, buildIsTraced(tracedNodeIds), tracker)
+  },[processModel, tracedNodeIds, tracker])
   const failedNodeIds = useMemo(()=>{
     const s=new Set(); tracker.filter(e=>SC.red.includes(e.status)).forEach(e=>{ if(e.service_id) s.add(e.service_id) }); return s
   },[tracker])
@@ -599,7 +642,7 @@ export default function RequestsPage() {
                   </span>
                   <span style={{fontSize:10,color:'var(--text-3)'}}>Click a node to inspect input / output data</span>
                 </div>
-                <BpmnCanvas model={processModel} tracedNodeIds={tracedNodeIds} failedNodeIds={failedNodeIds} skippedNodeIds={skippedNodeIds}
+                <BpmnCanvas model={processModel} tracedNodeIds={tracedNodeIds} pathNodeIds={pathNodeIds} failedNodeIds={failedNodeIds} skippedNodeIds={skippedNodeIds}
                   onNodeClick={setSelectedNode} selectedNodeId={selectedNode?.id} />
                 {selectedNode && <NodeDetail node={selectedNode} tracker={tracker} onClose={()=>setSelectedNode(null)} />}
                 {!selectedNode && reason !== '—' && (

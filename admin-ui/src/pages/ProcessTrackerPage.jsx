@@ -42,6 +42,42 @@ function wrapText(text, maxChars) {
   return lines.length ? lines : [text || '']
 }
 
+/* ── Infer full path through BPMN graph between traced nodes (fills in gateways etc.) ── */
+function inferPathNodes(allNodes, allEdges, isTracedFn, events) {
+  if (!allNodes?.length || !allEdges?.length) return new Set()
+  const fwd = {}
+  allNodes.forEach(n => { fwd[n.id] = [] })
+  allEdges.forEach(e => { if (fwd[e.sourceRef]) fwd[e.sourceRef].push(e.targetRef) })
+  function bfs(from, to) {
+    if (from === to) return [from]
+    const vis = new Set([from]); const q = [[from]]
+    while (q.length) {
+      const path = q.shift()
+      for (const next of (fwd[path[path.length-1]] || [])) {
+        if (vis.has(next)) continue
+        const np = [...path, next]
+        if (next === to) return np
+        vis.add(next); q.push(np)
+      }
+    }
+    return null
+  }
+  const traced = allNodes.filter(n => isTracedFn(n.id))
+  const time = (n) => {
+    const bare = n.id.replace(/^task_/,'').replace(/^parse_/,'')
+    const ev = events.find(e => e.service_id===n.id||e.service_id===bare||e.stage===n.id||e.service_id==='task_'+bare)
+    return ev?.created_at || '9'
+  }
+  const ordered = [...traced].sort((a,b) => time(a).localeCompare(time(b)))
+  const result = new Set(ordered.map(n => n.id))
+  if (!ordered.length) return result
+  const hasIncoming = new Set(allEdges.map(e => e.targetRef))
+  const startNode = allNodes.find(n => !hasIncoming.has(n.id))
+  if (startNode) bfs(startNode.id, ordered[0].id)?.forEach(id => result.add(id))
+  for (let i = 0; i < ordered.length-1; i++) bfs(ordered[i].id, ordered[i+1].id)?.forEach(id => result.add(id))
+  return result
+}
+
 /* ── Flexible node ID matching (handles task_X vs X) ── */
 function buildIsTraced(tracedSet) {
   return (nodeId) => {
@@ -57,7 +93,7 @@ function buildIsTraced(tracedSet) {
 }
 
 /* ── BPMN 2D Canvas (app-themed) ── */
-function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, skippedNodeIds, onNodeClick, selectedNodeId }) {
+function BpmnFlowCanvas({ model, tracedNodeIds, pathNodeIds, failedNodeIds, skippedNodeIds, onNodeClick, selectedNodeId }) {
   const { nodes = [], edges = [] } = model || {}
   if (!nodes.length) return (
     <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
@@ -75,21 +111,22 @@ function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, skippedNodeIds, o
   nodes.forEach(n => { nodeMap[n.id] = n })
 
   const isTracedNode  = buildIsTraced(tracedNodeIds)
+  const isPathNode    = buildIsTraced(pathNodeIds?.size ? pathNodeIds : tracedNodeIds)
   const isFailedNode  = (id) => failedNodeIds?.has(id)  || buildIsTraced(failedNodeIds)(id)
   const isSkippedNode = (id) => skippedNodeIds?.has(id) || buildIsTraced(skippedNodeIds)(id)
-  const matchedCount = nodes.filter(n => isTracedNode(n.id)).length
-  const hasTrace = (tracedNodeIds?.size > 0) && matchedCount > 0
+  const matchedCount = nodes.filter(n => isPathNode(n.id)).length
+  const hasTrace = ((pathNodeIds?.size || tracedNodeIds?.size) > 0) && matchedCount > 0
 
   const nodeColor = (node) => {
-    if (selectedNodeId === node.id)        return 'var(--blue)'
-    if (isFailedNode(node.id))             return 'var(--red)'
-    if (hasTrace && isTracedNode(node.id)) return 'var(--green)'
-    if (isSkippedNode(node.id))            return 'var(--amber)'
+    if (selectedNodeId === node.id)       return 'var(--blue)'
+    if (isFailedNode(node.id))            return 'var(--red)'
+    if (hasTrace && isPathNode(node.id))  return 'var(--green)'
+    if (isSkippedNode(node.id))           return 'var(--amber)'
     return 'var(--border-2, var(--border-1))'
   }
   const nodeOp = (node) => {
     if (!hasTrace) return 0.85
-    if (isTracedNode(node.id) || isFailedNode(node.id) || selectedNodeId === node.id) return 1
+    if (isPathNode(node.id) || isFailedNode(node.id) || selectedNodeId === node.id) return 1
     if (isSkippedNode(node.id)) return 0.65
     return 0.22
   }
@@ -115,11 +152,11 @@ function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, skippedNodeIds, o
 
         {/* Edges */}
         {edges.map(edge => {
-          const sv = hasTrace && (isTracedNode(edge.sourceRef) || isFailedNode(edge.sourceRef))
-          const tv = hasTrace && (isTracedNode(edge.targetRef) || isFailedNode(edge.targetRef))
-          const active = sv || tv   // active if EITHER end is traced (gateways not in tracker)
+          const sv = hasTrace && (isPathNode(edge.sourceRef) || isFailedNode(edge.sourceRef))
+          const tv = hasTrace && (isPathNode(edge.targetRef) || isFailedNode(edge.targetRef))
+          const active = sv && tv   // active only when BOTH ends are on the path (true path edge)
           const hasFail = active && (isFailedNode(edge.sourceRef) || isFailedNode(edge.targetRef))
-          // skipped edge: neither endpoint traced, but one is skipped
+          // skipped edge: neither endpoint on traced path, but one is skipped
           const isSkippedEdge = !active && hasTrace && (isSkippedNode(edge.sourceRef) || isSkippedNode(edge.targetRef))
           let pts = ''
           if (edge.waypoints?.length) {
@@ -145,12 +182,13 @@ function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, skippedNodeIds, o
         {nodes.map(node => {
           const col  = nodeColor(node)
           const op   = nodeOp(node)
-          const vis  = hasTrace && isTracedNode(node.id)
+          const vis  = hasTrace && isPathNode(node.id)
+          const isDirectTraced = hasTrace && isTracedNode(node.id)
           const sel  = selectedNodeId === node.id
           const fail = isFailedNode(node.id)
           const skip = isSkippedNode(node.id)
           const fill = (vis || sel || fail || skip) ? col + '20' : 'transparent'
-          const sw   = sel ? 2.5 : (vis || fail) ? 1.5 : skip ? 1 : 0.8
+          const sw   = sel ? 2.5 : (isDirectTraced || fail) ? 1.5 : vis ? 1.0 : skip ? 1 : 0.8
           const w = node.w || 80, h = node.h || 50
           const cx = node.x + w/2, cy = node.y + h/2
           const onClick = () => onNodeClick?.(node)
@@ -189,7 +227,7 @@ function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, skippedNodeIds, o
               {sel && <rect x={node.x-2} y={node.y-2} width={w+4} height={h+4} rx={5} fill="none" stroke={col} strokeWidth={1.5} opacity={0.6} />}
               {lines.map((ln,i) => (
                 <text key={i} x={cx} y={sty+i*lh} textAnchor="middle" dominantBaseline="middle"
-                  fill={col} fontSize={9} fontWeight={sel||fail?700:vis?600:400}>{ln}</text>
+                  fill={col} fontSize={9} fontWeight={sel||fail?700:isDirectTraced?600:vis?500:400}>{ln}</text>
               ))}
             </g>
           )
@@ -423,6 +461,11 @@ export default function ProcessTrackerPage() {
     return s
   }, [selGroup?.request_id, items])
 
+  const pathNodeIds = useMemo(() => {
+    if (!processModel || !selGroup) return tracedNodeIds
+    return inferPathNodes(processModel.nodes, processModel.edges, buildIsTraced(tracedNodeIds), selGroup.events)
+  }, [processModel, tracedNodeIds, selGroup?.request_id, items])
+
   const tracedMatchCount = useMemo(() => {
     if (!processModel?.nodes || !tracedNodeIds.size) return 0
     const isTraced = buildIsTraced(tracedNodeIds)
@@ -651,6 +694,7 @@ export default function ProcessTrackerPage() {
                       <BpmnFlowCanvas
                         model={processModel}
                         tracedNodeIds={tracedNodeIds}
+                        pathNodeIds={pathNodeIds}
                         failedNodeIds={failedNodeIds}
                         skippedNodeIds={skippedNodeIds}
                         onNodeClick={setSelectedNode}
