@@ -69,10 +69,11 @@ function buildIsTraced(tracedSet) {
 }
 
 /* ── BPMN canvas ── */
-function BpmnCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, selectedNodeId }) {
+function BpmnCanvas({ model, tracedNodeIds, failedNodeIds, skippedNodeIds, onNodeClick, selectedNodeId }) {
   const { nodes = [], edges = [] } = model || {}
-  const isTraced = useMemo(() => buildIsTraced(tracedNodeIds), [tracedNodeIds])
-  const isFailed = useMemo(() => buildIsTraced(failedNodeIds), [failedNodeIds])
+  const isTraced  = useMemo(() => buildIsTraced(tracedNodeIds),  [tracedNodeIds])
+  const isFailed  = useMemo(() => buildIsTraced(failedNodeIds),  [failedNodeIds])
+  const isSkipped = useMemo(() => buildIsTraced(skippedNodeIds), [skippedNodeIds])
   const matchedCount = useMemo(() => nodes.filter(n => isTraced(n.id)).length, [nodes, isTraced])
   const hasTrace = (tracedNodeIds?.size > 0) && matchedCount > 0
 
@@ -86,14 +87,17 @@ function BpmnCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, selected
   const nodeMap = {}; nodes.forEach(n => { nodeMap[n.id]=n })
 
   const nodeCol = (node) => {
-    if (selectedNodeId === node.id) return 'var(--blue)'
-    if (isFailed(node.id))          return 'var(--red)'
-    if (hasTrace && isTraced(node.id)) return 'var(--green)'
+    if (selectedNodeId === node.id)        return 'var(--blue)'
+    if (isFailed(node.id))                 return 'var(--red)'
+    if (hasTrace && isTraced(node.id))     return 'var(--green)'
+    if (isSkipped(node.id))                return 'var(--amber)'
     return 'var(--text-3)'
   }
   const nodeOp = (node) => {
     if (!hasTrace) return 0.8
-    return isTraced(node.id)||isFailed(node.id)||selectedNodeId===node.id ? 1 : 0.2
+    if (isTraced(node.id)||isFailed(node.id)||selectedNodeId===node.id) return 1
+    if (isSkipped(node.id)) return 0.65
+    return 0.2
   }
 
   return (
@@ -104,26 +108,31 @@ function BpmnCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, selected
           <marker id="rq-a"  markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="var(--border-1)"/></marker>
           <marker id="rq-ag" markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="var(--green)"/></marker>
           <marker id="rq-ar" markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="var(--red)"/></marker>
+          <marker id="rq-aa" markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="var(--amber)"/></marker>
         </defs>
         {edges.map(edge => {
           const sv = hasTrace && (isTraced(edge.sourceRef)||isFailed(edge.sourceRef))
           const tv = hasTrace && (isTraced(edge.targetRef)||isFailed(edge.targetRef))
-          const active = sv || tv   // active if EITHER end is traced (gateways aren't in tracker)
+          const active = sv || tv
           const hasFail = active&&(isFailed(edge.sourceRef)||isFailed(edge.targetRef))
+          const isSkippedEdge = !active && hasTrace && (isSkipped(edge.sourceRef)||isSkipped(edge.targetRef))
           let pts = ''
           if (edge.waypoints?.length) pts = edge.waypoints.map(wp=>Array.isArray(wp)?`${wp[0]},${wp[1]}`:`${wp.x},${wp.y}`).join(' ')
           else { const s=nodeMap[edge.sourceRef],t=nodeMap[edge.targetRef]; if(!s||!t) return null; pts=`${s.x+(s.w||80)/2},${s.y+(s.h||50)/2} ${t.x+(t.w||80)/2},${t.y+(t.h||50)/2}` }
+          const stroke = hasFail?'var(--red)':active?'var(--green)':isSkippedEdge?'var(--amber)':'var(--border-1)'
+          const mEnd = hasFail?'url(#rq-ar)':active?'url(#rq-ag)':isSkippedEdge?'url(#rq-aa)':'url(#rq-a)'
           return <polyline key={edge.id} points={pts} fill="none"
-            stroke={hasFail?'var(--red)':active?'var(--green)':'var(--border-1)'}
-            strokeWidth={active?2.5:0.7} opacity={hasTrace?(active?1:0.25):0.5}
-            markerEnd={hasFail?'url(#rq-ar)':active?'url(#rq-ag)':'url(#rq-a)'} />
+            stroke={stroke} strokeWidth={active?2.5:isSkippedEdge?1:0.7}
+            strokeDasharray={isSkippedEdge?'3,3':undefined}
+            opacity={hasTrace?(active?1:isSkippedEdge?0.55:0.2):0.5}
+            markerEnd={mEnd} />
         })}
         {nodes.map(node => {
           const col = nodeCol(node), op = nodeOp(node)
           const vis = hasTrace&&isTraced(node.id), sel = selectedNodeId===node.id
-          const fail = isFailed(node.id)
-          const fill = (vis||sel||fail) ? col+'22' : 'transparent'
-          const sw = sel?2.5:(vis||fail)?1.5:0.7
+          const fail = isFailed(node.id), skip = isSkipped(node.id)
+          const fill = (vis||sel||fail||skip) ? col+'22' : 'transparent'
+          const sw = sel?2.5:(vis||fail)?1.5:skip?1:0.7
           const w=node.w||80, h=node.h||50, cx=node.x+w/2, cy=node.y+h/2
           const click = ()=>onNodeClick?.(node)
           if (node.type?.includes('Gateway')) return (
@@ -143,7 +152,8 @@ function BpmnCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, selected
           const lh=10, sy=cy-((lines.length-1)*lh/2)
           return (
             <g key={node.id} opacity={op} onClick={click} style={{cursor:'pointer'}}>
-              <rect x={node.x} y={node.y} width={w} height={h} rx={4} fill={fill} stroke={col} strokeWidth={sw}/>
+              <rect x={node.x} y={node.y} width={w} height={h} rx={4} fill={fill} stroke={col} strokeWidth={sw}
+                strokeDasharray={skip?'4,2':undefined}/>
               {node.type==='serviceTask'&&<rect x={node.x} y={node.y} width={3} height={h} rx={1} fill={col} opacity={0.7}/>}
               {sel&&<rect x={node.x-2} y={node.y-2} width={w+4} height={h+4} rx={5} fill="none" stroke={col} strokeWidth={1.5} opacity={0.6}/>}
               {lines.map((ln,i)=><text key={i} x={cx} y={sy+i*lh} textAnchor="middle" dominantBaseline="middle" fill={col} fontSize={9} fontWeight={sel||fail?700:vis?600:400}>{ln}</text>)}
@@ -416,7 +426,10 @@ export default function RequestsPage() {
   const rows  = filtered.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE)
 
   const tracedNodeIds = useMemo(()=>{
-    const s=new Set(); tracker.forEach(ev=>{ if(ev.service_id) s.add(ev.service_id); if(ev.stage) s.add(ev.stage) }); return s
+    const s=new Set(); tracker.filter(ev=>ev.status!=='SKIPPED').forEach(ev=>{ if(ev.service_id) s.add(ev.service_id); if(ev.stage) s.add(ev.stage) }); return s
+  },[tracker])
+  const skippedNodeIds = useMemo(()=>{
+    const s=new Set(); tracker.filter(ev=>ev.status==='SKIPPED').forEach(ev=>{ if(ev.service_id) s.add(ev.service_id) }); return s
   },[tracker])
   const failedNodeIds = useMemo(()=>{
     const s=new Set(); tracker.filter(e=>SC.red.includes(e.status)).forEach(e=>{ if(e.service_id) s.add(e.service_id) }); return s
@@ -581,12 +594,12 @@ export default function RequestsPage() {
               {detailTab==='flow' && (<>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                   <span style={{fontSize:11,fontWeight:700,color:'var(--text-1)'}}>
-                    BPMN Process Path — {tracedNodeIds.size} activities traced
+                    BPMN Process Path — {tracedNodeIds.size} executed{skippedNodeIds.size ? `, ${skippedNodeIds.size} skipped` : ''}
                     {selectedNode&&<button className="btn btn-ghost btn-xs" style={{marginLeft:8}} onClick={()=>setSelectedNode(null)}>clear selection</button>}
                   </span>
                   <span style={{fontSize:10,color:'var(--text-3)'}}>Click a node to inspect input / output data</span>
                 </div>
-                <BpmnCanvas model={processModel} tracedNodeIds={tracedNodeIds} failedNodeIds={failedNodeIds}
+                <BpmnCanvas model={processModel} tracedNodeIds={tracedNodeIds} failedNodeIds={failedNodeIds} skippedNodeIds={skippedNodeIds}
                   onNodeClick={setSelectedNode} selectedNodeId={selectedNode?.id} />
                 {selectedNode && <NodeDetail node={selectedNode} tracker={tracker} onClose={()=>setSelectedNode(null)} />}
                 {!selectedNode && reason !== '—' && (

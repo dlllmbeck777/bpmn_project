@@ -57,7 +57,7 @@ function buildIsTraced(tracedSet) {
 }
 
 /* ── BPMN 2D Canvas (app-themed) ── */
-function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, selectedNodeId }) {
+function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, skippedNodeIds, onNodeClick, selectedNodeId }) {
   const { nodes = [], edges = [] } = model || {}
   if (!nodes.length) return (
     <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
@@ -74,20 +74,24 @@ function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, sele
   const nodeMap = {}
   nodes.forEach(n => { nodeMap[n.id] = n })
 
-  const isTracedNode = buildIsTraced(tracedNodeIds)
-  const isFailedNode = (id) => failedNodeIds?.has(id) || buildIsTraced(failedNodeIds)(id)
+  const isTracedNode  = buildIsTraced(tracedNodeIds)
+  const isFailedNode  = (id) => failedNodeIds?.has(id)  || buildIsTraced(failedNodeIds)(id)
+  const isSkippedNode = (id) => skippedNodeIds?.has(id) || buildIsTraced(skippedNodeIds)(id)
   const matchedCount = nodes.filter(n => isTracedNode(n.id)).length
   const hasTrace = (tracedNodeIds?.size > 0) && matchedCount > 0
 
   const nodeColor = (node) => {
-    if (selectedNodeId === node.id)    return 'var(--blue)'
-    if (isFailedNode(node.id))         return 'var(--red)'
+    if (selectedNodeId === node.id)        return 'var(--blue)'
+    if (isFailedNode(node.id))             return 'var(--red)'
     if (hasTrace && isTracedNode(node.id)) return 'var(--green)'
+    if (isSkippedNode(node.id))            return 'var(--amber)'
     return 'var(--border-2, var(--border-1))'
   }
   const nodeOp = (node) => {
     if (!hasTrace) return 0.85
-    return isTracedNode(node.id) || selectedNodeId === node.id ? 1 : 0.22
+    if (isTracedNode(node.id) || isFailedNode(node.id) || selectedNodeId === node.id) return 1
+    if (isSkippedNode(node.id)) return 0.65
+    return 0.22
   }
 
   return (
@@ -104,6 +108,9 @@ function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, sele
           <marker id="pt-arrR" markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto">
             <polygon points="0,0 7,3 0,6" fill="var(--red)" />
           </marker>
+          <marker id="pt-arrA" markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto">
+            <polygon points="0,0 7,3 0,6" fill="var(--amber)" />
+          </marker>
         </defs>
 
         {/* Edges */}
@@ -112,6 +119,8 @@ function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, sele
           const tv = hasTrace && (isTracedNode(edge.targetRef) || isFailedNode(edge.targetRef))
           const active = sv || tv   // active if EITHER end is traced (gateways not in tracker)
           const hasFail = active && (isFailedNode(edge.sourceRef) || isFailedNode(edge.targetRef))
+          // skipped edge: neither endpoint traced, but one is skipped
+          const isSkippedEdge = !active && hasTrace && (isSkippedNode(edge.sourceRef) || isSkippedNode(edge.targetRef))
           let pts = ''
           if (edge.waypoints?.length) {
             pts = edge.waypoints.map(wp => Array.isArray(wp) ? `${wp[0]},${wp[1]}` : `${wp.x},${wp.y}`).join(' ')
@@ -120,24 +129,28 @@ function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, sele
             if (!s || !t) return null
             pts = `${s.x+(s.w||80)/2},${s.y+(s.h||50)/2} ${t.x+(t.w||80)/2},${t.y+(t.h||50)/2}`
           }
+          const stroke = hasFail ? 'var(--red)' : active ? 'var(--green)' : isSkippedEdge ? 'var(--amber)' : 'var(--border-1)'
+          const mEnd   = hasFail ? 'url(#pt-arrR)' : active ? 'url(#pt-arrG)' : isSkippedEdge ? 'url(#pt-arrA)' : 'url(#pt-arr)'
           return (
             <polyline key={edge.id} points={pts} fill="none"
-              stroke={hasFail ? 'var(--red)' : active ? 'var(--green)' : 'var(--border-1)'}
-              strokeWidth={active ? 2.5 : 0.7}
-              opacity={hasTrace ? (active ? 1 : 0.25) : 0.5}
-              markerEnd={hasFail ? 'url(#pt-arrR)' : active ? 'url(#pt-arrG)' : 'url(#pt-arr)'} />
+              stroke={stroke}
+              strokeWidth={active ? 2.5 : isSkippedEdge ? 1 : 0.7}
+              strokeDasharray={isSkippedEdge ? '3,3' : undefined}
+              opacity={hasTrace ? (active ? 1 : isSkippedEdge ? 0.55 : 0.2) : 0.5}
+              markerEnd={mEnd} />
           )
         })}
 
         {/* Nodes */}
         {nodes.map(node => {
-          const col = nodeColor(node)
-          const op  = nodeOp(node)
-          const vis = hasTrace && isTracedNode(node.id)
-          const sel = selectedNodeId === node.id
+          const col  = nodeColor(node)
+          const op   = nodeOp(node)
+          const vis  = hasTrace && isTracedNode(node.id)
+          const sel  = selectedNodeId === node.id
           const fail = isFailedNode(node.id)
-          const fill = (vis || sel || fail) ? col + '20' : 'transparent'
-          const sw = sel ? 2.5 : (vis || fail) ? 1.5 : 0.8
+          const skip = isSkippedNode(node.id)
+          const fill = (vis || sel || fail || skip) ? col + '20' : 'transparent'
+          const sw   = sel ? 2.5 : (vis || fail) ? 1.5 : skip ? 1 : 0.8
           const w = node.w || 80, h = node.h || 50
           const cx = node.x + w/2, cy = node.y + h/2
           const onClick = () => onNodeClick?.(node)
@@ -170,7 +183,8 @@ function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, sele
           const lh = 10, sty = cy - ((lines.length-1)*lh/2)
           return (
             <g key={node.id} opacity={op} onClick={onClick} style={{ cursor: 'pointer' }}>
-              <rect x={node.x} y={node.y} width={w} height={h} rx={4} fill={fill} stroke={col} strokeWidth={sw} />
+              <rect x={node.x} y={node.y} width={w} height={h} rx={4} fill={fill} stroke={col} strokeWidth={sw}
+                strokeDasharray={skip ? '4,2' : undefined} />
               {node.type === 'serviceTask' && <rect x={node.x} y={node.y} width={3} height={h} rx={1} fill={col} opacity={0.7} />}
               {sel && <rect x={node.x-2} y={node.y-2} width={w+4} height={h+4} rx={5} fill="none" stroke={col} strokeWidth={1.5} opacity={0.6} />}
               {lines.map((ln,i) => (
@@ -389,13 +403,22 @@ export default function ProcessTrackerPage() {
     return () => clearInterval(t)
   }, [selGroup?.request_id, selGroup?.status])
 
-  // Traced nodes from selected group's events
+  // Traced nodes from selected group's events (SKIPPED excluded — they were bypassed)
   const tracedNodeIds = useMemo(() => {
     if (!selGroup) return new Set()
     const s = new Set()
-    selGroup.events.forEach(ev => {
+    selGroup.events.filter(ev => ev.status !== 'SKIPPED').forEach(ev => {
       if (ev.service_id) s.add(ev.service_id)
       if (ev.stage) s.add(ev.stage)
+    })
+    return s
+  }, [selGroup?.request_id, items])
+
+  const skippedNodeIds = useMemo(() => {
+    if (!selGroup) return new Set()
+    const s = new Set()
+    selGroup.events.filter(ev => ev.status === 'SKIPPED').forEach(ev => {
+      if (ev.service_id) s.add(ev.service_id)
     })
     return s
   }, [selGroup?.request_id, items])
@@ -622,13 +645,14 @@ export default function ProcessTrackerPage() {
                           {selectedNode && <button className="btn btn-ghost btn-xs" style={{marginLeft:8}} onClick={() => setSelectedNode(null)}>clear</button>}
                         </span>
                         <span style={{ fontSize:10, color:'var(--text-3)' }}>
-                          {tracedMatchCount || tracedNodeIds.size} nodes visited · click a node to inspect
+                          {tracedMatchCount || tracedNodeIds.size} executed{skippedNodeIds.size ? `, ${skippedNodeIds.size} skipped` : ''} · click a node to inspect
                         </span>
                       </div>
                       <BpmnFlowCanvas
                         model={processModel}
                         tracedNodeIds={tracedNodeIds}
                         failedNodeIds={failedNodeIds}
+                        skippedNodeIds={skippedNodeIds}
                         onNodeClick={setSelectedNode}
                         selectedNodeId={selectedNode?.id}
                       />
