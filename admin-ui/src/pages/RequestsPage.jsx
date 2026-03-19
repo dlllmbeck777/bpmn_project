@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { get, getUserRole, post } from '../lib/api'
 
 /* ── helpers ── */
@@ -39,6 +39,7 @@ function elapsed(a, b) {
   const ms = new Date(b) - new Date(a)
   return ms < 0 ? null : ms < 1000 ? `${ms}ms` : ms < 60000 ? `${(ms/1000).toFixed(1)}s` : `${Math.round(ms/60000)}m`
 }
+function ts(v) { return v ? String(v).slice(11, 19) : '—' }
 
 /* ── word-wrap for SVG ── */
 function wrapSvg(text, maxC) {
@@ -67,18 +68,15 @@ function buildIsTraced(tracedSet) {
   }
 }
 
-/* ── BPMN canvas (app-themed) ── */
+/* ── BPMN canvas ── */
 function BpmnCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, selectedNodeId }) {
   const { nodes = [], edges = [] } = model || {}
   const isTraced = useMemo(() => buildIsTraced(tracedNodeIds), [tracedNodeIds])
   const isFailed = useMemo(() => buildIsTraced(failedNodeIds), [failedNodeIds])
-
   const matchedCount = useMemo(() => nodes.filter(n => isTraced(n.id)).length, [nodes, isTraced])
   const hasTrace = (tracedNodeIds?.size > 0) && matchedCount > 0
 
-  if (!nodes.length) return (
-    <div className="rqb-empty">Loading BPMN model…</div>
-  )
+  if (!nodes.length) return <div className="rqb-empty">Loading BPMN model…</div>
 
   const allX = nodes.flatMap(n => [n.x, n.x+(n.w||80)])
   const allY = nodes.flatMap(n => [n.y, n.y+(n.h||50)])
@@ -157,7 +155,7 @@ function BpmnCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, selected
   )
 }
 
-/* ── Node detail (IN/OUT payload) ── */
+/* ── Node IN/OUT payload drawer ── */
 function NodeDetail({ node, tracker, onClose }) {
   if (!node) return null
   const isT = buildIsTraced(new Set([node.id]))
@@ -171,6 +169,7 @@ function NodeDetail({ node, tracker, onClose }) {
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           <span style={{fontWeight:700,fontSize:12,color:'var(--text-1)'}}>{node.name||node.id}</span>
           <span style={{fontFamily:'monospace',fontSize:9,color:'var(--text-3)'}}>{node.id}</span>
+          {node.type&&<span style={{fontSize:9,padding:'1px 5px',borderRadius:3,background:'var(--bg-2)',color:'var(--text-3)',fontFamily:'monospace'}}>{node.type}</span>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           {dur&&<span className="rqb-dur">{dur}</span>}
@@ -178,16 +177,16 @@ function NodeDetail({ node, tracker, onClose }) {
         </div>
       </div>
       {evs.length===0 ? (
-        <div style={{padding:'10px 14px',fontSize:11,color:'var(--text-3)'}}>No tracker events for this activity</div>
+        <div style={{padding:'10px 14px',fontSize:11,color:'var(--text-3)'}}>No tracker events for this node</div>
       ) : (
         <div className="rqb-nd-body">
           {inEv&&<div className="rqb-nd-col">
-            <div className="rqb-nd-lbl in">→ Input <span style={{fontFamily:'monospace',fontSize:9,color:'var(--text-3)'}}>{(inEv.created_at||'').slice(11,19)}</span></div>
+            <div className="rqb-nd-lbl in">→ Input <span style={{fontFamily:'monospace',fontSize:9,color:'var(--text-3)'}}>{ts(inEv.created_at)}</span></div>
             {inEv.title&&<div style={{fontSize:11,color:'var(--text-2)',marginBottom:4}}>{inEv.title}</div>}
             <pre className="rqb-json">{JSON.stringify(inEv.payload||inEv.data||{},null,2)}</pre>
           </div>}
           {outEv&&<div className="rqb-nd-col">
-            <div className="rqb-nd-lbl out">← Output <span style={{fontFamily:'monospace',fontSize:9,color:'var(--text-3)'}}>{(outEv.created_at||'').slice(11,19)}</span>
+            <div className="rqb-nd-lbl out">← Output <span style={{fontFamily:'monospace',fontSize:9,color:'var(--text-3)'}}>{ts(outEv.created_at)}</span>
               {outEv.status&&<span className={`badge ${sBadge(outEv.status)}`} style={{fontSize:9,marginLeft:4}}>{outEv.status}</span>}
             </div>
             {outEv.title&&<div style={{fontSize:11,color:'var(--text-2)',marginBottom:4}}>{outEv.title}</div>}
@@ -206,7 +205,87 @@ function NodeDetail({ node, tracker, onClose }) {
   )
 }
 
-/* ── Main ── */
+/* ── Waterfall timeline ── */
+function WaterfallChart({ events }) {
+  if (!events.length) return <p style={{color:'var(--text-3)',fontSize:11}}>No events</p>
+  const t0 = new Date(events[0].created_at||0).getTime()
+  const tLast = new Date(events[events.length-1].created_at||0).getTime()
+  const totalMs = Math.max(tLast-t0, 1)
+  const serviceOrder = []; const seen = new Set()
+  events.forEach(ev => { const k=ev.service_id||ev.stage||'unknown'; if(!seen.has(k)){seen.add(k);serviceOrder.push(k)} })
+  const rows = serviceOrder.map(svcId => {
+    const evs = events.filter(e=>(e.service_id||e.stage||'unknown')===svcId)
+    const inEv  = evs.find(e=>e.direction==='IN'||e.direction==='REQUEST')||evs[0]
+    const outEv = evs.find(e=>e.direction==='OUT'||e.direction==='RESPONSE')||evs[evs.length-1]
+    const stEv  = evs.find(e=>e.status)
+    const startMs = inEv  ? new Date(inEv.created_at).getTime()-t0 : 0
+    const endMs   = outEv ? new Date(outEv.created_at).getTime()-t0 : startMs+10
+    const durMs = Math.max(endMs-startMs, 1)
+    return { svcId, startMs, durMs, status: stEv?.status }
+  })
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:0}}>
+      <div style={{display:'flex',justifyContent:'space-between',fontSize:9,color:'var(--text-3)',fontWeight:700,textTransform:'uppercase',padding:'4px 0',borderBottom:'1px solid var(--border-1)',marginBottom:4}}>
+        <span style={{width:180,flexShrink:0}}>Activity</span><span>Timeline →</span><span style={{width:60,textAlign:'right',flexShrink:0}}>Duration</span>
+      </div>
+      {rows.map(row => {
+        const left = (row.startMs/totalMs*100).toFixed(1)
+        const width = Math.max(row.durMs/totalMs*100,0.5).toFixed(1)
+        const col = sColor(row.status)
+        return (
+          <div key={row.svcId} style={{display:'flex',alignItems:'center',gap:8,padding:'3px 0',borderBottom:'1px solid color-mix(in srgb,var(--border-1) 40%,transparent)'}}>
+            <div style={{width:180,flexShrink:0,display:'flex',alignItems:'center',gap:5}}>
+              <span style={{width:6,height:6,borderRadius:'50%',background:col,flexShrink:0}}/>
+              <span style={{fontSize:10,fontFamily:'monospace',color:'var(--text-2)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{row.svcId}</span>
+            </div>
+            <div style={{flex:1,height:12,background:'var(--bg-2)',borderRadius:3,position:'relative',overflow:'hidden'}}>
+              <div style={{position:'absolute',left:`${left}%`,width:`${width}%`,height:'100%',background:col,borderRadius:3,opacity:0.85}}/>
+            </div>
+            <div style={{width:60,fontSize:9,fontFamily:'monospace',textAlign:'right',color:col,flexShrink:0}}>
+              {row.durMs<1000?`${row.durMs}ms`:`${(row.durMs/1000).toFixed(1)}s`}
+            </div>
+          </div>
+        )
+      })}
+      <div style={{display:'flex',justifyContent:'space-between',fontSize:9,color:'var(--text-3)',paddingTop:4,marginLeft:188}}>
+        <span>0ms</span><span>{Math.round(totalMs/2)}ms</span><span>{totalMs}ms</span>
+      </div>
+    </div>
+  )
+}
+
+/* ── Payload inspector ── */
+function PayloadList({ events }) {
+  const [open, setOpen] = useState(new Set())
+  const toggle = id => setOpen(s => { const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n })
+  return (
+    <div style={{display:'flex',flexDirection:'column'}}>
+      {events.map((ev,i) => {
+        const hasP = ev.payload && Object.keys(ev.payload).length>0
+        const isOpen = open.has(ev.id||i)
+        const col = sColor(ev.status)
+        return (
+          <div key={ev.id||i} style={{borderBottom:'1px solid color-mix(in srgb,var(--border-1) 40%,transparent)'}}>
+            <div style={{display:'flex',alignItems:'center',gap:6,padding:'5px 2px',cursor:hasP?'pointer':'default',flexWrap:'wrap'}}
+              onClick={()=>hasP&&toggle(ev.id||i)}>
+              <span style={{width:6,height:6,borderRadius:'50%',background:col,flexShrink:0}}/>
+              <span style={{fontFamily:'monospace',fontSize:10,color:'var(--text-3)'}}>{ts(ev.created_at)}</span>
+              <span style={{padding:'1px 5px',borderRadius:3,fontSize:9,fontWeight:700,
+                background:`color-mix(in srgb,${col} 15%,transparent)`,color:col}}>{ev.direction}</span>
+              <span style={{fontSize:10,fontFamily:'monospace',fontWeight:600,color:'var(--text-1)'}}>{ev.service_id||ev.stage}</span>
+              <span style={{fontSize:10,color:'var(--text-2)',flex:1}}>{ev.title}</span>
+              {ev.status&&<span className={`badge ${sBadge(ev.status)}`} style={{fontSize:9}}>{ev.status}</span>}
+              {hasP&&<span style={{marginLeft:'auto',fontSize:10,color:'var(--text-3)'}}>{isOpen?'▲':'▼'}</span>}
+            </div>
+            {isOpen&&hasP&&<pre className="rqb-json rqb-json-sm">{JSON.stringify(ev.payload,null,2)}</pre>}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/* ── Constants ── */
 const FILTERS = ['','COMPLETED','RUNNING','REVIEW','REJECTED','FAILED','ENGINE_ERROR','ENGINE_UNREACHABLE']
 const PAGE_SIZE = 30
 const DATE_PRESETS = [
@@ -216,40 +295,44 @@ const DATE_PRESETS = [
   { id: '30d',       label: '30 days'   },
   { id: 'all',       label: 'All'       },
 ]
-
 function todayLocalStr() { return new Date().toISOString().slice(0, 10) }
 
 export default function RequestsPage() {
   const userRole = useMemo(()=>getUserRole(),[])
   const canOperate = ['admin','senior_analyst'].includes(userRole)
 
-  const [items,          setItems]          = useState([])
-  const [processModel,   setProcessModel]   = useState(null)
-  const [filter,         setFilter]         = useState('')
-  const [createdFrom,    setCreatedFrom]    = useState(todayLocalStr)
-  const [createdTo,      setCreatedTo]      = useState('')
-  const [datePreset,     setDatePreset]     = useState('today')
-  const [needsAction,    setNeedsAction]    = useState(false)
-  const [ignoredFilter,  setIgnoredFilter]  = useState('active')
-  const [searchQ,        setSearchQ]        = useState('')
-  const [page,           setPage]           = useState(0)
-  const [detail,         setDetail]         = useState(null)
-  const [tracker,        setTracker]        = useState([])
-  const [detailTab,      setDetailTab]      = useState('flow')
-  const [selectedNode,   setSelectedNode]   = useState(null)
-  const [actionReason,   setActionReason]   = useState('')
-  const [noteText,       setNoteText]       = useState('')
-  const [error,          setError]          = useState('')
-  const [notice,         setNotice]         = useState('')
-  const [busy,           setBusy]           = useState('')
-  const detailRef = useRef(null)
+  /* ── List state ── */
+  const [items,         setItems]         = useState([])
+  const [processModel,  setProcessModel]  = useState(null)
+  const [filter,        setFilter]        = useState('')
+  const [createdFrom,   setCreatedFrom]   = useState(todayLocalStr)
+  const [createdTo,     setCreatedTo]     = useState('')
+  const [datePreset,    setDatePreset]    = useState('today')
+  const [needsAction,   setNeedsAction]   = useState(false)
+  const [ignoredFilter, setIgnoredFilter] = useState('active')
+  const [searchQ,       setSearchQ]       = useState('')
+  const [page,          setPage]          = useState(0)
 
+  /* ── Detail state ── */
+  const [view,         setView]         = useState('list')   // 'list' | 'detail'
+  const [detail,       setDetail]       = useState(null)
+  const [detailLoading,setDetailLoading]= useState(false)
+  const [tracker,      setTracker]      = useState([])
+  const [detailTab,    setDetailTab]    = useState('flow')
+  const [selectedNode, setSelectedNode] = useState(null)
+  const [actionReason, setActionReason] = useState('')
+  const [noteText,     setNoteText]     = useState('')
+  const [busy,         setBusy]         = useState('')
+  const [error,        setError]        = useState('')
+  const [notice,       setNotice]       = useState('')
+
+  /* ── Load list ── */
   const loadRequests = (ov={}) => {
-    const nf  = ov.filter         !== undefined ? ov.filter         : filter
-    const nFr = ov.createdFrom    !== undefined ? ov.createdFrom    : createdFrom
-    const nTo = ov.createdTo      !== undefined ? ov.createdTo      : createdTo
-    const nNA = ov.needsAction    !== undefined ? ov.needsAction    : needsAction
-    const nIg = ov.ignoredFilter  !== undefined ? ov.ignoredFilter  : ignoredFilter
+    const nf  = ov.filter        !== undefined ? ov.filter        : filter
+    const nFr = ov.createdFrom   !== undefined ? ov.createdFrom   : createdFrom
+    const nTo = ov.createdTo     !== undefined ? ov.createdTo     : createdTo
+    const nNA = ov.needsAction   !== undefined ? ov.needsAction   : needsAction
+    const nIg = ov.ignoredFilter !== undefined ? ov.ignoredFilter : ignoredFilter
     const p = new URLSearchParams()
     if (nf)  p.set('status', nf)
     if (nFr) p.set('created_from', toUtcIso(nFr))
@@ -262,8 +345,9 @@ export default function RequestsPage() {
       .catch(e => setError(e.message))
   }
 
+  /* ── Open detail (full page) ── */
   const openDetail = async (rid) => {
-    setSelectedNode(null); setDetailTab('flow')
+    setDetailLoading(true); setSelectedNode(null); setDetailTab('flow')
     try {
       const [d, t] = await Promise.all([
         get(`/api/v1/requests/${rid}`),
@@ -272,12 +356,14 @@ export default function RequestsPage() {
       setDetail(d)
       setTracker((t.items||[]).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)))
       setError('')
-      setTimeout(()=>detailRef.current?.scrollIntoView({behavior:'smooth',block:'start'}),50)
+      setView('detail')
     } catch(e) { setError(e.message) }
+    finally { setDetailLoading(false) }
   }
 
-  const closeDetail = () => { setDetail(null); setTracker([]); setSelectedNode(null) }
+  const backToList = () => { setView('list'); setDetail(null); setTracker([]); setSelectedNode(null) }
 
+  /* ── Actions ── */
   const runAction = async (path, msg, opts={}) => {
     setBusy(path)
     try {
@@ -302,19 +388,11 @@ export default function RequestsPage() {
 
   const applyDatePreset = (p) => {
     setDatePreset(p)
-    const now = new Date()
-    let f = '', t = ''
-    if (p === 'today') { f = todayLocalStr() }
-    else if (p === 'yesterday') {
-      const d = new Date(now); d.setDate(d.getDate() - 1)
-      f = t = d.toISOString().slice(0, 10)
-    } else if (p === '7d') {
-      const d = new Date(now); d.setDate(d.getDate() - 7)
-      f = d.toISOString().slice(0, 10)
-    } else if (p === '30d') {
-      const d = new Date(now); d.setDate(d.getDate() - 30)
-      f = d.toISOString().slice(0, 10)
-    }
+    const now = new Date(); let f='',t=''
+    if (p==='today') { f=todayLocalStr() }
+    else if (p==='yesterday') { const d=new Date(now); d.setDate(d.getDate()-1); f=t=d.toISOString().slice(0,10) }
+    else if (p==='7d')  { const d=new Date(now); d.setDate(d.getDate()-7);  f=d.toISOString().slice(0,10) }
+    else if (p==='30d') { const d=new Date(now); d.setDate(d.getDate()-30); f=d.toISOString().slice(0,10) }
     setCreatedFrom(f); setCreatedTo(t)
     loadRequests({ createdFrom: f, createdTo: t })
   }
@@ -338,70 +416,312 @@ export default function RequestsPage() {
   const rows  = filtered.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE)
 
   const tracedNodeIds = useMemo(()=>{
-    const s=new Set()
-    tracker.forEach(ev=>{ if(ev.service_id) s.add(ev.service_id); if(ev.stage) s.add(ev.stage) })
-    return s
+    const s=new Set(); tracker.forEach(ev=>{ if(ev.service_id) s.add(ev.service_id); if(ev.stage) s.add(ev.stage) }); return s
   },[tracker])
-
   const failedNodeIds = useMemo(()=>{
-    const s=new Set()
-    tracker.filter(e=>SC.red.includes(e.status)).forEach(e=>{ if(e.service_id) s.add(e.service_id) })
-    return s
+    const s=new Set(); tracker.filter(e=>SC.red.includes(e.status)).forEach(e=>{ if(e.service_id) s.add(e.service_id) }); return s
   },[tracker])
 
   const ops = detail?.ops || {}
+  const totalTime = tracker.length>=2 ? elapsed(tracker[0]?.created_at, tracker[tracker.length-1]?.created_at) : null
 
+  /* ═══════════════════════════════════════════════════════
+     CSS
+  ═══════════════════════════════════════════════════════ */
+  const css = `
+    /* list */
+    .rqb-toolbar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:10px; }
+    .rqb-search { padding:5px 10px; border-radius:6px; border:1px solid var(--border-1); background:var(--bg-2); color:var(--text-1); font-size:11px; outline:none; width:200px; }
+    .rqb-search:focus { border-color:var(--blue); }
+    .rqb-flt { padding:2px 7px; border-radius:3px; border:1px solid var(--border-1); background:transparent; color:var(--text-3); font-size:9px; font-weight:700; cursor:pointer; }
+    .rqb-flt.active { background:var(--blue); color:#fff; border-color:var(--blue); }
+    .rqb-flt:hover:not(.active) { color:var(--text-1); }
+    .rqb-tbl-wrap { border:1px solid var(--border-1); border-radius:8px; overflow:hidden; margin-bottom:12px; }
+    .rqb-tbl { width:100%; border-collapse:collapse; font-size:11px; }
+    .rqb-tbl thead tr { background:var(--bg-2); }
+    .rqb-tbl th { padding:4px 8px; text-align:left; font-size:9px; font-weight:700; color:var(--text-3); text-transform:uppercase; letter-spacing:0.6px; border-bottom:1px solid var(--border-1); white-space:nowrap; }
+    .rqb-tbl td { padding:3px 8px; border-bottom:1px solid color-mix(in srgb,var(--border-1) 60%,transparent); vertical-align:middle; }
+    .rqb-tbl tr:last-child td { border-bottom:none; }
+    .rqb-tbl tbody tr { cursor:pointer; transition:background 0.08s; }
+    .rqb-tbl tbody tr:hover td { background:var(--bg-2); }
+    .rqb-action-dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--amber); }
+    .rqb-pages { display:flex; gap:3px; justify-content:center; margin-bottom:16px; }
+    .rqb-pg { padding:3px 8px; border-radius:4px; border:1px solid var(--border-1); background:var(--bg-1); color:var(--text-3); cursor:pointer; font-size:10px; font-family:monospace; }
+    .rqb-pg.active { background:var(--blue); color:#fff; border-color:var(--blue); font-weight:700; }
+    /* detail full-page */
+    .rqd-root { display:flex; flex-direction:column; height:calc(100vh - 160px); min-height:500px; }
+    .rqd-back { display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-shrink:0; }
+    .rqd-hdr { background:var(--bg-1); border:1px solid var(--border-1); border-radius:8px; padding:12px 16px; margin-bottom:0; flex-shrink:0; }
+    .rqd-hdr-top { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+    .rqd-id { font-family:monospace; font-size:14px; font-weight:800; color:var(--text-1); }
+    .rqd-decision { font-size:16px; font-weight:900; font-family:monospace; margin-left:4px; }
+    .rqd-metrics { display:flex; gap:0; flex-wrap:wrap; border-top:1px solid var(--border-1); padding-top:8px; }
+    .rqd-metric { display:flex; flex-direction:column; padding:0 16px 0 0; border-right:1px solid var(--border-1); margin-right:16px; margin-bottom:4px; }
+    .rqd-metric:last-child { border-right:none; margin-right:0; }
+    .rqd-metric-lbl { font-size:8px; font-weight:700; color:var(--text-3); text-transform:uppercase; letter-spacing:0.6px; }
+    .rqd-metric-val { font-size:13px; font-weight:700; font-family:monospace; color:var(--text-1); line-height:1.2; }
+    .rqd-tabs { display:flex; border-bottom:1px solid var(--border-1); background:var(--bg-1); flex-shrink:0; }
+    .rqd-tab { padding:8px 14px; font-size:11px; font-weight:600; color:var(--text-3); border:none; border-bottom:2px solid transparent; background:transparent; cursor:pointer; transition:all 0.1s; white-space:nowrap; }
+    .rqd-tab.active { color:var(--blue); border-bottom-color:var(--blue); }
+    .rqd-tab:hover:not(.active) { color:var(--text-1); }
+    .rqd-body { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; }
+    /* kv grid */
+    .rqb-kv-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:1px; background:var(--border-1); border-radius:6px; overflow:hidden; }
+    .rqb-kv-cell { background:var(--bg-1); padding:7px 10px; }
+    .rqb-kv-k { font-size:9px; font-weight:700; color:var(--text-3); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px; }
+    .rqb-kv-v { font-size:12px; color:var(--text-1); word-break:break-all; }
+    .rqb-sec-title { font-size:11px; font-weight:700; color:var(--text-1); margin-bottom:8px; padding-bottom:4px; border-bottom:1px solid var(--border-1); }
+    /* node detail */
+    .rqb-nd { border:1px solid var(--border-1); border-radius:6px; overflow:hidden; }
+    .rqb-nd-hdr { display:flex; align-items:center; justify-content:space-between; padding:7px 12px; background:var(--bg-2); border-bottom:1px solid var(--border-1); }
+    .rqb-nd-body { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:1px; background:var(--border-1); max-height:320px; overflow-y:auto; }
+    .rqb-nd-col { padding:10px 12px; background:var(--bg-1); }
+    .rqb-nd-lbl { font-size:10px; font-weight:700; margin-bottom:5px; display:flex; align-items:center; gap:6px; }
+    .rqb-nd-lbl.in { color:var(--green); } .rqb-nd-lbl.out { color:var(--blue); } .rqb-nd-lbl.state { color:var(--amber); }
+    .rqb-dur { font-size:9px; font-family:monospace; background:var(--bg-2); padding:2px 6px; border-radius:4px; color:var(--blue); font-weight:700; }
+    .rqb-json { font-size:10px; font-family:monospace; color:var(--text-3); background:var(--bg-2); padding:8px; border-radius:4px; overflow:auto; white-space:pre-wrap; word-break:break-all; max-height:200px; margin:4px 0 0; }
+    .rqb-json-sm { font-size:9px; max-height:150px; margin:0 12px 8px; }
+    .rqb-empty { padding:20px; text-align:center; color:var(--text-3); font-size:11px; }
+  `
+
+  /* ═══════════════════════════════════════════════════════
+     DETAIL VIEW (full page)
+  ═══════════════════════════════════════════════════════ */
+  if (view === 'detail') {
+    const dec = detail?.result?.decision || detail?.result?.summary?.decision
+    const score = metricVal(detail?.result, 'credit_score')
+    const collections = metricVal(detail?.result, 'collection_count')
+    const reason = decisionReason(detail?.result, detail?.status)
+    const createdAt = (detail?.created_at||'').slice(0,19).replace('T',' ')
+
+    return (
+      <>
+        <style>{css}</style>
+        {error  && <div className="notice notice-error mb-10" onClick={()=>setError('')}>{error} ✕</div>}
+        {notice && <div className="notice mb-10" onClick={()=>setNotice('')}>{notice} ✕</div>}
+
+        {detailLoading || !detail ? (
+          <div style={{padding:40,textAlign:'center',color:'var(--text-3)'}}>Loading…</div>
+        ) : (
+          <div className="rqd-root">
+
+            {/* Back */}
+            <div className="rqd-back">
+              <button className="btn btn-ghost btn-sm" onClick={backToList}>← Requests</button>
+              {detail.status==='RUNNING' && (
+                <span style={{fontSize:10,color:'var(--blue)',fontFamily:'monospace'}}>● live — auto-refreshing</span>
+              )}
+            </div>
+
+            {/* Header */}
+            <div className="rqd-hdr">
+              <div className="rqd-hdr-top">
+                <span className="rqd-id">{detail.request_id}</span>
+                <span className={`badge ${sBadge(detail.status)}`} style={{fontSize:10}}>{(detail.status||'').toLowerCase()}</span>
+                {detail.error_class&&<span className={`badge ${detail.error_class==='technical'?'badge-red':detail.error_class==='integration'?'badge-amber':'badge-green'}`} style={{fontSize:10}}>{detail.error_class}</span>}
+                {detail.needs_operator_action&&<span className="badge badge-amber" style={{fontSize:10}}>⚠ needs action</span>}
+                {detail.ignored&&<span className="badge badge-gray" style={{fontSize:10}}>ignored</span>}
+                {dec&&<span className="rqd-decision" style={{color:dec==='APPROVED'?'var(--green)':dec==='REJECTED'?'var(--red)':'var(--amber)'}}>{dec}</span>}
+                <button className="btn btn-ghost btn-xs" style={{marginLeft:'auto'}} onClick={()=>openDetail(detail.request_id)}>↻ Reload</button>
+              </div>
+              <div className="rqd-metrics">
+                <div className="rqd-metric">
+                  <span className="rqd-metric-lbl">Applicant</span>
+                  <span className="rqd-metric-val">{applicantName(detail)}</span>
+                </div>
+                {score!=='—'&&<div className="rqd-metric">
+                  <span className="rqd-metric-lbl">Credit Score</span>
+                  <span className="rqd-metric-val">{score}</span>
+                </div>}
+                {collections!=='—'&&<div className="rqd-metric">
+                  <span className="rqd-metric-lbl">Collections</span>
+                  <span className="rqd-metric-val" style={{color:Number(collections)>0?'var(--red)':undefined}}>{collections}</span>
+                </div>}
+                {totalTime&&<div className="rqd-metric">
+                  <span className="rqd-metric-lbl">Total time</span>
+                  <span className="rqd-metric-val">{totalTime}</span>
+                </div>}
+                <div className="rqd-metric">
+                  <span className="rqd-metric-lbl">Mode</span>
+                  <span className="rqd-metric-val">{detail.orchestration_mode||'—'}</span>
+                </div>
+                <div className="rqd-metric">
+                  <span className="rqd-metric-lbl">Events</span>
+                  <span className="rqd-metric-val">{tracker.length}</span>
+                </div>
+                <div className="rqd-metric">
+                  <span className="rqd-metric-lbl">Created</span>
+                  <span className="rqd-metric-val" style={{fontSize:11}}>{createdAt}</span>
+                </div>
+                {detail.correlation_id&&<div className="rqd-metric">
+                  <span className="rqd-metric-lbl">Correlation</span>
+                  <span className="rqd-metric-val" style={{fontSize:10}}>{detail.correlation_id}</span>
+                </div>}
+              </div>
+            </div>
+
+            {/* Tabs */}
+            <div className="rqd-tabs">
+              {[
+                {id:'flow',     label:'⬡ Flow Path'},
+                {id:'summary',  label:'ℹ Summary'},
+                {id:'timeline', label:'▦ Timeline'},
+                {id:'payloads', label:'{ } Payloads'},
+                {id:'actions',  label:'⚙ Actions'},
+              ].map(t=>(
+                <button key={t.id} className={`rqd-tab${detailTab===t.id?' active':''}`}
+                  onClick={()=>{setDetailTab(t.id);setSelectedNode(null)}}>{t.label}</button>
+              ))}
+            </div>
+
+            {/* Body */}
+            <div className="rqd-body">
+
+              {/* ── Flow Path ── */}
+              {detailTab==='flow' && (<>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <span style={{fontSize:11,fontWeight:700,color:'var(--text-1)'}}>
+                    BPMN Process Path — {tracedNodeIds.size} activities traced
+                    {selectedNode&&<button className="btn btn-ghost btn-xs" style={{marginLeft:8}} onClick={()=>setSelectedNode(null)}>clear selection</button>}
+                  </span>
+                  <span style={{fontSize:10,color:'var(--text-3)'}}>Click a node to inspect input / output data</span>
+                </div>
+                <BpmnCanvas model={processModel} tracedNodeIds={tracedNodeIds} failedNodeIds={failedNodeIds}
+                  onNodeClick={setSelectedNode} selectedNodeId={selectedNode?.id} />
+                {selectedNode && <NodeDetail node={selectedNode} tracker={tracker} onClose={()=>setSelectedNode(null)} />}
+                {!selectedNode && reason !== '—' && (
+                  <div style={{padding:'10px 14px',background:'var(--bg-2)',borderRadius:6,fontSize:12,color:'var(--text-2)',border:'1px solid var(--border-1)'}}>
+                    <span style={{fontWeight:700,marginRight:8,color:'var(--text-1)'}}>Decision reason:</span>{reason}
+                  </div>
+                )}
+              </>)}
+
+              {/* ── Summary ── */}
+              {detailTab==='summary' && (<>
+                <div>
+                  <div className="rqb-sec-title">Applicant profile</div>
+                  <div className="rqb-kv-grid">
+                    {[
+                      ['Name',        applicantName(detail)],
+                      ['DOB',         detail.applicant_profile?.dateOfBirth||'—'],
+                      ['SSN',         detail.ssn_masked||'***'],
+                      ['Email',       detail.email_masked||detail.applicant_profile?.email||'—'],
+                      ['Phone',       detail.phone_masked||detail.applicant_profile?.phone||'—'],
+                      ['Address',     detail.applicant_profile?.address||'—'],
+                      ['City/State',  [detail.applicant_profile?.city, detail.applicant_profile?.state].filter(Boolean).join(', ')||'—'],
+                      ['ZIP',         detail.applicant_profile?.zipCode||'—'],
+                    ].map(([k,v])=>(
+                      <div key={k} className="rqb-kv-cell"><div className="rqb-kv-k">{k}</div><div className="rqb-kv-v">{v}</div></div>
+                    ))}
+                  </div>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:12}}>
+                  <div className="card" style={{margin:0}}>
+                    <div className="rqb-sec-title">Outcome</div>
+                    {[
+                      ['Status',       <span className={`badge ${sBadge(detail.status)}`}>{detail.status}</span>],
+                      ['Decision',     dec ? <span style={{fontWeight:700,color:dec==='APPROVED'?'var(--green)':dec==='REJECTED'?'var(--red)':'var(--amber)'}}>{dec}</span> : '—'],
+                      ['Reason',       reason],
+                      ['Source',       detail.result?.decision_source||'—'],
+                      ['Matched rule', detail.result?.matched_rule?.name||detail.result?.summary?.matched_rule?.name||'—'],
+                      ['Engine inst.', detail.result?.engine?.instance_id||'—'],
+                    ].map(([k,v])=>(
+                      <div key={k} className="kv-row"><span className="kv-key">{k}</span><span className="kv-val">{v}</span></div>
+                    ))}
+                    {detail.flowable_live_state&&<>
+                      <div className="kv-row"><span className="kv-key">Engine state</span><span className="kv-val"><span className={`badge ${sBadge(detail.flowable_live_state.engine_status)}`}>{detail.flowable_live_state.engine_status}</span></span></div>
+                      <div className="kv-row"><span className="kv-key">Current activity</span><span className="kv-val mono">{detail.flowable_live_state.current_activity||'—'}</span></div>
+                    </>}
+                  </div>
+                  <div className="card" style={{margin:0}}>
+                    <div className="rqb-sec-title">Decision inputs</div>
+                    {[
+                      ['Credit score',       metricVal(detail.result,'credit_score')],
+                      ['Collections',        metricVal(detail.result,'collection_count')],
+                      ['CS alerts',          metricVal(detail.result,'creditsafe_compliance_alert_count')],
+                      ['Rules evaluated',    metricVal(detail.result,'rules_evaluated')],
+                      ['Required reports',   metricVal(detail.result,'required_reports_available')],
+                    ].map(([k,v])=>(
+                      <div key={k} className="kv-row"><span className="kv-key">{k}</span><span className="kv-val">{v}</span></div>
+                    ))}
+                  </div>
+                </div>
+                {(detail.notes||[]).length>0&&(
+                  <div className="card" style={{margin:0}}>
+                    <div className="rqb-sec-title">Operator notes</div>
+                    {detail.notes.map(n=>(
+                      <div key={n.id} style={{marginBottom:8,padding:'8px 10px',background:'var(--bg-2)',borderRadius:5}}>
+                        <div className="kv-row"><span className="kv-key">Time</span><span className="kv-val mono">{noteTime(n.created_at)}</span></div>
+                        <div className="kv-row"><span className="kv-key">Author</span><span className="kv-val">{n.created_by||'—'}</span></div>
+                        <div className="kv-row"><span className="kv-key">Note</span><span className="kv-val">{n.note_text}</span></div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>)}
+
+              {/* ── Timeline ── */}
+              {detailTab==='timeline' && (
+                <div className="card" style={{margin:0}}>
+                  <div className="rqb-sec-title">Service call waterfall</div>
+                  <WaterfallChart events={tracker} />
+                </div>
+              )}
+
+              {/* ── Payloads ── */}
+              {detailTab==='payloads' && (
+                <div className="card" style={{margin:0}}>
+                  <div className="rqb-sec-title">{tracker.length} tracker events — click to expand payload</div>
+                  <PayloadList events={tracker} />
+                </div>
+              )}
+
+              {/* ── Actions ── */}
+              {detailTab==='actions' && (
+                <div style={{display:'grid',gap:12}}>
+                  <div className="card" style={{margin:0}}>
+                    <div className="rqb-sec-title">Operator actions</div>
+                    {!canOperate&&<p className="text-muted text-sm">Senior analyst or admin required.</p>}
+                    <div className="form-row"><label>Reason</label>
+                      <input value={actionReason} onChange={e=>setActionReason(e.target.value)} placeholder="Reason for audit log"/>
+                    </div>
+                    <div className="form-actions">
+                      <button className="btn btn-primary btn-sm" disabled={!canOperate||!ops.can_retry_as_new||!!busy} onClick={()=>runAction(`/api/v1/requests/${detail.request_id}/retry-as-new`,'Retry as new',{openNew:true})}>Retry as new</button>
+                      <button className="btn btn-ghost btn-sm" disabled={!canOperate||!ops.can_clone||!!busy} onClick={()=>runAction(`/api/v1/requests/${detail.request_id}/clone`,'Cloned',{openNew:true})}>Clone</button>
+                      {!detail.ignored
+                        ?<button className="btn btn-warn btn-sm" disabled={!canOperate||!ops.can_ignore||!!busy} onClick={()=>runAction(`/api/v1/requests/${detail.request_id}/ignore`,'Ignored')}>Mark ignored</button>
+                        :<button className="btn btn-success btn-sm" disabled={!canOperate||!ops.can_restore||!!busy} onClick={()=>runAction(`/api/v1/requests/${detail.request_id}/restore`,'Restored')}>Restore</button>}
+                    </div>
+                    <div className="form-actions">
+                      <button className="btn btn-danger btn-sm" disabled={!canOperate||!ops.can_retry_failed_flowable_jobs||!!busy} onClick={()=>runAction(`/api/v1/requests/${detail.request_id}/flowable/retry-failed-jobs`,'Retry Flowable jobs')}>Retry Flowable jobs</button>
+                      <button className="btn btn-ghost btn-sm" disabled={!canOperate||!ops.can_reconcile_flowable||!!busy} onClick={()=>runAction(`/api/v1/flowable/requests/${detail.request_id}/reconcile`,'Reconcile')}>Reconcile Flowable</button>
+                    </div>
+                  </div>
+                  <div className="card" style={{margin:0}}>
+                    <div className="rqb-sec-title">Add note</div>
+                    <div className="form-row"><label>Note</label>
+                      <textarea value={noteText} onChange={e=>setNoteText(e.target.value)} rows={3} placeholder="What happened, what was checked…"/>
+                    </div>
+                    <div className="form-actions">
+                      <button className="btn btn-primary btn-sm" disabled={!detail.ops?.can_add_note||!noteText.trim()||busy==='note'} onClick={addNote}>Add note</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          </div>
+        )}
+      </>
+    )
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     LIST VIEW
+  ═══════════════════════════════════════════════════════ */
   return (
     <>
-      <style>{`
-        .rqb-toolbar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:10px; }
-        .rqb-search { padding:5px 10px; border-radius:6px; border:1px solid var(--border-1); background:var(--bg-2); color:var(--text-1); font-size:11px; outline:none; width:200px; }
-        .rqb-search:focus { border-color:var(--blue); }
-        .rqb-flt { padding:2px 7px; border-radius:3px; border:1px solid var(--border-1); background:transparent; color:var(--text-3); font-size:9px; font-weight:700; cursor:pointer; }
-        .rqb-flt.active { background:var(--blue); color:#fff; border-color:var(--blue); }
-        .rqb-flt:hover:not(.active) { color:var(--text-1); }
-        .rqb-tbl-wrap { border:1px solid var(--border-1); border-radius:8px; overflow:hidden; margin-bottom:12px; }
-        .rqb-tbl { width:100%; border-collapse:collapse; font-size:11px; }
-        .rqb-tbl thead tr { background:var(--bg-2); }
-        .rqb-tbl th { padding:4px 8px; text-align:left; font-size:9px; font-weight:700; color:var(--text-3); text-transform:uppercase; letter-spacing:0.6px; border-bottom:1px solid var(--border-1); white-space:nowrap; }
-        .rqb-tbl td { padding:3px 8px; border-bottom:1px solid color-mix(in srgb,var(--border-1) 60%,transparent); vertical-align:middle; }
-        .rqb-tbl tr:last-child td { border-bottom:none; }
-        .rqb-tbl tbody tr { cursor:pointer; transition:background 0.08s; }
-        .rqb-tbl tbody tr:hover td { background:var(--bg-2); }
-        .rqb-tbl tbody tr.active td { background:color-mix(in srgb,var(--blue) 8%,transparent); }
-        .rqb-tbl tbody tr.active td:first-child { border-left:2px solid var(--blue); }
-        .rqb-action-dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--amber); }
-        .rqb-pages { display:flex; gap:3px; justify-content:center; margin-bottom:16px; }
-        .rqb-pg { padding:3px 8px; border-radius:4px; border:1px solid var(--border-1); background:var(--bg-1); color:var(--text-3); cursor:pointer; font-size:10px; font-family:monospace; }
-        .rqb-pg.active { background:var(--blue); color:#fff; border-color:var(--blue); font-weight:700; }
-        /* detail panel */
-        .rqb-detail { border:1px solid var(--border-1); border-radius:8px; overflow:hidden; margin-bottom:24px; }
-        .rqb-detail-hdr { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 14px; background:var(--bg-2); border-bottom:1px solid var(--border-1); }
-        .rqb-detail-id { font-family:monospace; font-size:13px; font-weight:700; color:var(--text-1); }
-        .rqb-detail-tabs { display:flex; border-bottom:1px solid var(--border-1); padding:0 14px; background:var(--bg-1); }
-        .rqb-detail-tab { padding:7px 12px; font-size:11px; font-weight:600; color:var(--text-3); border:none; border-bottom:2px solid transparent; background:transparent; cursor:pointer; transition:all 0.1s; }
-        .rqb-detail-tab.active { color:var(--blue); border-bottom-color:var(--blue); }
-        .rqb-detail-body { padding:14px; }
-        .rqb-kv-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:1px; background:var(--border-1); border-radius:6px; overflow:hidden; margin-bottom:12px; }
-        .rqb-kv-cell { background:var(--bg-1); padding:7px 10px; }
-        .rqb-kv-k { font-size:9px; font-weight:700; color:var(--text-3); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px; }
-        .rqb-kv-v { font-size:12px; color:var(--text-1); word-break:break-all; }
-        .rqb-sec-title { font-size:11px; font-weight:700; color:var(--text-1); margin-bottom:8px; padding-bottom:4px; border-bottom:1px solid var(--border-1); }
-        /* node detail */
-        .rqb-nd { border:1px solid var(--border-1); border-radius:6px; overflow:hidden; margin-top:10px; }
-        .rqb-nd-hdr { display:flex; align-items:center; justify-content:space-between; padding:7px 12px; background:var(--bg-2); border-bottom:1px solid var(--border-1); }
-        .rqb-nd-body { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:1px; background:var(--border-1); max-height:280px; overflow-y:auto; }
-        .rqb-nd-col { padding:10px 12px; background:var(--bg-1); }
-        .rqb-nd-lbl { font-size:10px; font-weight:700; margin-bottom:5px; display:flex; align-items:center; gap:6px; }
-        .rqb-nd-lbl.in    { color:var(--green); }
-        .rqb-nd-lbl.out   { color:var(--blue);  }
-        .rqb-nd-lbl.state { color:var(--amber); }
-        .rqb-dur { font-size:9px; font-family:monospace; background:var(--bg-2); padding:2px 6px; border-radius:4px; color:var(--blue); font-weight:700; }
-        .rqb-json { font-size:10px; font-family:monospace; color:var(--text-3); background:var(--bg-2); padding:8px; border-radius:4px; overflow:auto; white-space:pre-wrap; word-break:break-all; max-height:180px; margin:4px 0 0; }
-        .rqb-empty { padding:20px; text-align:center; color:var(--text-3); font-size:11px; }
-        .rqb-canvas-hint { font-size:10px; color:var(--text-3); text-align:right; margin-bottom:6px; }
-      `}</style>
-
+      <style>{css}</style>
       {error  && <div className="notice notice-error mb-10" onClick={()=>setError('')}>{error} ✕</div>}
       {notice && <div className="notice mb-10" onClick={()=>setNotice('')}>{notice} ✕</div>}
 
@@ -452,17 +772,9 @@ export default function RequestsPage() {
         <table className="rqb-tbl">
           <thead>
             <tr>
-              <th>#</th>
-              <th>Request ID</th>
-              <th>Applicant</th>
-              <th>Mode</th>
-              <th>Status</th>
-              <th>Class</th>
-              <th>Decision</th>
-              <th>Score</th>
-              <th>⚑</th>
-              <th>Time</th>
-              <th></th>
+              <th>#</th><th>Request ID</th><th>Applicant</th><th>Mode</th>
+              <th>Status</th><th>Class</th><th>Decision</th><th>Score</th>
+              <th>⚑</th><th>Time</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -472,8 +784,8 @@ export default function RequestsPage() {
               const decision = r.result?.decision || r.result?.summary?.decision
               const score    = r.result?.summary?.credit_score ?? r.result?.credit_score
               return (
-                <tr key={r.request_id} className={detail?.request_id===r.request_id?'active':''}
-                  onClick={()=>detail?.request_id===r.request_id?closeDetail():openDetail(r.request_id)}>
+                <tr key={r.request_id} onClick={()=>openDetail(r.request_id)}
+                  style={{cursor: detailLoading ? 'wait' : 'pointer'}}>
                   <td style={{color:'var(--text-3)',fontFamily:'monospace',fontSize:10}}>{page*PAGE_SIZE+i+1}</td>
                   <td style={{fontFamily:'monospace',fontWeight:700,fontSize:11,whiteSpace:'nowrap'}}>{r.request_id}</td>
                   <td style={{maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
@@ -487,11 +799,7 @@ export default function RequestsPage() {
                   <td style={{fontFamily:'monospace',fontSize:11}}>{score!==undefined&&score!==null?score:'—'}</td>
                   <td>{r.needs_operator_action&&<span className="rqb-action-dot" title="Needs action"/>}</td>
                   <td style={{fontFamily:'monospace',fontSize:10,color:'var(--text-3)',whiteSpace:'nowrap'}}>{(r.created_at||'').slice(11,19)}</td>
-                  <td>
-                    <button className="btn btn-ghost btn-xs" onClick={e=>{e.stopPropagation();openDetail(r.request_id)}}>
-                      {detail?.request_id===r.request_id?'▲':'↗'}
-                    </button>
-                  </td>
+                  <td><button className="btn btn-ghost btn-xs" onClick={e=>{e.stopPropagation();openDetail(r.request_id)}}>↗</button></td>
                 </tr>
               )
             })}
@@ -508,175 +816,6 @@ export default function RequestsPage() {
             return <button key={n} className={`rqb-pg${page===n?' active':''}`} onClick={()=>setPage(n)}>{n+1}</button>
           })}
           <span style={{fontSize:10,color:'var(--text-3)',alignSelf:'center',marginLeft:4}}>/ {pages}</span>
-        </div>
-      )}
-
-      {/* ── Detail panel ── */}
-      {detail && (
-        <div className="rqb-detail" ref={detailRef}>
-          {/* Header */}
-          <div className="rqb-detail-hdr">
-            <span className="rqb-detail-id">{detail.request_id}</span>
-            <span className={`badge ${sBadge(detail.status)}`}>{(detail.status||'').toLowerCase()}</span>
-            {detail.error_class&&<span className={`badge ${detail.error_class==='technical'?'badge-red':detail.error_class==='integration'?'badge-amber':'badge-green'}`}>{detail.error_class}</span>}
-            {detail.needs_operator_action&&<span className="badge badge-amber">needs action</span>}
-            {detail.ignored&&<span className="badge badge-gray">ignored</span>}
-            {detail.result?.decision&&(
-              <span style={{fontWeight:700,fontSize:12,color:detail.result.decision==='APPROVED'?'var(--green)':detail.result.decision==='REJECTED'?'var(--red)':'var(--amber)'}}>
-                {detail.result.decision}
-              </span>
-            )}
-            <div style={{marginLeft:'auto',display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
-              <span style={{fontSize:11,color:'var(--text-3)'}}>{applicantName(detail)}</span>
-              <button className="btn btn-ghost btn-xs" onClick={closeDetail}>✕ Close</button>
-            </div>
-          </div>
-
-          {/* Tabs */}
-          <div className="rqb-detail-tabs">
-            {[
-              {id:'flow',    label:'⬡ Flow Path'},
-              {id:'summary', label:'ℹ Summary'},
-              {id:'actions', label:'⚙ Actions'},
-            ].map(t=>(
-              <button key={t.id} className={`rqb-detail-tab${detailTab===t.id?' active':''}`}
-                onClick={()=>{setDetailTab(t.id);setSelectedNode(null)}}>{t.label}</button>
-            ))}
-          </div>
-
-          <div className="rqb-detail-body">
-
-            {/* ── Flow Path ── */}
-            {detailTab==='flow' && (
-              <>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-                  <span style={{fontSize:11,fontWeight:700,color:'var(--text-1)'}}>
-                    BPMN Process Path — {tracedNodeIds.size} activities traced
-                    {selectedNode&&<button className="btn btn-ghost btn-xs" style={{marginLeft:8}} onClick={()=>setSelectedNode(null)}>clear</button>}
-                  </span>
-                  <span className="rqb-canvas-hint">Click a node to inspect input / output data</span>
-                </div>
-                <BpmnCanvas
-                  model={processModel}
-                  tracedNodeIds={tracedNodeIds}
-                  failedNodeIds={failedNodeIds}
-                  onNodeClick={setSelectedNode}
-                  selectedNodeId={selectedNode?.id}
-                />
-                <NodeDetail node={selectedNode} tracker={tracker} onClose={()=>setSelectedNode(null)} />
-                {!selectedNode && decisionReason(detail.result, detail.status) !== '—' && (
-                  <div style={{marginTop:10,padding:'8px 12px',background:'var(--bg-2)',borderRadius:6,fontSize:12,color:'var(--text-2)'}}>
-                    <span style={{fontWeight:700,marginRight:8}}>Decision reason:</span>
-                    {decisionReason(detail.result, detail.status)}
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* ── Summary ── */}
-            {detailTab==='summary' && (
-              <>
-                <div className="rqb-kv-grid">
-                  {[
-                    ['Applicant',   applicantName(detail)],
-                    ['Location',    [detail.applicant_profile?.city, detail.applicant_profile?.state].filter(Boolean).join(', ')||'—'],
-                    ['Mode',        detail.orchestration_mode],
-                    ['Correlation', detail.correlation_id||'—'],
-                    ['Address',     detail.applicant_profile?.address||'—'],
-                    ['ZIP',         detail.applicant_profile?.zipCode||'—'],
-                    ['SSN',         detail.ssn_masked||'***'],
-                    ['DOB',         detail.applicant_profile?.dateOfBirth||'—'],
-                    ['Email',       detail.email_masked||detail.applicant_profile?.email||'—'],
-                    ['Phone',       detail.phone_masked||detail.applicant_profile?.phone||'—'],
-                  ].map(([k,v])=>(
-                    <div key={k} className="rqb-kv-cell">
-                      <div className="rqb-kv-k">{k}</div>
-                      <div className="rqb-kv-v">{v}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="grid-2" style={{gap:12,marginBottom:12}}>
-                  <div className="card" style={{margin:0}}>
-                    <div className="rqb-sec-title">Outcome</div>
-                    {[
-                      ['Status',       <span className={`badge ${sBadge(detail.status)}`}>{detail.status}</span>],
-                      ['Decision',     detail.result?.decision||'—'],
-                      ['Reason',       decisionReason(detail.result,detail.status)],
-                      ['Source',       detail.result?.decision_source||'—'],
-                      ['Matched rule', detail.result?.matched_rule?.name||detail.result?.summary?.matched_rule?.name||'—'],
-                      ['Engine inst.', detail.result?.engine?.instance_id||'—'],
-                    ].map(([k,v])=>(
-                      <div key={k} className="kv-row"><span className="kv-key">{k}</span><span className="kv-val">{v}</span></div>
-                    ))}
-                    {detail.flowable_live_state&&<>
-                      <div className="kv-row"><span className="kv-key">Engine state</span><span className="kv-val"><span className={`badge ${sBadge(detail.flowable_live_state.engine_status)}`}>{detail.flowable_live_state.engine_status}</span></span></div>
-                      <div className="kv-row"><span className="kv-key">Current activity</span><span className="kv-val mono">{detail.flowable_live_state.current_activity||'—'}</span></div>
-                    </>}
-                  </div>
-                  <div className="card" style={{margin:0}}>
-                    <div className="rqb-sec-title">Decision inputs</div>
-                    {[
-                      ['Rules evaluated',    metricVal(detail.result,'rules_evaluated')],
-                      ['Required reports',   metricVal(detail.result,'required_reports_available')],
-                      ['Credit score',       metricVal(detail.result,'credit_score')],
-                      ['Collections',        metricVal(detail.result,'collection_count')],
-                      ['CS alerts',          metricVal(detail.result,'creditsafe_compliance_alert_count')],
-                    ].map(([k,v])=>(
-                      <div key={k} className="kv-row"><span className="kv-key">{k}</span><span className="kv-val">{v}</span></div>
-                    ))}
-                  </div>
-                </div>
-
-                {(detail.notes||[]).length>0&&(
-                  <div className="card" style={{margin:0}}>
-                    <div className="rqb-sec-title">Operator notes</div>
-                    {detail.notes.map(n=>(
-                      <div key={n.id} className="detail-panel" style={{marginBottom:8}}>
-                        <div className="kv-row"><span className="kv-key">Time</span><span className="kv-val mono">{noteTime(n.created_at)}</span></div>
-                        <div className="kv-row"><span className="kv-key">Author</span><span className="kv-val">{n.created_by||'—'}</span></div>
-                        <div className="kv-row"><span className="kv-key">Note</span><span className="kv-val">{n.note_text}</span></div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* ── Actions ── */}
-            {detailTab==='actions' && (
-              <div style={{display:'grid',gap:12}}>
-                <div className="card" style={{margin:0}}>
-                  <div className="rqb-sec-title">Operator actions</div>
-                  {!canOperate&&<p className="text-muted text-sm">Senior analyst or admin required.</p>}
-                  <div className="form-row"><label>Reason</label>
-                    <input value={actionReason} onChange={e=>setActionReason(e.target.value)} placeholder="Reason for audit log"/>
-                  </div>
-                  <div className="form-actions">
-                    <button className="btn btn-primary btn-sm" disabled={!canOperate||!ops.can_retry_as_new||!!busy} onClick={()=>runAction(`/api/v1/requests/${detail.request_id}/retry-as-new`,'Retry as new',{openNew:true})}>Retry as new</button>
-                    <button className="btn btn-ghost btn-sm" disabled={!canOperate||!ops.can_clone||!!busy} onClick={()=>runAction(`/api/v1/requests/${detail.request_id}/clone`,'Cloned',{openNew:true})}>Clone</button>
-                    {!detail.ignored
-                      ?<button className="btn btn-warn btn-sm" disabled={!canOperate||!ops.can_ignore||!!busy} onClick={()=>runAction(`/api/v1/requests/${detail.request_id}/ignore`,'Ignored')}>Mark ignored</button>
-                      :<button className="btn btn-success btn-sm" disabled={!canOperate||!ops.can_restore||!!busy} onClick={()=>runAction(`/api/v1/requests/${detail.request_id}/restore`,'Restored')}>Restore</button>}
-                  </div>
-                  <div className="form-actions">
-                    <button className="btn btn-danger btn-sm" disabled={!canOperate||!ops.can_retry_failed_flowable_jobs||!!busy} onClick={()=>runAction(`/api/v1/requests/${detail.request_id}/flowable/retry-failed-jobs`,'Retry Flowable jobs')}>Retry Flowable jobs</button>
-                    <button className="btn btn-ghost btn-sm" disabled={!canOperate||!ops.can_reconcile_flowable||!!busy} onClick={()=>runAction(`/api/v1/flowable/requests/${detail.request_id}/reconcile`,'Reconcile')}>Reconcile Flowable</button>
-                  </div>
-                </div>
-                <div className="card" style={{margin:0}}>
-                  <div className="rqb-sec-title">Add note</div>
-                  <div className="form-row"><label>Note</label>
-                    <textarea value={noteText} onChange={e=>setNoteText(e.target.value)} rows={3} placeholder="What happened, what was checked…"/>
-                  </div>
-                  <div className="form-actions">
-                    <button className="btn btn-primary btn-sm" disabled={!detail.ops?.can_add_note||!noteText.trim()||busy==='note'} onClick={addNote}>Add note</button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-          </div>
         </div>
       )}
     </>
