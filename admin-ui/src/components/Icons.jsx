@@ -15,3 +15,4 @@ export const IconGear = () => <svg viewBox="0 0 24 24" {...s}><circle cx="12" cy
 export const IconChevron = () => <svg viewBox="0 0 24 24" {...s} width={14} height={14}><path d="M5 12h14m-4-4l4 4-4 4"/></svg>
 export const IconBack = () => <svg viewBox="0 0 24 24" {...s} width={14} height={14}><path d="M19 12H5m7-7l-7 7 7 7"/></svg>
 export const IconSearch = () => <svg viewBox="0 0 24 24" {...s} width={14} height={14}><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+export const IconChart = () => <svg viewBox="0 0 24 24" {...s}><rect x="2" y="12" width="4" height="9" rx="1"/><rect x="10" y="7" width="4" height="14" rx="1"/><rect x="18" y="3" width="4" height="18" rx="1"/></svg>

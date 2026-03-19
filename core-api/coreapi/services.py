@@ -2334,3 +2334,124 @@ async def reconcile_flowable_request(request_id: str, requested_role: str, reaso
     )
 
     return {"status": "reconciled", "request_id": request_id, "instance_id": instance_id, "final_status": finalized["status"]}
+
+
+async def get_process_model(process_key: str) -> Dict[str, Any]:
+    """Fetch the latest BPMN process definition from Flowable and return a
+    structured JSON representation with nodes (tasks/gateways/events) and
+    edges (sequence flows) including diagram coordinates."""
+    import xml.etree.ElementTree as ET
+
+    NS_BPMN = "http://www.omg.org/spec/BPMN/20100524/MODEL"
+    NS_DI = "http://www.omg.org/spec/BPMN/20100524/DI"
+    NS_DC = "http://www.omg.org/spec/DD/20100524/DC"
+    NS_OMGDI = "http://www.omg.org/spec/DD/20100524/DI"
+
+    # Step 1: resolve latest process definition ID
+    defs_resp = await _flowable_call(
+        "GET",
+        "/repository/process-definitions",
+        params={"key": process_key, "latest": "true"},
+    )
+    items = defs_resp.get("data", []) if isinstance(defs_resp, dict) else []
+    if not items:
+        raise HTTPException(404, f"No process definition found for key: {process_key}")
+
+    definition = items[0]
+    def_id = definition.get("id", "")
+    version = definition.get("version", 0)
+
+    # Step 2: fetch raw BPMN XML
+    resource_resp = await _flowable_call(
+        "GET",
+        f"/repository/process-definitions/{def_id}/resourcedata",
+    )
+    # _flowable_call returns {"raw": "<xml...>"} when the body is not valid JSON
+    xml_text = resource_resp.get("raw", "") if isinstance(resource_resp, dict) else ""
+    if not xml_text:
+        raise HTTPException(502, "Empty BPMN resource data returned from Flowable")
+
+    # Step 3: parse BPMN XML
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as exc:
+        raise HTTPException(502, f"Failed to parse BPMN XML: {exc}")
+
+    # Collect diagram shapes: bpmnElement -> {x, y, w, h}
+    shapes: Dict[str, Dict[str, float]] = {}
+    # Collect diagram edges: list of {id, waypoints}
+    raw_edges: List[Dict[str, Any]] = []
+
+    for diagram in root.iter(f"{{{NS_DI}}}BPMNDiagram"):
+        for shape in diagram.iter(f"{{{NS_DI}}}BPMNShape"):
+            elem_id = shape.get("bpmnElement", "")
+            bounds = shape.find(f"{{{NS_DC}}}Bounds")
+            if bounds is not None and elem_id:
+                shapes[elem_id] = {
+                    "x": float(bounds.get("x", 0)),
+                    "y": float(bounds.get("y", 0)),
+                    "w": float(bounds.get("width", 100)),
+                    "h": float(bounds.get("height", 80)),
+                }
+        for edge in diagram.iter(f"{{{NS_DI}}}BPMNEdge"):
+            flow_id = edge.get("bpmnElement", "")
+            waypoints = [
+                {"x": float(wp.get("x", 0)), "y": float(wp.get("y", 0))}
+                for wp in edge.findall(f"{{{NS_OMGDI}}}waypoint")
+            ]
+            if flow_id:
+                raw_edges.append({"id": flow_id, "waypoints": waypoints})
+
+    # Collect process nodes and sequence flows
+    NODE_SUFFIXES = ("Task", "Gateway", "Event")
+    nodes: List[Dict[str, Any]] = []
+    flow_map: Dict[str, Dict[str, str]] = {}  # flow id -> {sourceRef, targetRef}
+
+    for process in root.iter(f"{{{NS_BPMN}}}process"):
+        for child in process.iter():
+            local = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+
+            if local == "sequenceFlow":
+                flow_id = child.get("id", "")
+                if flow_id:
+                    flow_map[flow_id] = {
+                        "sourceRef": child.get("sourceRef", ""),
+                        "targetRef": child.get("targetRef", ""),
+                    }
+                continue
+
+            # Skip boundary events — they are attached to tasks and have no
+            # independent position in the main flow
+            if local == "boundaryEvent":
+                continue
+
+            if any(local.endswith(sfx) for sfx in NODE_SUFFIXES):
+                elem_id = child.get("id", "")
+                geom = shapes.get(elem_id, {})
+                nodes.append({
+                    "id": elem_id,
+                    "name": child.get("name", ""),
+                    "type": local,
+                    "x": geom.get("x", 0.0),
+                    "y": geom.get("y", 0.0),
+                    "w": geom.get("w", 100.0),
+                    "h": geom.get("h", 80.0),
+                })
+
+    # Merge sourceRef/targetRef into edges
+    edges: List[Dict[str, Any]] = [
+        {
+            "id": e["id"],
+            "sourceRef": flow_map.get(e["id"], {}).get("sourceRef", ""),
+            "targetRef": flow_map.get(e["id"], {}).get("targetRef", ""),
+            "waypoints": e["waypoints"],
+        }
+        for e in raw_edges
+    ]
+
+    return {
+        "process_key": process_key,
+        "version": version,
+        "nodes": nodes,
+        "edges": edges,
+    }
