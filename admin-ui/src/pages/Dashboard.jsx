@@ -162,7 +162,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadData(todayStr(), '')
-    get('/api/v1/flowable/health').then(setFlowHealth).catch(() => {})
+    get('/health').then(setFlowHealth).catch(() => {})
   }, [])
 
   const applyPreset = (p) => {
@@ -208,7 +208,7 @@ export default function Dashboard() {
     return { total, completed, approved, rejected, review, running, failed, needsAction, successRate, approvalRate, other: Math.max(0, other), byS }
   }, [requests])
 
-  const engineUp     = flowHealth?.status === 'UP'
+  const engineUp     = flowHealth?.status === 'ok'
   const recentFailed = useMemo(() => requests.filter(r => ['FAILED','ENGINE_ERROR','ORPHANED'].includes(r.status)).slice(0, 8), [requests])
 
   return (
@@ -299,7 +299,7 @@ export default function Dashboard() {
         <div className="db-stat blue">
           <div className="db-stat-lbl">Running now</div>
           <div className="db-stat-val" style={{ color: 'var(--blue)' }}>{stats.running}</div>
-          <div className="db-stat-sub">{engineUp ? '● engine up' : '○ engine down'}</div>
+          <div className="db-stat-sub">{!flowHealth ? '○ connecting' : engineUp ? '● api ok' : '⚠ api error'}</div>
         </div>
       </div>
 
@@ -341,23 +341,32 @@ export default function Dashboard() {
 
         <div className="card">
           <div className="card-title">
-            <span className="db-engine-dot" style={{ background: engineUp ? 'var(--green)' : 'var(--red)' }} />
-            Flowable engine
+            <span className="db-engine-dot" style={{ background: engineUp ? 'var(--green)' : flowHealth ? 'var(--red)' : 'var(--border-1)' }} />
+            System health
           </div>
           {flowHealth ? (
             <>
               {[
-                { k: 'Status',      v: flowHealth.status,   c: engineUp ? 'var(--green)' : 'var(--red)' },
-                { k: 'Async exec',  v: flowHealth.async_executor?.running ? 'ACTIVE' : 'INACTIVE', c: flowHealth.async_executor?.running ? 'var(--green)' : 'var(--amber)' },
-                { k: 'Dead jobs',   v: String(flowHealth.dead_jobs || 0), c: (flowHealth.dead_jobs || 0) > 0 ? 'var(--red)' : 'var(--green)' },
-                { k: 'Version',     v: flowHealth.version || flowHealth.release || '—' },
-                { k: 'Database',    v: flowHealth.database?.type || 'PostgreSQL' },
+                { k: 'API',      v: flowHealth.status,   c: engineUp ? 'var(--green)' : 'var(--red)' },
+                { k: 'Database', v: flowHealth.db,        c: flowHealth.db === 'connected' ? 'var(--green)' : 'var(--red)' },
+                { k: 'Service',  v: flowHealth.service || '—' },
               ].map(({ k, v, c }) => (
                 <div key={k} className="kv-row" style={{ padding: '4px 0' }}>
                   <span className="kv-key">{k}</span>
                   <span className="kv-val" style={c ? { color: c, fontWeight: 700 } : {}}>{v}</span>
                 </div>
               ))}
+              {flowHealth.circuit_breakers && Object.entries(flowHealth.circuit_breakers).length > 0 && (
+                <>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 8, marginBottom: 4 }}>Circuit breakers</div>
+                  {Object.entries(flowHealth.circuit_breakers).map(([svc, state]) => (
+                    <div key={svc} className="kv-row" style={{ padding: '3px 0' }}>
+                      <span className="kv-key">{svc}</span>
+                      <span className="kv-val" style={{ color: state === 'closed' ? 'var(--green)' : 'var(--red)', fontWeight: 700 }}>{state}</span>
+                    </div>
+                  ))}
+                </>
+              )}
             </>
           ) : (
             <p className="text-muted text-sm">Connecting…</p>
