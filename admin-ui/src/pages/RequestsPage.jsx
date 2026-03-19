@@ -99,9 +99,9 @@ function BpmnCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, selected
   }
 
   return (
-    <div style={{ overflowX:'auto', overflowY:'hidden', background:'var(--bg-2)', borderRadius:6 }}>
-      <svg viewBox={`${minX} ${minY} ${vw} ${vh}`} width={Math.max(680,vw)} height={vh}
-        xmlns="http://www.w3.org/2000/svg" style={{ display:'block' }}>
+    <div style={{ background:'var(--bg-2)', borderRadius:6 }}>
+      <svg viewBox={`${minX} ${minY} ${vw} ${vh}`}
+        xmlns="http://www.w3.org/2000/svg" style={{ display:'block', width:'100%', height:'auto' }}>
         <defs>
           <marker id="rq-a"  markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="var(--border-1)"/></marker>
           <marker id="rq-ag" markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="var(--green)"/></marker>
@@ -209,6 +209,15 @@ function NodeDetail({ node, tracker, onClose }) {
 /* ── Main ── */
 const FILTERS = ['','COMPLETED','RUNNING','REVIEW','REJECTED','FAILED','ENGINE_ERROR','ENGINE_UNREACHABLE']
 const PAGE_SIZE = 30
+const DATE_PRESETS = [
+  { id: 'today',     label: 'Today'     },
+  { id: 'yesterday', label: 'Yesterday' },
+  { id: '7d',        label: '7 days'    },
+  { id: '30d',       label: '30 days'   },
+  { id: 'all',       label: 'All'       },
+]
+
+function todayLocalStr() { return new Date().toISOString().slice(0, 10) }
 
 export default function RequestsPage() {
   const userRole = useMemo(()=>getUserRole(),[])
@@ -217,8 +226,9 @@ export default function RequestsPage() {
   const [items,          setItems]          = useState([])
   const [processModel,   setProcessModel]   = useState(null)
   const [filter,         setFilter]         = useState('')
-  const [createdFrom,    setCreatedFrom]    = useState('')
+  const [createdFrom,    setCreatedFrom]    = useState(todayLocalStr)
   const [createdTo,      setCreatedTo]      = useState('')
+  const [datePreset,     setDatePreset]     = useState('today')
   const [needsAction,    setNeedsAction]    = useState(false)
   const [ignoredFilter,  setIgnoredFilter]  = useState('active')
   const [searchQ,        setSearchQ]        = useState('')
@@ -290,6 +300,25 @@ export default function RequestsPage() {
     } catch(e){ setError(e.message) } finally { setBusy('') }
   }
 
+  const applyDatePreset = (p) => {
+    setDatePreset(p)
+    const now = new Date()
+    let f = '', t = ''
+    if (p === 'today') { f = todayLocalStr() }
+    else if (p === 'yesterday') {
+      const d = new Date(now); d.setDate(d.getDate() - 1)
+      f = t = d.toISOString().slice(0, 10)
+    } else if (p === '7d') {
+      const d = new Date(now); d.setDate(d.getDate() - 7)
+      f = d.toISOString().slice(0, 10)
+    } else if (p === '30d') {
+      const d = new Date(now); d.setDate(d.getDate() - 30)
+      f = d.toISOString().slice(0, 10)
+    }
+    setCreatedFrom(f); setCreatedTo(t)
+    loadRequests({ createdFrom: f, createdTo: t })
+  }
+
   useEffect(() => { loadRequests() }, [filter, needsAction, ignoredFilter])
   useEffect(() => { get('/api/v1/process-model').then(setProcessModel).catch(()=>{}) }, [])
   useEffect(() => {
@@ -334,8 +363,8 @@ export default function RequestsPage() {
         .rqb-tbl-wrap { border:1px solid var(--border-1); border-radius:8px; overflow:hidden; margin-bottom:12px; }
         .rqb-tbl { width:100%; border-collapse:collapse; font-size:11px; }
         .rqb-tbl thead tr { background:var(--bg-2); }
-        .rqb-tbl th { padding:6px 10px; text-align:left; font-size:9px; font-weight:700; color:var(--text-3); text-transform:uppercase; letter-spacing:0.6px; border-bottom:1px solid var(--border-1); white-space:nowrap; }
-        .rqb-tbl td { padding:5px 10px; border-bottom:1px solid color-mix(in srgb,var(--border-1) 60%,transparent); vertical-align:middle; }
+        .rqb-tbl th { padding:4px 8px; text-align:left; font-size:9px; font-weight:700; color:var(--text-3); text-transform:uppercase; letter-spacing:0.6px; border-bottom:1px solid var(--border-1); white-space:nowrap; }
+        .rqb-tbl td { padding:3px 8px; border-bottom:1px solid color-mix(in srgb,var(--border-1) 60%,transparent); vertical-align:middle; }
         .rqb-tbl tr:last-child td { border-bottom:none; }
         .rqb-tbl tbody tr { cursor:pointer; transition:background 0.08s; }
         .rqb-tbl tbody tr:hover td { background:var(--bg-2); }
@@ -387,7 +416,7 @@ export default function RequestsPage() {
             </button>
           ))}
         </div>
-        <label style={{display:'flex',gap:5,alignItems:'center',fontSize:11,cursor:'pointer'}}>
+        <label style={{display:'flex',gap:5,alignItems:'center',fontSize:11,cursor:'pointer',flexShrink:0}}>
           <input type="checkbox" checked={needsAction} onChange={e=>setNeedsAction(e.target.checked)} />
           Needs action
         </label>
@@ -398,21 +427,24 @@ export default function RequestsPage() {
           <option value="all">All</option>
         </select>
         <div style={{display:'flex',gap:6,marginLeft:'auto',alignItems:'center'}}>
-          <span style={{fontSize:11,color:'var(--text-3)'}}>{filtered.length} requests</span>
+          <span style={{fontSize:11,color:'var(--text-3)'}}>{filtered.length} results</span>
           <button className="btn btn-ghost btn-sm" onClick={()=>loadRequests()}>↻ Refresh</button>
         </div>
       </div>
 
-      {/* ── Date filters ── */}
-      <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:10}}>
-        <span style={{fontSize:11,color:'var(--text-3)'}}>Period:</span>
-        <input type="datetime-local" value={createdFrom} onChange={e=>setCreatedFrom(e.target.value)}
-          style={{fontSize:11,padding:'3px 6px',borderRadius:4,border:'1px solid var(--border-1)',background:'var(--bg-2)',color:'var(--text-2)'}} />
+      {/* ── Date filter row ── */}
+      <div style={{display:'flex',gap:5,alignItems:'center',flexWrap:'wrap',marginBottom:10}}>
+        {DATE_PRESETS.map(p=>(
+          <button key={p.id} className={`rqb-flt${datePreset===p.id?' active':''}`}
+            onClick={()=>applyDatePreset(p.id)}>{p.label}</button>
+        ))}
+        <span style={{fontSize:11,color:'var(--text-3)',marginLeft:6}}>From</span>
+        <input type="date" value={createdFrom} onChange={e=>{setCreatedFrom(e.target.value);setDatePreset('')}}
+          style={{fontSize:11,padding:'3px 7px',borderRadius:4,border:'1px solid var(--border-1)',background:'var(--bg-2)',color:'var(--text-2)'}} />
         <span style={{fontSize:11,color:'var(--text-3)'}}>—</span>
-        <input type="datetime-local" value={createdTo} onChange={e=>setCreatedTo(e.target.value)}
-          style={{fontSize:11,padding:'3px 6px',borderRadius:4,border:'1px solid var(--border-1)',background:'var(--bg-2)',color:'var(--text-2)'}} />
+        <input type="date" value={createdTo} onChange={e=>{setCreatedTo(e.target.value);setDatePreset('')}}
+          style={{fontSize:11,padding:'3px 7px',borderRadius:4,border:'1px solid var(--border-1)',background:'var(--bg-2)',color:'var(--text-2)'}} />
         <button className="btn btn-primary btn-sm" onClick={()=>loadRequests()}>Apply</button>
-        <button className="btn btn-ghost btn-sm" onClick={()=>{setCreatedFrom('');setCreatedTo('');loadRequests({createdFrom:'',createdTo:''})}}>Clear</button>
       </div>
 
       {/* ── Table ── */}

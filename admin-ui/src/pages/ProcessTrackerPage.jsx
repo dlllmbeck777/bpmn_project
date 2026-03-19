@@ -91,9 +91,9 @@ function BpmnFlowCanvas({ model, tracedNodeIds, failedNodeIds, onNodeClick, sele
   }
 
   return (
-    <div style={{ overflowX: 'auto', overflowY: 'hidden', borderRadius: 6, background: 'var(--bg-2)' }}>
-      <svg viewBox={`${minX} ${minY} ${vw} ${vh}`} width={Math.max(700, vw)} height={vh}
-        xmlns="http://www.w3.org/2000/svg" style={{ display: 'block' }}>
+    <div style={{ borderRadius: 6, background: 'var(--bg-2)' }}>
+      <svg viewBox={`${minX} ${minY} ${vw} ${vh}`}
+        xmlns="http://www.w3.org/2000/svg" style={{ display: 'block', width: '100%', height: 'auto' }}>
         <defs>
           <marker id="pt-arr"  markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto">
             <polygon points="0,0 7,3 0,6" fill="var(--border-1)" />
@@ -357,6 +357,7 @@ export default function ProcessTrackerPage() {
 
   useEffect(() => {
     get('/api/v1/process-model').then(setProcessModel).catch(() => {})
+    load('')
   }, [])
 
   // Group events by request_id
