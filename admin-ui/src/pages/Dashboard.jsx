@@ -359,12 +359,19 @@ export default function Dashboard() {
               {flowHealth.circuit_breakers && Object.entries(flowHealth.circuit_breakers).length > 0 && (
                 <>
                   <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 8, marginBottom: 4 }}>Circuit breakers</div>
-                  {Object.entries(flowHealth.circuit_breakers).map(([svc, state]) => (
-                    <div key={svc} className="kv-row" style={{ padding: '3px 0' }}>
-                      <span className="kv-key">{svc}</span>
-                      <span className="kv-val" style={{ color: state === 'closed' ? 'var(--green)' : 'var(--red)', fontWeight: 700 }}>{state}</span>
-                    </div>
-                  ))}
+                  {Object.entries(flowHealth.circuit_breakers).map(([svc, cb]) => {
+                    const st = typeof cb === 'object' ? (cb.state || 'UNKNOWN') : String(cb)
+                    const failures = typeof cb === 'object' ? cb.failures : 0
+                    const isOpen = st === 'OPEN' || st === 'open'
+                    return (
+                      <div key={svc} className="kv-row" style={{ padding: '3px 0' }}>
+                        <span className="kv-key">{svc}</span>
+                        <span className="kv-val" style={{ color: isOpen ? 'var(--red)' : 'var(--green)', fontWeight: 700 }}>
+                          {st}{failures > 0 ? ` (${failures} fail)` : ''}
+                        </span>
+                      </div>
+                    )
+                  })}
                 </>
               )}
             </>
