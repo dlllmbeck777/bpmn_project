@@ -399,27 +399,56 @@ function PayloadInspector({ events }) {
   )
 }
 
+/* ── date helpers ── */
+function todayLocal() { return new Date().toISOString().slice(0,10) }
+function toUtcIso(v) { const p = new Date(v); return isNaN(p) ? '' : p.toISOString() }
+function toUtcIsoEnd(v) { const p = new Date(v + 'T23:59:59'); return isNaN(p) ? '' : p.toISOString() }
+
+const DATE_PRESETS = [
+  { label: 'Today',     days: 0  },
+  { label: 'Yesterday', days: 1  },
+  { label: '7d',        days: 7  },
+  { label: '30d',       days: 30 },
+  { label: 'All',       days: -1 },
+]
+
 /* ── Main ── */
 export default function ProcessTrackerPage() {
   const [items,        setItems]        = useState([])
   const [processModel, setProcessModel] = useState(null)
   const [requestId,    setRequestId]    = useState('')
   const [filter,       setFilter]       = useState('')
+  const [dateFrom,     setDateFrom]     = useState(todayLocal)
+  const [dateTo,       setDateTo]       = useState(todayLocal)
+  const [preset,       setPreset]       = useState('Today')
   const [selGroupId,   setSelGroupId]   = useState(null)
   const [selectedNode, setSelectedNode] = useState(null)
   const [activeTab,    setActiveTab]    = useState('flow')
   const [error,        setError]        = useState('')
 
-  const load = (rid = requestId) => {
-    const q = rid ? `?request_id=${encodeURIComponent(rid)}` : ''
+  const load = (rid = requestId, from = dateFrom, to = dateTo) => {
+    const params = new URLSearchParams()
+    if (rid) params.set('request_id', rid)
+    if (from && preset !== 'All') params.set('created_from', toUtcIso(from))
+    if (to   && preset !== 'All') params.set('created_to',   toUtcIsoEnd(to))
+    const q = params.toString() ? '?' + params.toString() : ''
     get(`/api/v1/process-tracker${q}`)
       .then(d => { setItems(d.items || []); setError('') })
       .catch(e => setError(e.message))
   }
 
+  const applyPreset = (p) => {
+    setPreset(p.label)
+    if (p.days === -1) { setDateFrom(''); setDateTo(''); load(requestId, '', ''); return }
+    const to = todayLocal()
+    const from = p.days === 0 ? to : new Date(Date.now() - p.days * 86400000).toISOString().slice(0,10)
+    setDateFrom(from); setDateTo(to)
+    load(requestId, from, to)
+  }
+
   useEffect(() => {
     get('/api/v1/process-model').then(setProcessModel).catch(() => {})
-    load('')
+    load()
   }, [])
 
   // Group events by request_id
@@ -514,21 +543,23 @@ export default function ProcessTrackerPage() {
     <>
       <style>{`
         .pt-layout { display:flex; height:calc(100vh - 170px); min-height:500px; gap:0; }
-        .pt-left { width:260px; min-width:200px; flex-shrink:0; display:flex; flex-direction:column; border-right:1px solid var(--border-1); }
-        .pt-left-top { padding:8px 10px; border-bottom:1px solid var(--border-1); display:flex; flex-direction:column; gap:5px; flex-shrink:0; }
-        .pt-search-row { display:flex; gap:5px; align-items:center; }
-        .pt-search { flex:1; padding:4px 8px; border-radius:5px; border:1px solid var(--border-1); background:var(--bg-2); color:var(--text-1); font-size:11px; outline:none; }
+        .pt-left { width:240px; min-width:190px; flex-shrink:0; display:flex; flex-direction:column; border-right:1px solid var(--border-1); }
+        .pt-left-top { padding:6px 8px; border-bottom:1px solid var(--border-1); display:flex; flex-direction:column; gap:4px; flex-shrink:0; }
+        .pt-search-row { display:flex; gap:4px; align-items:center; }
+        .pt-search { flex:1; padding:3px 7px; border-radius:4px; border:1px solid var(--border-1); background:var(--bg-2); color:var(--text-1); font-size:10px; outline:none; }
         .pt-search:focus { border-color:var(--blue); }
-        .pt-flt-row { display:flex; gap:3px; flex-wrap:wrap; }
-        .pt-flt { padding:1px 6px; border-radius:3px; border:1px solid var(--border-1); background:transparent; color:var(--text-3); font-size:9px; font-weight:600; cursor:pointer; }
+        .pt-flt-row { display:flex; gap:2px; flex-wrap:wrap; }
+        .pt-flt { padding:1px 5px; border-radius:3px; border:1px solid var(--border-1); background:transparent; color:var(--text-3); font-size:9px; font-weight:600; cursor:pointer; }
         .pt-flt.active { background:var(--blue); color:#fff; border-color:var(--blue); }
+        .pt-date-row { display:flex; gap:3px; align-items:center; }
+        .pt-date-inp { flex:1; padding:2px 5px; border-radius:4px; border:1px solid var(--border-1); background:var(--bg-2); color:var(--text-1); font-size:9px; outline:none; min-width:0; }
+        .pt-date-inp:focus { border-color:var(--blue); }
         .pt-list { flex:1; overflow-y:auto; }
-        .pt-item { padding:6px 10px; border-bottom:1px solid var(--border-1); cursor:pointer; transition:background 0.1s; }
+        .pt-item { padding:3px 8px; border-bottom:1px solid color-mix(in srgb,var(--border-1) 60%,transparent); cursor:pointer; transition:background 0.1s; display:flex; align-items:center; gap:5px; min-height:0; }
         .pt-item:hover { background:var(--bg-2); }
-        .pt-item.active { background:color-mix(in srgb,var(--blue) 10%,transparent); border-left:2px solid var(--blue); }
-        .pt-item-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:2px; }
-        .pt-item-id { font-size:10px; font-family:monospace; font-weight:700; color:var(--text-1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:130px; }
-        .pt-item-sub { font-size:9px; color:var(--text-3); display:flex; align-items:center; gap:5px; }
+        .pt-item.active { background:color-mix(in srgb,var(--blue) 10%,transparent); border-left:2px solid var(--blue); padding-left:6px; }
+        .pt-item-id { font-size:9px; font-family:monospace; font-weight:600; color:var(--text-1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0; }
+        .pt-item-meta { font-size:8px; color:var(--text-3); white-space:nowrap; flex-shrink:0; font-family:monospace; }
         /* right panel */
         .pt-right { flex:1; display:flex; flex-direction:column; min-width:0; overflow:hidden; }
         .pt-empty { flex:1; display:flex; align-items:center; justify-content:center; color:var(--text-3); font-size:13px; }
@@ -603,8 +634,26 @@ export default function ProcessTrackerPage() {
                 onChange={e => setRequestId(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && load()} />
               <button className="btn btn-ghost btn-xs" onClick={() => load()}>↵</button>
-              <button className="btn btn-ghost btn-xs" onClick={() => { setRequestId(''); load('') }}>✕</button>
+              <button className="btn btn-ghost btn-xs" onClick={() => { setRequestId(''); load(requestId) }}>↺</button>
             </div>
+            {/* Date presets */}
+            <div className="pt-flt-row">
+              {DATE_PRESETS.map(p => (
+                <button key={p.label} className={`pt-flt${preset===p.label?' active':''}`} onClick={() => applyPreset(p)}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            {/* Custom date range */}
+            {preset !== 'All' && (
+              <div className="pt-date-row">
+                <input type="date" className="pt-date-inp" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+                <span style={{fontSize:9,color:'var(--text-3)'}}>–</span>
+                <input type="date" className="pt-date-inp" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+                <button className="btn btn-ghost btn-xs" onClick={() => load()}>→</button>
+              </div>
+            )}
+            {/* Status filter */}
             <div className="pt-flt-row">
               {['','COMPLETED','RUNNING','REVIEW','FAILED'].map(f => (
                 <button key={f} className={`pt-flt${filter===f?' active':''}`} onClick={()=>setFilter(f)}>
@@ -615,22 +664,20 @@ export default function ProcessTrackerPage() {
           </div>
           <div className="pt-list">
             {filteredGroups.length === 0 ? (
-              <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>No requests</div>
-            ) : filteredGroups.map(g => (
-              <div key={g.request_id}
-                className={`pt-item${selGroup?.request_id === g.request_id ? ' active' : ''}`}
-                onClick={() => { setSelGroupId(g.request_id); setSelectedNode(null); setActiveTab('flow') }}>
-                <div className="pt-item-top">
+              <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-3)', fontSize: 11 }}>No requests</div>
+            ) : filteredGroups.map(g => {
+              const lastEv = g.events[g.events.length-1]
+              const lastTime = lastEv?.created_at ? String(lastEv.created_at).slice(11,19) : '—'
+              return (
+                <div key={g.request_id}
+                  className={`pt-item${selGroup?.request_id === g.request_id ? ' active' : ''}`}
+                  onClick={() => { setSelGroupId(g.request_id); setSelectedNode(null); setActiveTab('flow') }}>
+                  <span className={`badge ${sBadge(g.status)}`} style={{ fontSize: 7, padding:'1px 4px', flexShrink:0 }}>{g.status.slice(0,4).toLowerCase()}</span>
                   <span className="pt-item-id">{g.request_id}</span>
-                  <span className={`badge ${sBadge(g.status)}`} style={{ fontSize: 8 }}>{g.status.toLowerCase()}</span>
+                  <span className="pt-item-meta">{lastTime}</span>
                 </div>
-                <div className="pt-item-sub">
-                  <span>{g.events.length} events</span>
-                  <span>·</span>
-                  <span>{ts(g.events[g.events.length-1]?.created_at)}</span>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
 
