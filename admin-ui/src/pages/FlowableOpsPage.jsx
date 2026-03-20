@@ -119,6 +119,62 @@ function KV({ k, v, color, mono: m }) {
   );
 }
 
+/* ─── BPMN path helpers ─── */
+function buildIsTraced(tracedSet) {
+  return (nodeId) => {
+    if (!tracedSet?.size) return false;
+    if (tracedSet.has(nodeId)) return true;
+    const bare = nodeId.replace(/^task_/, "").replace(/^parse_/, "");
+    for (const t of tracedSet) {
+      const tBare = t.replace(/^task_/, "").replace(/^parse_/, "");
+      if (tBare === bare || t === bare || t === "task_" + bare) return true;
+    }
+    return false;
+  };
+}
+
+function inferPathNodes(allNodes, allEdges, isTracedFn, skippedIds) {
+  if (!allNodes?.length || !allEdges?.length) return new Set();
+  const isSkipNode = buildIsTraced(skippedIds);
+  const fwd = {};
+  allNodes.forEach(n => { fwd[n.id] = []; });
+  allEdges.forEach(e => { if (fwd[e.sourceRef]) fwd[e.sourceRef].push(e.targetRef); });
+  const hasIncoming = new Set(allEdges.map(e => e.targetRef));
+  const hasOutgoing  = new Set(allEdges.map(e => e.sourceRef));
+  const startNode = allNodes.find(n => !hasIncoming.has(n.id));
+  const endNode   = allNodes.find(n => !hasOutgoing.has(n.id));
+  if (!startNode) return new Set(allNodes.filter(n => isTracedFn(n.id)).map(n => n.id));
+  function bfsPath(from, to) {
+    const vis = new Set([from]); const q = [[from]];
+    while (q.length) {
+      const path = q.shift(); const curr = path[path.length - 1];
+      for (const next of (fwd[curr] || [])) {
+        if (vis.has(next) || isSkipNode(next)) continue;
+        const np = [...path, next];
+        if (next === to) return np;
+        vis.add(next); q.push(np);
+      }
+    }
+    return null;
+  }
+  const result = new Set();
+  if (endNode) {
+    bfsPath(startNode.id, endNode.id)?.forEach(id => result.add(id));
+  } else {
+    const vis = new Set([startNode.id]); result.add(startNode.id);
+    const q = [startNode.id];
+    while (q.length) {
+      const curr = q.shift();
+      for (const next of (fwd[curr] || [])) {
+        if (vis.has(next) || isSkipNode(next)) continue;
+        vis.add(next); result.add(next); q.push(next);
+      }
+    }
+  }
+  allNodes.filter(n => isTracedFn(n.id)).forEach(n => result.add(n.id));
+  return result;
+}
+
 /* ─── 2D BPMN Canvas ─── */
 function wrapText(text, maxChars) {
   const words = (text || "").split(/\s+/);
@@ -133,56 +189,61 @@ function wrapText(text, maxChars) {
   return lines.length ? lines : [text || ""];
 }
 
-function BpmnCanvas2D({ model, tracedNodeIds, currentActivity, instanceStatus, onNodeClick, selectedNodeId }) {
+function BpmnCanvas2D({ model, tracedNodeIds, pathNodeIds, skippedNodeIds, currentActivity, instanceStatus, onNodeClick, selectedNodeId }) {
   const { nodes = [], edges = [] } = model || {};
   if (!nodes.length) return <div className="fl-canvas2d-empty">BPMN model not loaded</div>;
 
   const allX = nodes.flatMap(n => [n.x, n.x + (n.w || 80)]);
   const allY = nodes.flatMap(n => [n.y, n.y + (n.h || 50)]);
   const PAD = 30;
-  const minX = Math.min(...allX) - PAD;
-  const minY = Math.min(...allY) - PAD;
-  const maxX = Math.max(...allX) + PAD;
-  const maxY = Math.max(...allY) + PAD + 22;
-  const vw = maxX - minX, vh = maxY - minY;
+  const minX = Math.min(...allX) - PAD, minY = Math.min(...allY) - PAD;
+  const vw = Math.max(...allX) - minX + PAD, vh = Math.max(...allY) - minY + PAD + 22;
 
   const nodeMap = {};
   nodes.forEach(n => { nodeMap[n.id] = n; });
 
-  const hasTrace = tracedNodeIds && tracedNodeIds.size > 0;
+  const isTraced  = buildIsTraced(tracedNodeIds);
+  const isPath    = buildIsTraced(pathNodeIds?.size ? pathNodeIds : tracedNodeIds);
+  const isSkipped = buildIsTraced(skippedNodeIds);
+  const matchedCount = nodes.filter(n => isPath(n.id)).length;
+  const hasTrace = (pathNodeIds?.size || tracedNodeIds?.size) > 0;
+  const hasMatch = hasTrace && matchedCount > 0;
 
   const nodeColor = (node) => {
-    if (selectedNodeId === node.id) return "#3d8bfd";
+    if (selectedNodeId === node.id) return "var(--c-blue)";
     if (currentActivity === node.id) {
-      if (["FAILED", "ENGINE_ERROR", "ORPHANED"].includes(instanceStatus)) return "#ff4d6a";
-      if (instanceStatus === "SUSPENDED") return "#ffb628";
-      return "#3d8bfd";
+      if (["FAILED", "ENGINE_ERROR", "ORPHANED"].includes(instanceStatus)) return "var(--c-red)";
+      if (instanceStatus === "SUSPENDED") return "var(--c-amber)";
+      return "var(--c-blue)";
     }
-    if (hasTrace && tracedNodeIds.has(node.id)) return "#00e5a0";
+    if (hasMatch && isPath(node.id)) return "var(--c-green)";
+    if (isSkipped(node.id)) return "var(--c-amber)";
     return "#2a3a55";
   };
 
   const nodeOp = (node) => {
-    if (!hasTrace) return 1;
-    if (tracedNodeIds.has(node.id) || currentActivity === node.id || selectedNodeId === node.id) return 1;
-    return 0.28;
+    if (!hasMatch) return 1;
+    if (isPath(node.id) || currentActivity === node.id || selectedNodeId === node.id) return 1;
+    if (isSkipped(node.id)) return 0.65;
+    return 0.22;
   };
 
   return (
     <div className="fl-canvas2d-wrap">
       <svg viewBox={`${minX} ${minY} ${vw} ${vh}`}
-        width={Math.max(700, vw)} height={vh}
-        xmlns="http://www.w3.org/2000/svg" style={{ display: "block" }}>
+        xmlns="http://www.w3.org/2000/svg" style={{ display: "block", width: "100%", height: "auto" }}>
         <defs>
           <marker id="fl2-arr"  markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="#1e2d45"/></marker>
-          <marker id="fl2-arrG" markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="#00e5a0"/></marker>
+          <marker id="fl2-arrG" markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="var(--c-green)"/></marker>
+          <marker id="fl2-arrA" markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="var(--c-amber)"/></marker>
         </defs>
 
         {/* Edges */}
         {edges.map(edge => {
-          const sv = hasTrace && (tracedNodeIds.has(edge.sourceRef) || currentActivity === edge.sourceRef);
-          const tv = hasTrace && (tracedNodeIds.has(edge.targetRef) || currentActivity === edge.targetRef);
-          const active = sv || tv;   // active if EITHER end is traced
+          const sv = hasMatch && (isPath(edge.sourceRef) || currentActivity === edge.sourceRef);
+          const tv = hasMatch && (isPath(edge.targetRef) || currentActivity === edge.targetRef);
+          const active = sv && tv;
+          const isSkippedEdge = !active && hasMatch && (isSkipped(edge.sourceRef) || isSkipped(edge.targetRef));
           let pts = "";
           if (edge.waypoints?.length) {
             pts = edge.waypoints.map(wp => Array.isArray(wp) ? `${wp[0]},${wp[1]}` : `${wp.x},${wp.y}`).join(" ");
@@ -193,10 +254,11 @@ function BpmnCanvas2D({ model, tracedNodeIds, currentActivity, instanceStatus, o
           }
           return (
             <polyline key={edge.id} points={pts} fill="none"
-              stroke={active ? "#00e5a0" : "#1e2d45"}
-              strokeWidth={active ? 2.5 : 0.7}
-              opacity={hasTrace ? (active ? 1 : 0.25) : 0.5}
-              markerEnd={active ? "url(#fl2-arrG)" : "url(#fl2-arr)"} />
+              stroke={active ? "var(--c-green)" : isSkippedEdge ? "var(--c-amber)" : "#1e2d45"}
+              strokeWidth={active ? 2.5 : isSkippedEdge ? 1 : 0.7}
+              strokeDasharray={isSkippedEdge ? "3,3" : undefined}
+              opacity={hasMatch ? (active ? 1 : isSkippedEdge ? 0.55 : 0.2) : 0.5}
+              markerEnd={active ? "url(#fl2-arrG)" : isSkippedEdge ? "url(#fl2-arrA)" : "url(#fl2-arr)"} />
           );
         })}
 
@@ -204,11 +266,13 @@ function BpmnCanvas2D({ model, tracedNodeIds, currentActivity, instanceStatus, o
         {nodes.map(node => {
           const col = nodeColor(node);
           const op  = nodeOp(node);
-          const vis = hasTrace && tracedNodeIds.has(node.id);
+          const vis = hasMatch && isPath(node.id);
+          const isDirectTraced = hasMatch && isTraced(node.id);
           const cur = currentActivity === node.id;
           const sel = selectedNodeId === node.id;
-          const fill = (vis || cur || sel) ? col + "22" : "transparent";
-          const sw   = (cur || sel) ? 2 : 1;
+          const skip = isSkipped(node.id);
+          const fill = (vis || cur || sel || skip) ? col + "22" : "transparent";
+          const sw = (cur || sel) ? 2 : isDirectTraced ? 1.5 : vis ? 1.0 : skip ? 1 : 0.7;
           const w = node.w || 80, h = node.h || 50;
           const cx = node.x + w / 2, cy = node.y + h / 2;
           const onClick = () => onNodeClick?.(node);
@@ -242,15 +306,14 @@ function BpmnCanvas2D({ model, tracedNodeIds, currentActivity, instanceStatus, o
             );
           }
 
-          // Task rect
           const maxC = Math.max(6, Math.floor(w / 7));
           const lines = wrapText(node.name || node.id, maxC);
           const lh = 10, startY = cy - ((lines.length - 1) * lh / 2);
-
           return (
             <g key={node.id} opacity={op} onClick={onClick} style={{ cursor: "pointer" }}>
               <rect x={node.x} y={node.y} width={w} height={h} rx={4}
-                fill={fill} stroke={col} strokeWidth={sw} />
+                fill={fill} stroke={col} strokeWidth={sw}
+                strokeDasharray={skip ? "4,2" : undefined} />
               {node.type === "serviceTask" &&
                 <rect x={node.x} y={node.y} width={3} height={h} rx={1} fill={col} opacity={0.7} />}
               {sel && <rect x={node.x-2} y={node.y-2} width={w+4} height={h+4} rx={5}
@@ -262,7 +325,7 @@ function BpmnCanvas2D({ model, tracedNodeIds, currentActivity, instanceStatus, o
               {lines.map((ln, i) => (
                 <text key={i} x={cx} y={startY + i * lh}
                   textAnchor="middle" dominantBaseline="middle"
-                  fill={col} fontSize={9} fontWeight={cur ? 700 : vis ? 600 : 400}>{ln}</text>
+                  fill={col} fontSize={9} fontWeight={cur ? 700 : isDirectTraced ? 600 : vis ? 500 : 400}>{ln}</text>
               ))}
             </g>
           );
@@ -440,13 +503,26 @@ export default function FlowableOpsPage({ canManage }) {
 
   const tracedNodeIds = useMemo(() => {
     const s = new Set();
-    selTracker.forEach(ev => {
+    selTracker.filter(ev => ev.status !== "SKIPPED").forEach(ev => {
       if (ev.service_id) s.add(ev.service_id);
       if (ev.stage) s.add(ev.stage);
     });
     if (selInst?.current_activity) s.add(selInst.current_activity);
     return s;
   }, [selTracker, selInst?.current_activity]);
+
+  const skippedNodeIds = useMemo(() => {
+    const s = new Set();
+    selTracker.filter(ev => ev.status === "SKIPPED").forEach(ev => {
+      if (ev.service_id) s.add(ev.service_id);
+    });
+    return s;
+  }, [selTracker]);
+
+  const pathNodeIds = useMemo(() => {
+    if (!processModel) return tracedNodeIds;
+    return inferPathNodes(processModel.nodes, processModel.edges, buildIsTraced(tracedNodeIds), skippedNodeIds);
+  }, [processModel, tracedNodeIds, skippedNodeIds]);
 
   const stats = useMemo(() => {
     const bySt = {};
@@ -692,6 +768,8 @@ export default function FlowableOpsPage({ canManage }) {
               <BpmnCanvas2D
                 model={processModel}
                 tracedNodeIds={tracedNodeIds}
+                pathNodeIds={pathNodeIds}
+                skippedNodeIds={skippedNodeIds}
                 currentActivity={selInst.current_activity}
                 instanceStatus={selInst.engine_status}
                 onNodeClick={setSelectedNode}
