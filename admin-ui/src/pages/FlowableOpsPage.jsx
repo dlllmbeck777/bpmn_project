@@ -143,36 +143,28 @@ function inferPathNodes(allNodes, allEdges, isTracedFn, skippedIds) {
   const hasOutgoing  = new Set(allEdges.map(e => e.sourceRef));
   const startNode = allNodes.find(n => !hasIncoming.has(n.id));
   const endNode   = allNodes.find(n => !hasOutgoing.has(n.id));
-  if (!startNode) return new Set(allNodes.filter(n => isTracedFn(n.id)).map(n => n.id));
-  function bfsPath(from, to) {
-    const vis = new Set([from]); const q = [[from]];
-    while (q.length) {
-      const path = q.shift(); const curr = path[path.length - 1];
-      for (const next of (fwd[curr] || [])) {
-        if (vis.has(next) || isSkipNode(next)) continue;
-        const np = [...path, next];
-        if (next === to) return np;
-        vis.add(next); q.push(np);
-      }
-    }
-    return null;
-  }
-  const result = new Set();
-  if (endNode) {
-    bfsPath(startNode.id, endNode.id)?.forEach(id => result.add(id));
-  } else {
-    const vis = new Set([startNode.id]); result.add(startNode.id);
-    const q = [startNode.id];
-    while (q.length) {
-      const curr = q.shift();
-      for (const next of (fwd[curr] || [])) {
-        if (vis.has(next) || isSkipNode(next)) continue;
-        vis.add(next); result.add(next); q.push(next);
-      }
+  if (!startNode || !endNode) return new Set();
+  // Dijkstra: traced nodes cost 0 (preferred), non-traced cost 1, skipped = blocked
+  const dist = {}; const prev = {};
+  allNodes.forEach(n => { dist[n.id] = Infinity; });
+  dist[startNode.id] = 0;
+  const queue = [startNode.id]; const visited = new Set();
+  while (queue.length) {
+    queue.sort((a, b) => dist[a] - dist[b]);
+    const curr = queue.shift();
+    if (visited.has(curr)) continue;
+    visited.add(curr);
+    if (curr === endNode.id) break;
+    for (const next of (fwd[curr] || [])) {
+      if (visited.has(next) || isSkipNode(next)) continue;
+      const cost = dist[curr] + (isTracedFn(next) ? 0 : 1);
+      if (cost < dist[next]) { dist[next] = cost; prev[next] = curr; queue.push(next); }
     }
   }
-  allNodes.filter(n => isTracedFn(n.id)).forEach(n => result.add(n.id));
-  return result;
+  if (dist[endNode.id] === Infinity) return new Set();
+  const path = []; let c = endNode.id;
+  while (c !== undefined) { path.unshift(c); c = prev[c]; }
+  return new Set(path);
 }
 
 /* ─── 2D BPMN Canvas ─── */
