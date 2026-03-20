@@ -395,6 +395,7 @@ export default function RequestsPage() {
   /* ── Open detail (full page) ── */
   const openDetail = async (rid) => {
     setDetailLoading(true); setSelectedNode(null); setDetailTab('flow')
+    sessionStorage.setItem('requests_open_id', rid)
     try {
       const [d, t] = await Promise.all([
         get(`/api/v1/requests/${rid}`),
@@ -408,7 +409,13 @@ export default function RequestsPage() {
     finally { setDetailLoading(false) }
   }
 
-  const backToList = () => { setView('list'); setDetail(null); setTracker([]); setSelectedNode(null) }
+  const backToList = () => { sessionStorage.removeItem('requests_open_id'); setView('list'); setDetail(null); setTracker([]); setSelectedNode(null) }
+
+  // restore last open request after page refresh
+  useEffect(() => {
+    const saved = sessionStorage.getItem('requests_open_id')
+    if (saved) openDetail(saved)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Actions ── */
   const runAction = async (path, msg, opts={}) => {

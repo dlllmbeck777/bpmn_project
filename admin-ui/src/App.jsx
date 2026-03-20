@@ -63,8 +63,16 @@ export default function App() {
   const [apiMeta, setApiMeta] = useState(() => ({
     base: getApiBase(), hasKey: !!getApiKey(), role: getUserRole(), username: getCurrentUsername(),
   }))
-  const [active, setActive] = useState(() => getStartPage())
+  const [active, setActive] = useState(() => {
+    const hash = window.location.hash.replace(/^#\/?/, '').split('/')[0]
+    const validIds = ['dashboard','control','services','users','requests','tracker','flowable','audit','settings']
+    return validIds.includes(hash) ? hash : getStartPage()
+  })
   const [theme, setThemeState] = useState(() => getTheme())
+
+  useEffect(() => {
+    window.location.hash = active
+  }, [active])
 
   const refresh = () => setApiMeta({
     base: getApiBase(), hasKey: !!getApiKey(), role: getUserRole(), username: getCurrentUsername(),
