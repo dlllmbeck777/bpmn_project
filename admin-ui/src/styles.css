@@ -190,7 +190,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 
 .notice-error{background:var(--red-soft);border-color:color-mix(in srgb, var(--red) 36%, var(--border))}
 
 .sidebar-logout{width:100%;margin-top:4px}
-.sidebar-theme{width:100%;justify-content:center;margin-bottom:8px}
+.sidebar-theme{width:100%;justify-content:center;margin-bottom:4px}
+.lang-selector{display:flex;gap:4px;margin-bottom:6px}
+.lang-btn{flex:1;padding:4px 0;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--text-3);background:transparent;border:1px solid var(--border);cursor:pointer;transition:all .12s}
+.lang-btn:hover{background:var(--bg-hover);color:var(--text-1)}
+.lang-btn.active{background:var(--blue-soft);color:var(--blue);border-color:var(--blue)}
 .control-header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
 .control-header-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .control-summary{display:grid;grid-template-columns:220px 1fr;gap:12px;align-items:start}
