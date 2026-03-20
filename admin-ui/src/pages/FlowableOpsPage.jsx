@@ -119,15 +119,15 @@ function KV({ k, v, color, mono: m }) {
   );
 }
 
-/* ─── BPMN path helpers ─── */
+/* ─── BPMN path helpers, case-insensitive matching ─── */
 function buildIsTraced(tracedSet) {
   return (nodeId) => {
     if (!tracedSet?.size) return false;
     if (tracedSet.has(nodeId)) return true;
-    const bare = nodeId.replace(/^task_/, "").replace(/^parse_/, "");
+    const bare = nodeId.replace(/^task_/, "").replace(/^parse_/, "").toLowerCase();
     for (const t of tracedSet) {
-      const tBare = t.replace(/^task_/, "").replace(/^parse_/, "");
-      if (tBare === bare || t === bare || t === "task_" + bare) return true;
+      const tBare = t.replace(/^task_/, "").replace(/^parse_/, "").toLowerCase();
+      if (tBare === bare || t.toLowerCase() === bare || t.toLowerCase() === "task_" + bare) return true;
     }
     return false;
   };

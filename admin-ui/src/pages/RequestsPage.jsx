@@ -88,15 +88,15 @@ function inferPathNodes(allNodes, allEdges, isTracedFn, skippedIds) {
   return new Set(path)
 }
 
-/* ── isTracedNode: match "isoftpull" ↔ "task_isoftpull" ── */
+/* ── isTracedNode: match "isoftpull" ↔ "task_isoftpull", case-insensitive ── */
 function buildIsTraced(tracedSet) {
   return (nodeId) => {
     if (!tracedSet?.size) return false
     if (tracedSet.has(nodeId)) return true
-    const bare = nodeId.replace(/^task_/, '').replace(/^parse_/, '')
+    const bare = nodeId.replace(/^task_/, '').replace(/^parse_/, '').toLowerCase()
     for (const t of tracedSet) {
-      const tBare = t.replace(/^task_/, '').replace(/^parse_/, '')
-      if (tBare === bare || t === bare || t === 'task_'+bare) return true
+      const tBare = t.replace(/^task_/, '').replace(/^parse_/, '').toLowerCase()
+      if (tBare === bare || t.toLowerCase() === bare || t.toLowerCase() === 'task_'+bare) return true
     }
     return false
   }
@@ -469,6 +469,13 @@ export default function RequestsPage() {
     const isT = buildIsTraced(tracedNodeIds)
     const s=new Set(); tracker.filter(ev=>ev.status==='SKIPPED' && !isT(ev.service_id||'')).forEach(ev=>{ if(ev.service_id) s.add(ev.service_id) }); return s
   },[tracker, tracedNodeIds])
+  // debug: log tracker events and computed sets
+  useEffect(()=>{
+    if (!tracker.length) return
+    console.log('[BPMN DEBUG] tracker events:', tracker.map(e=>({service_id:e.service_id,status:e.status,stage:e.stage})))
+    console.log('[BPMN DEBUG] tracedNodeIds:', [...tracedNodeIds])
+    console.log('[BPMN DEBUG] skippedNodeIds:', [...skippedNodeIds])
+  },[tracker, tracedNodeIds, skippedNodeIds])
   const pathNodeIds = useMemo(()=>{
     if (!processModel) return tracedNodeIds
     return inferPathNodes(processModel.nodes, processModel.edges, buildIsTraced(tracedNodeIds), skippedNodeIds)
