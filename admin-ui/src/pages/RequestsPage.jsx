@@ -385,6 +385,8 @@ export default function RequestsPage() {
   const [busy,         setBusy]         = useState('')
   const [error,        setError]        = useState('')
   const [notice,       setNotice]       = useState('')
+  const [plaidStatus,  setPlaidStatus]  = useState(null)
+  const [plaidChecking,setPlaidChecking]= useState(false)
 
   /* ── Load list ── */
   const loadRequests = (ov={}) => {
@@ -464,6 +466,47 @@ export default function RequestsPage() {
     loadRequests({ createdFrom: f, createdTo: t })
   }
 
+  /* ── Extract Plaid tracking ID from request data ── */
+  const plaidTrackingId = useMemo(() => {
+    if (!detail) return null
+    const r = detail.result
+    if (r?.plaid?.tracking_id) return r.plaid.tracking_id
+    if (r?.plaid?.trackingId)  return r.plaid.trackingId
+    if (r?.rawResponse?.trackingId) return r.rawResponse.trackingId
+    const plaidOut = tracker.find(e => e.service_id === 'plaid' && (e.direction === 'OUT' || e.direction === 'RESPONSE'))
+    if (plaidOut?.payload?.trackingId) return plaidOut.payload.trackingId
+    if (plaidOut?.payload?.rawResponse?.trackingId) return plaidOut.payload.rawResponse.trackingId
+    return null
+  }, [detail, tracker])
+
+  const plaidTrackingUrl = useMemo(() => {
+    if (!detail) return null
+    const r = detail.result
+    if (r?.plaid?.trackingUrl)  return r.plaid.trackingUrl
+    if (r?.rawResponse?.trackingUrl) return r.rawResponse.trackingUrl
+    const plaidOut = tracker.find(e => e.service_id === 'plaid' && (e.direction === 'OUT' || e.direction === 'RESPONSE'))
+    return plaidOut?.payload?.trackingUrl || plaidOut?.payload?.rawResponse?.trackingUrl || null
+  }, [detail, tracker])
+
+  /* ── Check Plaid status ── */
+  const checkPlaidStatus = async () => {
+    if (!plaidTrackingId) return
+    setPlaidChecking(true)
+    try {
+      const s = await get(`/api/v1/plaid/link/${plaidTrackingId}/status`)
+      setPlaidStatus(s)
+      if (s.reportReady && detail?.request_id && !busy) {
+        await runAction(`/api/v1/flowable/requests/${detail.request_id}/reconcile`, 'Reconcile triggered — Plaid report ready')
+      }
+    } catch(e) { /* ignore polling errors */ }
+    finally { setPlaidChecking(false) }
+  }
+
+  /* ── Auto-refresh list when there are pending/suspended requests ── */
+  const pendingCount = useMemo(() =>
+    items.filter(r => ['SUSPENDED','PENDING','REVIEW'].includes(r.status)).length
+  , [items])
+
   useEffect(() => { loadRequests() }, [filter, needsAction, ignoredFilter])
   useEffect(() => { get('/api/v1/process-model').then(setProcessModel).catch(()=>{}) }, [])
   useEffect(() => {
@@ -471,6 +514,19 @@ export default function RequestsPage() {
     const t = setInterval(()=>openDetail(detail.request_id),3000)
     return ()=>clearInterval(t)
   }, [detail?.request_id, detail?.status])
+  // Poll Plaid status every 30s when request is waiting
+  useEffect(() => {
+    if (!plaidTrackingId || !['SUSPENDED','PENDING','RUNNING'].includes(detail?.status)) return
+    checkPlaidStatus()
+    const t = setInterval(checkPlaidStatus, 30000)
+    return () => clearInterval(t)
+  }, [plaidTrackingId, detail?.status, detail?.request_id]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Auto-refresh list every 30s when there are pending requests (list view only)
+  useEffect(() => {
+    if (pendingCount === 0 || view === 'detail') return
+    const t = setInterval(() => loadRequests(), 30000)
+    return () => clearInterval(t)
+  }, [pendingCount, view]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setPage(0) }, [filter, needsAction, searchQ])
 
   const filtered = useMemo(() => {
@@ -773,6 +829,41 @@ export default function RequestsPage() {
               {/* ── Actions ── */}
               {detailTab==='actions' && (
                 <div style={{display:'grid',gap:12}}>
+
+                  {/* Plaid tracking panel — shown when tracking ID exists */}
+                  {(plaidTrackingId || plaidTrackingUrl) && (
+                    <div className="card" style={{margin:0,borderColor:'var(--blue)'}}>
+                      <div className="rqb-sec-title" style={{color:'var(--blue)'}}>🔗 Plaid — ожидание клиента</div>
+                      <div style={{display:'grid',gap:8}}>
+                        {/* Status indicator */}
+                        <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+                          <span style={{fontSize:11,color:'var(--text-3)'}}>Статус:</span>
+                          {!plaidStatus && <span className="badge badge-blue">CREATED</span>}
+                          {plaidStatus && !plaidStatus.clicked && !plaidStatus.reportReady && <span className="badge badge-blue">CREATED — ссылка не открыта</span>}
+                          {plaidStatus?.clicked && !plaidStatus.reportReady && <span className="badge badge-amber">CLICKED — клиент подключает банк…</span>}
+                          {plaidStatus?.reportReady && <span className="badge badge-green">REPORT_READY — отчёт готов ✓</span>}
+                          {plaidStatus?.clickedAt && <span style={{fontSize:10,color:'var(--text-3)'}}>клик: {String(plaidStatus.clickedAt).slice(0,19).replace('T',' ')}</span>}
+                          <button className="btn btn-ghost btn-xs" disabled={plaidChecking} onClick={checkPlaidStatus}>
+                            {plaidChecking ? '…' : '↻ Проверить'}
+                          </button>
+                        </div>
+                        {/* Tracking URL */}
+                        {plaidTrackingUrl && (
+                          <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                            <span style={{fontSize:10,color:'var(--text-3)',fontFamily:'monospace',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{plaidTrackingUrl}</span>
+                            <button className="btn btn-ghost btn-xs" onClick={()=>{navigator.clipboard.writeText(plaidTrackingUrl);setNotice('Ссылка скопирована')}}>📋 Копировать</button>
+                          </div>
+                        )}
+                        {/* Auto-reconcile when ready */}
+                        {plaidStatus?.reportReady && (
+                          <button className="btn btn-success btn-sm" disabled={!!busy} onClick={()=>runAction(`/api/v1/flowable/requests/${detail.request_id}/reconcile`,'Reconcile triggered')}>
+                            ▶ Применить отчёт и принять решение
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="card" style={{margin:0}}>
                     <div className="rqb-sec-title">Operator actions</div>
                     {!canOperate&&<p className="text-muted text-sm">Senior analyst or admin required.</p>}
@@ -841,6 +932,12 @@ export default function RequestsPage() {
           <option value="all">All</option>
         </select>
         <div style={{display:'flex',gap:6,marginLeft:'auto',alignItems:'center'}}>
+          {pendingCount > 0 && (
+            <span style={{fontSize:11,padding:'2px 8px',borderRadius:10,background:'var(--amber-soft,#fff3cd)',color:'var(--amber)',fontWeight:600,cursor:'pointer'}}
+              onClick={()=>setFilter('SUSPENDED')} title="Ожидают действия">
+              ⏳ {pendingCount} ожидают
+            </span>
+          )}
           <span style={{fontSize:11,color:'var(--text-3)'}}>{filtered.length} results</span>
           <button className="btn btn-ghost btn-sm" onClick={()=>loadRequests()}>↻ Refresh</button>
         </div>
