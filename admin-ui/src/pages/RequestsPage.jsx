@@ -54,17 +54,28 @@ function wrapSvg(text, maxC) {
   return lines.length ? lines : [text||'']
 }
 
-/* ── Infer execution path: Dijkstra start→end, traced nodes cost 0 (preferred) ── */
+/* ── Infer execution path: Dijkstra start→end
+     cost: traced=0, skip-variant=1.5 (penalised), other=1
+     skip variants of TRACED services are blocked; call variants of SKIPPED services are blocked ── */
+function isSkipVariantNode(nodeId) {
+  const b = nodeId.toLowerCase().replace(/^task_/, '')
+  return b.endsWith('_skip') || b.startsWith('skip_')
+}
 function inferPathNodes(allNodes, allEdges, isTracedFn, skippedIds) {
   if (!allNodes?.length || !allEdges?.length) return new Set()
-  const isSkipNode = buildIsTraced(skippedIds)
+  const isBlockedBySkipped = buildIsTraced(skippedIds)  // call nodes of skipped services → blocked
   const fwd = {}
   allNodes.forEach(n => { fwd[n.id] = [] })
   allEdges.forEach(e => { if (fwd[e.sourceRef]) fwd[e.sourceRef].push(e.targetRef) })
   const hasIncoming = new Set(allEdges.map(e => e.targetRef))
   const hasOutgoing  = new Set(allEdges.map(e => e.sourceRef))
-  const startNode = allNodes.find(n => !hasIncoming.has(n.id))
-  const endNode   = allNodes.find(n => !hasOutgoing.has(n.id))
+  // prefer typed start/end events; boundary events have no incoming but are not start events
+  const startNode = allNodes.find(n => n.type === 'startEvent')
+    || allNodes.find(n => !hasIncoming.has(n.id) && n.type?.includes('Event'))
+    || allNodes.find(n => !hasIncoming.has(n.id))
+  const endNode = allNodes.find(n => n.type === 'endEvent')
+    || allNodes.find(n => !hasOutgoing.has(n.id) && n.type?.includes('Event'))
+    || allNodes.find(n => !hasOutgoing.has(n.id))
   if (!startNode || !endNode) return new Set()
   const dist = {}; const prev = {}
   allNodes.forEach(n => { dist[n.id] = Infinity })
@@ -77,8 +88,10 @@ function inferPathNodes(allNodes, allEdges, isTracedFn, skippedIds) {
     visited.add(curr)
     if (curr === endNode.id) break
     for (const next of (fwd[curr] || [])) {
-      if (visited.has(next) || isSkipNode(next)) continue
-      const cost = dist[curr] + (isTracedFn(next) ? 0 : 1)
+      if (visited.has(next)) continue
+      if (isBlockedBySkipped(next) && !isSkipVariantNode(next)) continue  // block call nodes of skipped services
+      const nodeCost = isTracedFn(next) ? 0 : isSkipVariantNode(next) ? 1.5 : 1
+      const cost = dist[curr] + nodeCost
       if (cost < dist[next]) { dist[next] = cost; prev[next] = curr; queue.push(next) }
     }
   }
