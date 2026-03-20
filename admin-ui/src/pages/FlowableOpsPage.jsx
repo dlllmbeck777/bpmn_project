@@ -504,12 +504,13 @@ export default function FlowableOpsPage({ canManage }) {
   }, [selTracker, selInst?.current_activity]);
 
   const skippedNodeIds = useMemo(() => {
+    const isT = buildIsTraced(tracedNodeIds);
     const s = new Set();
-    selTracker.filter(ev => ev.status === "SKIPPED").forEach(ev => {
+    selTracker.filter(ev => ev.status === "SKIPPED" && !isT(ev.service_id || "")).forEach(ev => {
       if (ev.service_id) s.add(ev.service_id);
     });
     return s;
-  }, [selTracker]);
+  }, [selTracker, tracedNodeIds]);
 
   const pathNodeIds = useMemo(() => {
     if (!processModel) return tracedNodeIds;

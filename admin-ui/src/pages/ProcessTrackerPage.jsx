@@ -482,12 +482,13 @@ export default function ProcessTrackerPage() {
 
   const skippedNodeIds = useMemo(() => {
     if (!selGroup) return new Set()
+    const isT = buildIsTraced(tracedNodeIds)
     const s = new Set()
-    selGroup.events.filter(ev => ev.status === 'SKIPPED').forEach(ev => {
+    selGroup.events.filter(ev => ev.status === 'SKIPPED' && !isT(ev.service_id || '')).forEach(ev => {
       if (ev.service_id) s.add(ev.service_id)
     })
     return s
-  }, [selGroup?.request_id, items])
+  }, [selGroup?.request_id, items, tracedNodeIds])
 
   const pathNodeIds = useMemo(() => {
     if (!processModel || !selGroup) return tracedNodeIds

@@ -466,8 +466,9 @@ export default function RequestsPage() {
     const s=new Set(); tracker.filter(ev=>ev.status!=='SKIPPED').forEach(ev=>{ if(ev.service_id) s.add(ev.service_id); if(ev.stage) s.add(ev.stage) }); return s
   },[tracker])
   const skippedNodeIds = useMemo(()=>{
-    const s=new Set(); tracker.filter(ev=>ev.status==='SKIPPED').forEach(ev=>{ if(ev.service_id) s.add(ev.service_id) }); return s
-  },[tracker])
+    const isT = buildIsTraced(tracedNodeIds)
+    const s=new Set(); tracker.filter(ev=>ev.status==='SKIPPED' && !isT(ev.service_id||'')).forEach(ev=>{ if(ev.service_id) s.add(ev.service_id) }); return s
+  },[tracker, tracedNodeIds])
   const pathNodeIds = useMemo(()=>{
     if (!processModel) return tracedNodeIds
     return inferPathNodes(processModel.nodes, processModel.edges, buildIsTraced(tracedNodeIds), skippedNodeIds)
