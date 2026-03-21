@@ -631,9 +631,11 @@ export default function RequestsPage() {
     const collections = metricVal(detail?.result, 'collection_count')
     const reason = decisionReason(detail?.result, detail?.status)
     const createdAt = (detail?.created_at||'').slice(0,19).replace('T',' ')
-    const aiPreRec = detail?.result?.ai_prescreen?.recommendation
-    const aiAdvRec = detail?.result?.ai_advisor?.recommendation
-    const aiAdvRisk = detail?.result?.ai_advisor?.risk_level
+    const _aiPre = detail?.result?.ai_prescreen || detail?.result?.steps?.['ai-prescreen']
+    const _aiAdv = detail?.result?.steps?.['ai-advisor'] || detail?.result?.ai_advisor
+    const aiPreRec = _aiPre?.recommendation
+    const aiAdvRec = _aiAdv?.recommendation
+    const aiAdvRisk = _aiAdv?.risk_level
     const aiRecColor = (v) => { if (!v) return 'var(--text-3)'; const u=String(v).toUpperCase(); return ['APPROVE','APPROVED','PASS','ACCEPT'].includes(u)?'var(--green)':['REJECT','REJECTED','FAIL','FAILED'].includes(u)?'var(--red)':'var(--amber)' }
 
     return (
@@ -811,9 +813,9 @@ export default function RequestsPage() {
                   </div>
                 </div>
                 {(() => {
-                  const aiPre = detail.result?.ai_prescreen
+                  const aiPre = detail.result?.ai_prescreen || detail.result?.steps?.['ai-prescreen']
                     || tracker.find(e=>(e.service_id==='ai-prescreen')&&(e.direction==='OUT'||e.direction==='RESPONSE'))?.payload
-                  const aiAdv = detail.result?.ai_advisor
+                  const aiAdv = detail.result?.steps?.['ai-advisor'] || detail.result?.ai_advisor
                     || tracker.find(e=>(e.service_id==='ai-advisor')&&(e.direction==='OUT'||e.direction==='RESPONSE'))?.payload
                   if (!aiPre && !aiAdv) return null
                   const recColor = (r) => {
@@ -1046,8 +1048,8 @@ export default function RequestsPage() {
             ) : rows.map((r, i) => {
               const decision = r.result?.decision || r.result?.summary?.decision
               const score    = r.result?.summary?.credit_score ?? r.result?.credit_score
-              const aiPre    = r.result?.ai_prescreen?.recommendation
-              const aiAdv    = r.result?.ai_advisor?.recommendation
+              const aiPre    = (r.result?.ai_prescreen || r.result?.steps?.['ai-prescreen'])?.recommendation
+              const aiAdv    = (r.result?.steps?.['ai-advisor'] || r.result?.ai_advisor)?.recommendation
               const aiColor  = (v) => { if (!v) return 'var(--text-3)'; const u=String(v).toUpperCase(); return ['APPROVE','APPROVED','PASS','ACCEPT'].includes(u)?'var(--green)':['REJECT','REJECTED','FAIL','FAILED'].includes(u)?'var(--red)':'var(--amber)' }
               return (
                 <tr key={r.request_id} onClick={()=>openDetail(r.request_id)}

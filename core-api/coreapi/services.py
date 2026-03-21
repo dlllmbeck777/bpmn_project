@@ -78,9 +78,10 @@ REQUEST_BUSINESS_STATUSES = {"COMPLETED", "REVIEW", "REJECTED"}
 REQUEST_TECHNICAL_STATUSES = {"ENGINE_ERROR", "ENGINE_UNREACHABLE"}
 REQUEST_ACTIONABLE_CLASSES = {"technical", "integration"}
 FLOWABLE_STEP_MAP = (
-    ("isoftpull", "isoRawBody", "iso_status", "skip_reason_isoftpull"),
-    ("creditsafe", "csRawBody", "creditsafe_status", "skip_reason_creditsafe"),
-    ("plaid", "plaidRawBody", "plaid_status", "skip_reason_plaid"),
+    ("isoftpull",  "isoRawBody",  "iso_status",         "skip_reason_isoftpull"),
+    ("creditsafe", "csRawBody",   "creditsafe_status",   "skip_reason_creditsafe"),
+    ("plaid",      "plaidRawBody","plaid_status",        "skip_reason_plaid"),
+    ("ai-advisor", "aiRawBody",   "ai_status",           None),
 )
 FLOWABLE_VARIABLE_ALIASES = {
     "isoRawBody": ("isoRawResponseBody",),
