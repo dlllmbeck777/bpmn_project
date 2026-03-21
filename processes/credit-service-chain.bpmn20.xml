@@ -257,51 +257,11 @@ X-Request-Id: ${request_id}</flowable:expression>
           ],
         ]
         execution.setVariable('decision_request_body', mapper.writeValueAsString(payload))
-
-        // Build ai_request_body with parsed credit data for AI advisor
-        def iso    = payload.steps.isoftpull  ?: [:]
-        def cs     = payload.steps.creditsafe ?: [:]
-        def plaid  = payload.steps.plaid      ?: [:]
-
-        def creditScore = null
-        def csScore = cs?.creditScore
-        if (csScore != null && csScore != -1) creditScore = csScore
-
-        def collectionCount = cs?.rawResponse?.find { it.key == 'collectionCount' }?.value ?: 0
-        def accountsFound   = plaid?.accounts?.size() ?: (plaid?.status == 'COMPLETED' ? 1 : 0)
-        def csAlerts        = cs?.rawResponse?.find { it.key == 'complianceAlertCount' }?.value ?: 0
-        def reportsOk       = (iso?.status == 'COMPLETED' || cs?.status == 'COMPLETED')
-
-        def aiSummary = [
-          credit_score:                         creditScore,
-          collection_count:                     collectionCount,
-          creditsafe_compliance_alert_count:    csAlerts,
-          required_reports_available:           reportsOk,
-          accounts_found:                       accountsFound,
-          cashflow_stability:                   (plaid?.status == 'COMPLETED' ? 'STABLE' : null),
-          iso_status:                           (iso?.status ?: 'UNKNOWN'),
-          creditsafe_status:                    (cs?.status  ?: 'UNKNOWN'),
-          plaid_status:                         (plaid?.status ?: 'UNKNOWN'),
-        ]
-
-        def applicantJson = execution.getVariable('applicant_json')
-        def applicant = [:]
-        if (applicantJson) {
-          try { applicant = mapper.readValue(applicantJson as String, java.util.LinkedHashMap) } catch (Exception ignored) {}
-        }
-
-        def aiBody = [
-          request_id:    execution.getVariable('request_id'),
-          applicant:     [city: applicant?.city ?: '', state: applicant?.state ?: '', zipCode: applicant?.zipCode ?: ''],
-          parsed_report: [summary: aiSummary],
-          context:       [route_mode: 'FLOWABLE', product_type: (execution.getVariable('product_type') ?: 'loan')],
-        ]
-        execution.setVariable('ai_request_body', mapper.writeValueAsString(aiBody))
       ]]></script>
     </scriptTask>
-    <sequenceFlow id="flow_prep_decision_to_call" sourceRef="task_prepare_decision_body" targetRef="task_ai_assess"/>
+    <sequenceFlow id="flow_prep_decision_to_call" sourceRef="task_prepare_decision_body" targetRef="task_decision_service"/>
 
-    <!-- AI Risk Assessment — after prepare decision body, before decision service -->
+    <!-- AI Risk Assessment — after parse_decision, uses full parsed summary -->
     <serviceTask id="task_ai_assess" name="AI Risk Assessment"
                  flowable:type="http" flowable:exclusive="false">
       <extensionElements>
@@ -333,8 +293,8 @@ X-Request-Id: ${request_id}</flowable:expression>
       ]]></script>
     </scriptTask>
     <sequenceFlow id="flow_err_ai" sourceRef="err_ai" targetRef="task_ai_degrade"/>
-    <sequenceFlow id="flow_ai_deg_to_decision" sourceRef="task_ai_degrade" targetRef="task_decision_service"/>
-    <sequenceFlow id="flow_ai_to_decision" sourceRef="task_ai_assess" targetRef="task_decision_service"/>
+    <sequenceFlow id="flow_ai_deg_to_end" sourceRef="task_ai_degrade" targetRef="endEvent"/>
+    <sequenceFlow id="flow_ai_to_end" sourceRef="task_ai_assess" targetRef="endEvent"/>
 
     <serviceTask id="task_decision_service" name="Call Decision Service" flowable:exclusive="false" flowable:type="http">
       <extensionElements>
@@ -453,7 +413,45 @@ X-Request-Id: ${request_id}</flowable:expression>
       ]]></script>
     </scriptTask>
     <sequenceFlow id="flow_decision_to_parse" sourceRef="task_decision_service" targetRef="task_parse_decision"/>
-    <sequenceFlow id="flow_parse_decision_to_end" sourceRef="task_parse_decision" targetRef="endEvent"/>
+    <sequenceFlow id="flow_parse_decision_to_prep_ai" sourceRef="task_parse_decision" targetRef="task_prepare_ai_body"/>
+
+    <scriptTask id="task_prepare_ai_body" name="Prepare AI body" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        import com.fasterxml.jackson.databind.ObjectMapper
+        def mapper = new ObjectMapper()
+        def orchJson = execution.getVariable('orchestration_result') ?: '{}'
+        def orch = [:]
+        try { orch = mapper.readValue(orchJson as String, java.util.LinkedHashMap) } catch (Exception ignored) {}
+        def summary = (orch.get('summary') ?: [:]) as Map
+
+        def applicantJson = execution.getVariable('applicant_json')
+        def applicant = [:]
+        if (applicantJson) {
+          try { applicant = mapper.readValue(applicantJson as String, java.util.LinkedHashMap) } catch (Exception ignored) {}
+        }
+
+        def aiBody = [
+          request_id:    execution.getVariable('request_id'),
+          applicant:     [city: applicant?.city ?: '', state: applicant?.state ?: '', zipCode: applicant?.zipCode ?: ''],
+          parsed_report: [summary: [
+            credit_score:                      summary.get('credit_score'),
+            collection_count:                  summary.get('collection_count') ?: 0,
+            creditsafe_compliance_alert_count: summary.get('creditsafe_compliance_alert_count') ?: 0,
+            required_reports_available:        summary.get('required_reports_available'),
+            accounts_found:                    summary.get('accounts_found') ?: 0,
+            cashflow_stability:                summary.get('cashflow_stability'),
+            iso_status:                        summary.get('iso_status') ?: 'UNKNOWN',
+            creditsafe_status:                 summary.get('creditsafe_status') ?: 'UNKNOWN',
+            plaid_status:                      summary.get('plaid_status') ?: 'UNKNOWN',
+            decision:                          summary.get('decision'),
+            decision_reason:                   summary.get('decision_reason'),
+          ]],
+          context: [route_mode: 'FLOWABLE', product_type: (execution.getVariable('product_type') ?: 'loan')],
+        ]
+        execution.setVariable('ai_request_body', mapper.writeValueAsString(aiBody))
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_prep_ai_to_ai_assess" sourceRef="task_prepare_ai_body" targetRef="task_ai_assess"/>
 
     <endEvent id="endEvent" name="Completed"/>
   </process>
@@ -483,14 +481,15 @@ X-Request-Id: ${request_id}</flowable:expression>
       <bpmndi:BPMNShape id="shape_plaid_deg" bpmnElement="task_plaid_degrade"><omgdc:Bounds x="1660" y="280" width="120" height="80"/></bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="shape_parse_plaid" bpmnElement="task_parse_plaid"><omgdc:Bounds x="1660" y="158" width="120" height="80"/></bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="shape_prep_decision" bpmnElement="task_prepare_decision_body"><omgdc:Bounds x="1840" y="158" width="160" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_ai_assess" bpmnElement="task_ai_assess"><omgdc:Bounds x="2060" y="158" width="140" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_err_ai" bpmnElement="err_ai"><omgdc:Bounds x="2150" y="210" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_ai_deg" bpmnElement="task_ai_degrade"><omgdc:Bounds x="2240" y="280" width="120" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_decision" bpmnElement="task_decision_service"><omgdc:Bounds x="2260" y="158" width="140" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_err_decision" bpmnElement="err_decision"><omgdc:Bounds x="2350" y="210" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_decision_deg" bpmnElement="task_decision_degrade"><omgdc:Bounds x="2440" y="280" width="140" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_parse_decision" bpmnElement="task_parse_decision"><omgdc:Bounds x="2440" y="158" width="140" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_end" bpmnElement="endEvent"><omgdc:Bounds x="2640" y="180" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_decision" bpmnElement="task_decision_service"><omgdc:Bounds x="2060" y="158" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_err_decision" bpmnElement="err_decision"><omgdc:Bounds x="2150" y="210" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_decision_deg" bpmnElement="task_decision_degrade"><omgdc:Bounds x="2240" y="280" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_parse_decision" bpmnElement="task_parse_decision"><omgdc:Bounds x="2260" y="158" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_prep_ai" bpmnElement="task_prepare_ai_body"><omgdc:Bounds x="2460" y="158" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_ai_assess" bpmnElement="task_ai_assess"><omgdc:Bounds x="2660" y="158" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_err_ai" bpmnElement="err_ai"><omgdc:Bounds x="2750" y="210" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_ai_deg" bpmnElement="task_ai_degrade"><omgdc:Bounds x="2840" y="280" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_end" bpmnElement="endEvent"><omgdc:Bounds x="2860" y="180" width="36" height="36"/></bpmndi:BPMNShape>
 
       <bpmndi:BPMNEdge id="edge1" bpmnElement="flow_start_to_init"><omgdi:waypoint x="136" y="198"/><omgdi:waypoint x="180" y="198"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge2" bpmnElement="flow_init_to_iso"><omgdi:waypoint x="300" y="198"/><omgdi:waypoint x="300" y="95"/><omgdi:waypoint x="420" y="95"/></bpmndi:BPMNEdge>
@@ -512,11 +511,14 @@ X-Request-Id: ${request_id}</flowable:expression>
       <bpmndi:BPMNEdge id="edge9" bpmnElement="flow_plaid_to_parse"><omgdi:waypoint x="1600" y="198"/><omgdi:waypoint x="1660" y="198"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge10" bpmnElement="flow_parse_plaid_to_prep_decision"><omgdi:waypoint x="1780" y="198"/><omgdi:waypoint x="1840" y="198"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge11" bpmnElement="flow_prep_decision_to_call"><omgdi:waypoint x="2000" y="198"/><omgdi:waypoint x="2060" y="198"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge11a" bpmnElement="flow_ai_to_decision"><omgdi:waypoint x="2200" y="198"/><omgdi:waypoint x="2260" y="198"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge11b" bpmnElement="flow_err_ai"><omgdi:waypoint x="2168" y="246"/><omgdi:waypoint x="2300" y="280"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge11c" bpmnElement="flow_ai_deg_to_decision"><omgdi:waypoint x="2360" y="320"/><omgdi:waypoint x="2330" y="320"/><omgdi:waypoint x="2330" y="238"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge12" bpmnElement="flow_decision_to_parse"><omgdi:waypoint x="2400" y="198"/><omgdi:waypoint x="2440" y="198"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge13" bpmnElement="flow_parse_decision_to_end"><omgdi:waypoint x="2580" y="198"/><omgdi:waypoint x="2640" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge12" bpmnElement="flow_decision_to_parse"><omgdi:waypoint x="2200" y="198"/><omgdi:waypoint x="2260" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge12a" bpmnElement="flow_err_decision"><omgdi:waypoint x="2168" y="246"/><omgdi:waypoint x="2310" y="280"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge12b" bpmnElement="flow_decision_deg_to_parse"><omgdi:waypoint x="2380" y="320"/><omgdi:waypoint x="2330" y="320"/><omgdi:waypoint x="2330" y="238"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge13" bpmnElement="flow_parse_decision_to_prep_ai"><omgdi:waypoint x="2400" y="198"/><omgdi:waypoint x="2460" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge13a" bpmnElement="flow_prep_ai_to_ai_assess"><omgdi:waypoint x="2600" y="198"/><omgdi:waypoint x="2660" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge14" bpmnElement="flow_ai_to_end"><omgdi:waypoint x="2800" y="198"/><omgdi:waypoint x="2860" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge14a" bpmnElement="flow_err_ai"><omgdi:waypoint x="2768" y="246"/><omgdi:waypoint x="2900" y="280"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge14b" bpmnElement="flow_ai_deg_to_end"><omgdi:waypoint x="2960" y="320"/><omgdi:waypoint x="2878" y="320"/><omgdi:waypoint x="2878" y="216"/></bpmndi:BPMNEdge>
 
       <bpmndi:BPMNEdge id="edge15" bpmnElement="flow_err_iso"><omgdi:waypoint x="468" y="246"/><omgdi:waypoint x="600" y="280"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge16" bpmnElement="flow_iso_deg_to_prep_cs"><omgdi:waypoint x="660" y="320"/><omgdi:waypoint x="790" y="320"/><omgdi:waypoint x="790" y="238"/></bpmndi:BPMNEdge>
@@ -524,8 +526,6 @@ X-Request-Id: ${request_id}</flowable:expression>
       <bpmndi:BPMNEdge id="edge18" bpmnElement="flow_cs_deg_to_prep_plaid"><omgdi:waypoint x="1220" y="320"/><omgdi:waypoint x="1350" y="320"/><omgdi:waypoint x="1350" y="238"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge19" bpmnElement="flow_err_plaid"><omgdi:waypoint x="1588" y="246"/><omgdi:waypoint x="1720" y="280"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge20" bpmnElement="flow_plaid_deg_to_prep_decision"><omgdi:waypoint x="1780" y="320"/><omgdi:waypoint x="1920" y="320"/><omgdi:waypoint x="1920" y="238"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge21" bpmnElement="flow_err_decision"><omgdi:waypoint x="2368" y="246"/><omgdi:waypoint x="2510" y="280"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge22" bpmnElement="flow_decision_deg_to_parse"><omgdi:waypoint x="2580" y="320"/><omgdi:waypoint x="2510" y="320"/><omgdi:waypoint x="2510" y="238"/></bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
 </definitions>
