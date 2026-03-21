@@ -796,6 +796,63 @@ export default function RequestsPage() {
                     })()}
                   </div>
                 </div>
+                {(() => {
+                  const aiPre = detail.result?.ai_prescreen
+                    || tracker.find(e=>(e.service_id==='ai-prescreen')&&(e.direction==='OUT'||e.direction==='RESPONSE'))?.payload
+                  const aiAdv = detail.result?.ai_advisor
+                    || tracker.find(e=>(e.service_id==='ai-advisor')&&(e.direction==='OUT'||e.direction==='RESPONSE'))?.payload
+                  if (!aiPre && !aiAdv) return null
+                  const recColor = (r) => {
+                    if (!r) return 'var(--text-3)'
+                    const u = String(r).toUpperCase()
+                    if (['APPROVE','APPROVED','PASS','ACCEPT'].includes(u)) return 'var(--green)'
+                    if (['REJECT','REJECTED','FAIL','FAILED','DECLINE'].includes(u)) return 'var(--red)'
+                    return 'var(--amber)'
+                  }
+                  const riskColor = (r) => {
+                    if (!r) return 'var(--text-3)'
+                    const u = String(r).toUpperCase()
+                    if (u === 'LOW') return 'var(--green)'
+                    if (u === 'HIGH') return 'var(--red)'
+                    return 'var(--amber)'
+                  }
+                  const fmtFactors = (f) => {
+                    if (!f) return null
+                    if (Array.isArray(f)) return f.join(' · ')
+                    if (typeof f === 'object') return JSON.stringify(f)
+                    return String(f)
+                  }
+                  return (
+                    <div className="card" style={{margin:0}}>
+                      <div className="rqb-sec-title">AI Assessment</div>
+                      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(320px,1fr))',gap:12}}>
+                        {aiPre && (
+                          <div style={{background:'var(--bg-2)',borderRadius:6,padding:'10px 12px'}}>
+                            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+                              <span style={{fontSize:10,fontWeight:700,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:'0.5px'}}>Pre-screen</span>
+                              {aiPre.recommendation&&<span style={{fontWeight:700,fontSize:11,color:recColor(aiPre.recommendation)}}>{String(aiPre.recommendation).toUpperCase()}</span>}
+                              {aiPre.confidence!=null&&<span style={{fontSize:10,color:'var(--text-3)',fontFamily:'monospace'}}>conf {(Number(aiPre.confidence)*100).toFixed(0)}%</span>}
+                            </div>
+                            {aiPre.rationale&&<div style={{fontSize:11,color:'var(--text-2)',lineHeight:1.5,marginBottom:4}}>{aiPre.rationale}</div>}
+                            {fmtFactors(aiPre.key_factors)&&<div style={{fontSize:10,color:'var(--text-3)',marginTop:4}}><span style={{fontWeight:600}}>Factors: </span>{fmtFactors(aiPre.key_factors)}</div>}
+                          </div>
+                        )}
+                        {aiAdv && (
+                          <div style={{background:'var(--bg-2)',borderRadius:6,padding:'10px 12px'}}>
+                            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,flexWrap:'wrap'}}>
+                              <span style={{fontSize:10,fontWeight:700,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:'0.5px'}}>AI Advisor</span>
+                              {aiAdv.recommendation&&<span style={{fontWeight:700,fontSize:11,color:recColor(aiAdv.recommendation)}}>{String(aiAdv.recommendation).toUpperCase()}</span>}
+                              {aiAdv.risk_level&&<span style={{fontWeight:600,fontSize:11,color:riskColor(aiAdv.risk_level)}}>risk: {aiAdv.risk_level}</span>}
+                              {aiAdv.confidence!=null&&<span style={{fontSize:10,color:'var(--text-3)',fontFamily:'monospace'}}>conf {(Number(aiAdv.confidence)*100).toFixed(0)}%</span>}
+                            </div>
+                            {aiAdv.rationale&&<div style={{fontSize:11,color:'var(--text-2)',lineHeight:1.5,marginBottom:4}}>{aiAdv.rationale}</div>}
+                            {fmtFactors(aiAdv.key_factors)&&<div style={{fontSize:10,color:'var(--text-3)',marginTop:4}}><span style={{fontWeight:600}}>Factors: </span>{fmtFactors(aiAdv.key_factors)}</div>}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
                 {(detail.notes||[]).length>0&&(
                   <div className="card" style={{margin:0}}>
                     <div className="rqb-sec-title">Operator notes</div>
