@@ -862,7 +862,7 @@ export default function RequestsPage() {
 
                   const AiCard = ({data, title, textField}) => {
                     const text = data[textField] || data.narrative || data.reason || data.rationale || ''
-                    const [expanded, setExpanded] = React.useState(false)
+                    const [expanded, setExpanded] = useState(false)
                     const long = text.length > 200
                     return (
                       <div className="card" style={{margin:0,borderLeft:`4px solid ${recColor(data.recommendation)}`,paddingLeft:16}}>
