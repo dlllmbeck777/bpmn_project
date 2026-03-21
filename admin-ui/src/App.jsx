@@ -31,8 +31,8 @@ const ALL_PAGES = [
   { id: 'flowable',  group: 'nav_control',     Icon: IconLayers,    minRole: 'analyst' },
   { id: 'control',   group: 'nav_control',     Icon: IconRoute,     minRole: 'senior_analyst' },
   { id: 'services',  group: 'nav_control',     Icon: IconSettings,  minRole: 'senior_analyst' },
-  { id: 'audit',     group: 'nav_control',     Icon: IconClock,     minRole: 'analyst' },
-  { id: 'settings',  group: 'nav_control',     Icon: IconGear,      minRole: 'analyst' },
+  { id: 'audit',     group: 'nav_control',     Icon: IconClock,     minRole: 'admin' },
+  { id: 'settings',  group: 'nav_control',     Icon: IconGear,      minRole: 'admin' },
   { id: 'users',     group: 'nav_control',     Icon: IconUsers,     minRole: 'admin' },
 ]
 
