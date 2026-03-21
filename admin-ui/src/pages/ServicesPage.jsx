@@ -89,7 +89,7 @@ function PromptCard({ service, canEdit, onSaved }) {
   )
 }
 
-export default function ServicesPage({ canEdit }) {
+export default function ServicesPage({ canEdit, canEditPrompts = false }) {
   const [items, setItems] = useState([])
   const [editing, setEditing] = useState(null)
   const [error, setError] = useState('')
@@ -211,7 +211,7 @@ export default function ServicesPage({ canEdit }) {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {items.filter(s => AI_PROMPT_SERVICES.includes(s.id)).map(s => (
-              <PromptCard key={s.id} service={s} canEdit={canEdit} onSaved={load} />
+              <PromptCard key={s.id} service={s} canEdit={canEditPrompts} onSaved={load} />
             ))}
           </div>
         </div>

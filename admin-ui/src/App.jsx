@@ -107,7 +107,7 @@ export default function App() {
   const content = useMemo(() => {
     switch (current) {
       case 'control':  return <ControlCenterPage canEdit={canManageConfig} canAdmin={canAdmin} onNavigate={setActive} />
-      case 'services': return <ServicesPage canEdit={canAdmin} />
+      case 'services': return <ServicesPage canEdit={canAdmin} canEditPrompts={canManageConfig} />
       case 'users':    return <UsersPage canEdit={canAdmin} />
       case 'flowable': return <FlowableOpsPage canManage={canManageConfig} />
       case 'tracker':  return <ProcessTrackerPage />
