@@ -4,6 +4,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+import httpx
 from fastapi import FastAPI
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
@@ -14,9 +15,27 @@ AI_MODEL = os.getenv("AI_MODEL", "gpt-4o-mini")
 AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.1"))
 AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "1000"))
 AI_FALLBACK_ON_ERROR = os.getenv("AI_FALLBACK_ON_ERROR", "true").lower() in {"1", "true", "yes"}
+CONFIG_URL = os.getenv("CONFIG_SERVICE_URL", "http://core-api:8000")
 
 app = FastAPI(title="ai-advisor", version="1.0.0")
 _client = AsyncOpenAI()
+
+_meta_cache: Dict[str, Any] = {}
+
+
+async def _fetch_meta(ttl: int = 60) -> Dict[str, Any]:
+    cached = _meta_cache.get("ai-advisor")
+    if cached and time.time() < cached[1]:
+        return cached[0]
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{CONFIG_URL}/api/v1/services/ai-advisor")
+            data = r.json() if r.status_code == 200 else {}
+            meta = data.get("meta") or {}
+    except Exception:
+        meta = {}
+    _meta_cache["ai-advisor"] = (meta, time.time() + ttl)
+    return meta
 
 
 class ApplicantIn(BaseModel):
@@ -62,7 +81,8 @@ async def assess(body: AssessRequest):
     start = time.time()
     summary = body.parsed_report.summary
 
-    system_prompt = build_system_prompt()
+    meta = await _fetch_meta()
+    system_prompt = meta.get("system_prompt") or build_system_prompt()
     user_prompt = build_user_prompt(
         applicant=body.applicant.model_dump(),
         summary=summary.model_dump(),
