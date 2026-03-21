@@ -7,6 +7,7 @@ import ProcessTrackerPage from './pages/ProcessTrackerPage'
 import FlowableOpsPage from './pages/FlowableOpsPage'
 import RequestsPage from './pages/RequestsPage'
 import CreditOpsDashboard from './pages/CreditOpsDashboard'
+import AdminDashboard from './pages/AdminDashboard'
 import AuditPage from './pages/AuditPage'
 import LoginPage from './pages/LoginPage'
 import SettingsPage from './pages/SettingsPage'
@@ -31,6 +32,7 @@ const ALL_PAGES = [
   { id: 'flowable',  group: 'nav_control',     Icon: IconLayers,    minRole: 'analyst' },
   { id: 'control',   group: 'nav_control',     Icon: IconRoute,     minRole: 'senior_analyst' },
   { id: 'services',  group: 'nav_control',     Icon: IconSettings,  minRole: 'senior_analyst' },
+  { id: 'admindash', group: 'nav_control',     Icon: IconGrid,      minRole: 'admin' },
   { id: 'audit',     group: 'nav_control',     Icon: IconClock,     minRole: 'admin' },
   { id: 'settings',  group: 'nav_control',     Icon: IconGear,      minRole: 'admin' },
   { id: 'users',     group: 'nav_control',     Icon: IconUsers,     minRole: 'admin' },
@@ -113,6 +115,7 @@ export default function App() {
       case 'tracker':  return <ProcessTrackerPage />
       case 'requests':  return <RequestsPage />
       case 'creditops': return <CreditOpsDashboard />
+      case 'admindash': return <AdminDashboard />
       case 'audit':     return <AuditPage />
       case 'settings': return <SettingsPage onSave={refresh} theme={theme} onThemeChange={handleThemeChange} availablePages={visibleItems.map(p=>({...p,label:tr(`page_${p.id}`)}))} currentPage={current} onNavigate={setActive} />
       default:         return <Dashboard />
