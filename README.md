@@ -32,6 +32,10 @@ DOMAIN=admin.example.com bash scripts/deploy-prod.sh
 
 See `docs/DEPLOYMENT.md` for the full walkthrough.
 
+Database schema documentation (Navicat-style, all tables and columns):
+
+- `docs/DATABASE_SCHEMA_RU.md`
+
 Russian operational and project documentation:
 
 - `docs/OPERATIONS_RUNBOOK_RU.md`
@@ -49,6 +53,7 @@ Russian operational and project documentation:
 - `docs/MOCK_BUREAUS_SERVICE_RU.md`
 - `docs/TEST_SPEC_MOCK_CONNECTORS_RU.md`
 - `docs/DEMO_TEST_CASES_RU.md`
+- `docs/DATABASE_SCHEMA_RU.md`
 
 ## Stress Test
 
