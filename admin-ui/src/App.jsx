@@ -6,6 +6,7 @@ import UsersPage from './pages/UsersPage'
 import ProcessTrackerPage from './pages/ProcessTrackerPage'
 import FlowableOpsPage from './pages/FlowableOpsPage'
 import RequestsPage from './pages/RequestsPage'
+import CreditOpsDashboard from './pages/CreditOpsDashboard'
 import AuditPage from './pages/AuditPage'
 import LoginPage from './pages/LoginPage'
 import SettingsPage from './pages/SettingsPage'
@@ -28,6 +29,7 @@ const ALL_PAGES = [
   { id: 'flowable',  group: 'nav_monitoring', Icon: IconLayers,    minRole: 'analyst' },
   { id: 'audit',     group: 'nav_monitoring', Icon: IconClock,     minRole: 'analyst' },
   { id: 'requests',  group: 'nav_analysis',   Icon: IconClipboard, minRole: 'analyst' },
+  { id: 'creditops', group: 'nav_analysis',   Icon: IconActivity,  minRole: 'analyst' },
   { id: 'control',   group: 'nav_control',    Icon: IconRoute,     minRole: 'senior_analyst' },
   { id: 'services',  group: 'nav_control',    Icon: IconSettings,  minRole: 'senior_analyst' },
   { id: 'users',     group: 'nav_control',    Icon: IconUsers,     minRole: 'admin' },
@@ -47,12 +49,23 @@ export default function App() {
   })
   const [theme, setThemeState] = useState(() => getTheme())
   const [lang, setLangState] = useState(() => getLang())
+  const [collapsedGroups, setCollapsedGroups] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('nav_collapsed') || '{}') } catch { return {} }
+  })
 
   useEffect(() => { window.location.hash = active }, [active])
 
   const refresh = () => setApiMeta({
     base: getApiBase(), hasKey: !!getApiKey(), role: getUserRole(), username: getCurrentUsername(),
   })
+
+  const toggleGroup = (group) => {
+    setCollapsedGroups(prev => {
+      const next = { ...prev, [group]: !prev[group] }
+      localStorage.setItem('nav_collapsed', JSON.stringify(next))
+      return next
+    })
+  }
 
   const handleLangChange = (code) => { setLang(code); setLangState(code) }
   const tr = (key) => t(key, lang)
@@ -94,8 +107,9 @@ export default function App() {
       case 'users':    return <UsersPage canEdit={canAdmin} />
       case 'flowable': return <FlowableOpsPage canManage={canManageConfig} />
       case 'tracker':  return <ProcessTrackerPage />
-      case 'requests': return <RequestsPage />
-      case 'audit':    return <AuditPage />
+      case 'requests':  return <RequestsPage />
+      case 'creditops': return <CreditOpsDashboard />
+      case 'audit':     return <AuditPage />
       case 'settings': return <SettingsPage onSave={refresh} theme={theme} onThemeChange={handleThemeChange} availablePages={visibleItems.map(p=>({...p,label:tr(`page_${p.id}`)}))} currentPage={current} onNavigate={setActive} />
       default:         return <Dashboard />
     }
@@ -119,21 +133,31 @@ export default function App() {
           </div>
         </div>
 
-        {visibleSections.map(section => (
-          <div className="nav-group" key={section.group}>
-            <div className="nav-label">{tr(section.group)}</div>
-            {section.items.map(item => (
-              <button
-                key={item.id}
-                className={`nav-btn${current === item.id ? ' active' : ''}`}
-                onClick={() => setActive(item.id)}
+        {visibleSections.map(section => {
+          const collapsed = !!collapsedGroups[section.group]
+          return (
+            <div className="nav-group" key={section.group}>
+              <div
+                className={`nav-label nav-label-toggle${collapsed ? ' collapsed' : ''}`}
+                onClick={() => toggleGroup(section.group)}
+                title={collapsed ? tr('expand') : tr('collapse')}
               >
-                <item.Icon />
-                {tr(`page_${item.id}`)}
-              </button>
-            ))}
-          </div>
-        ))}
+                {tr(section.group)}
+                <span className="nav-chevron">{collapsed ? '›' : '‹'}</span>
+              </div>
+              {!collapsed && section.items.map(item => (
+                <button
+                  key={item.id}
+                  className={`nav-btn${current === item.id ? ' active' : ''}`}
+                  onClick={() => setActive(item.id)}
+                >
+                  <item.Icon />
+                  {tr(`page_${item.id}`)}
+                </button>
+              ))}
+            </div>
+          )
+        })}
 
         <div className="sidebar-footer">
           <div className="sidebar-user">

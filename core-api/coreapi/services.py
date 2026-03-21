@@ -92,6 +92,128 @@ PASSWORD_SCHEME = "pbkdf2_sha256"
 PASSWORD_ITERATIONS = 480_000
 
 
+def _calculate_age(dob: str) -> Optional[int]:
+    """Compute age from ISO date string (YYYY-MM-DD). Returns None on parse error."""
+    try:
+        from datetime import date
+        birth = date.fromisoformat((dob or "").strip()[:10])
+        today = date.today()
+        return today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
+    except Exception:
+        return None
+
+
+def compute_client_key(ssn: str = "", external_applicant_id: str = "") -> str:
+    """Generate stable client key without storing PII. SSN hash takes priority."""
+    ssn = (ssn or "").strip()
+    if len(ssn) > 4:
+        return "ssn:" + hashlib.sha256(ssn.encode()).hexdigest()[:16]
+    ext = (external_applicant_id or "").strip()
+    if ext:
+        return "ext:" + ext
+    return ""
+
+
+def get_client_history(client_key: str, limit: int = 20) -> Dict[str, Any]:
+    """Return aggregated client history for AI Pre-Screen."""
+    if not client_key:
+        return {"total_applications": 0, "history_available": False}
+
+    rows = query(
+        """
+        SELECT request_id, event_type, credit_score, collection_count,
+               decision, decision_reason, ai_risk_score, product_type,
+               created_at
+        FROM client_history
+        WHERE client_key = %s
+        ORDER BY created_at DESC
+        LIMIT %s
+        """,
+        (client_key, limit),
+    )
+    if not rows:
+        return {"total_applications": 0, "history_available": False}
+
+    rows = [to_json_ready(r) for r in rows]
+    total = len(rows)
+    now = datetime.now(timezone.utc)
+    last_30d = [r for r in rows if r.get("created_at") and (now - r["created_at"]).days <= 30]
+    scores = [r["credit_score"] for r in rows if r.get("credit_score") is not None]
+    rejections = [r for r in rows if r.get("decision") == "REJECTED"]
+    approvals = [r for r in rows if r.get("decision") == "APPROVED"]
+
+    score_trend = "STABLE"
+    if len(scores) >= 2:
+        if scores[0] > scores[1] + 20:
+            score_trend = "IMPROVING"
+        elif scores[0] < scores[1] - 20:
+            score_trend = "DECLINING"
+
+    last = rows[0]
+    return {
+        "history_available": True,
+        "total_applications": total,
+        "last_30_days": len(last_30d),
+        "last_decision": last.get("decision"),
+        "last_credit_score": last.get("credit_score"),
+        "avg_credit_score": round(sum(scores) / len(scores)) if scores else None,
+        "score_trend": score_trend,
+        "rejection_count": len(rejections),
+        "approval_count": len(approvals),
+        "approval_rate": round(len(approvals) / total, 2) if total > 0 else 0,
+        "rejection_reasons": list({r.get("decision_reason", "") for r in rejections if r.get("decision_reason")})[:5],
+        "days_since_last": (now - last["created_at"]).days if last.get("created_at") else None,
+        "last_ai_risk_score": last.get("ai_risk_score"),
+    }
+
+
+def write_client_history(request_id: str, result: Dict[str, Any], request_data: Dict[str, Any]) -> None:
+    """Write finalized request outcome to client_history for future AI pre-screening."""
+    ssn = (request_data.get("ssn") or request_data.get("iin") or "").strip()
+    ext_id = (request_data.get("external_applicant_id") or "").strip()
+    client_key = compute_client_key(ssn=ssn, external_applicant_id=ext_id)
+    if not client_key:
+        return
+
+    summary = result.get("summary") if isinstance(result, dict) else {}
+    if not isinstance(summary, dict):
+        summary = {}
+    ai = {}
+    if isinstance(result, dict):
+        ai = result.get("ai_assessment") or (result.get("steps") or {}).get("ai-advisor") or {}
+    if not isinstance(ai, dict):
+        ai = {}
+
+    try:
+        execute(
+            """
+            INSERT INTO client_history
+            (client_key, request_id, event_type, credit_score, collection_count,
+             decision, decision_reason, decision_source, ai_risk_score, ai_recommendation,
+             product_type, city, state, route_mode)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                client_key,
+                request_id,
+                "DECISION",
+                summary.get("credit_score"),
+                summary.get("collection_count"),
+                summary.get("decision"),
+                summary.get("decision_reason"),
+                summary.get("decision_source"),
+                ai.get("risk_score"),
+                ai.get("recommendation"),
+                request_data.get("product_type"),
+                request_data.get("city") or (request_data.get("applicant") or {}).get("city"),
+                request_data.get("state") or (request_data.get("applicant") or {}).get("state"),
+                request_data.get("orchestration_mode"),
+            ),
+        )
+    except Exception:
+        pass  # non-critical — don't fail the main pipeline
+
+
 def _credit_backend_service():
     cached = config_cache.get(f"svc:{CREDIT_BACKEND_SERVICE_ID}")
     row = dict(cached) if isinstance(cached, dict) else {}
@@ -1227,6 +1349,8 @@ async def finalize_request(request_id: str, mode: str, result: Dict[str, Any], c
         correlation_id=cid,
     )
 
+    write_client_history(request_id, normalized_result, context)
+
     return {
         "status": final_status,
         "result": normalized_result,
@@ -1509,6 +1633,80 @@ async def submit_request_payload(
         )
         metrics.inc("requests_rejected")
         return {"request_id": request_id, "selected_mode": "none", "result": {"status": "REJECTED", "reason": sf_pre.get("reason")}, "http_error": None}
+
+    # AI Pre-Screen: decide if bureau pull is warranted (runs before routing/connectors)
+    try:
+        _ps_service = to_json_ready(query("SELECT * FROM services WHERE id=%s", ("ai-prescreen",), "one")) or {}
+        if _ps_service.get("enabled") and _ps_service.get("base_url"):
+            _client_key = compute_client_key(
+                ssn=data.get("ssn", ""),
+                external_applicant_id=data.get("external_applicant_id", ""),
+            )
+            _history = get_client_history(_client_key)
+            _applicant = data.get("applicant") or {}
+            _dob = _applicant.get("dateOfBirth", "")
+            _ps_payload = {
+                "request_id": request_id,
+                "applicant": {
+                    "city": _applicant.get("city", ""),
+                    "state": _applicant.get("state", ""),
+                    "zipCode": _applicant.get("zipCode", ""),
+                    "age": _calculate_age(_dob) if _dob else None,
+                },
+                "history": _history,
+                "product_type": product_type,
+            }
+            _ps_url = f"{_ps_service['base_url']}{_ps_service.get('endpoint_path', '/api/v1/prescreen')}"
+            async with httpx.AsyncClient(timeout=10.0) as _hx:
+                _ps_resp = await _hx.post(_ps_url, json=_ps_payload, headers={"X-Correlation-ID": cid})
+            if _ps_resp.status_code < 400:
+                _ps_result = _ps_resp.json()
+                track_request_event(
+                    request_id,
+                    "ai_prescreen",
+                    "STATE",
+                    "AI Pre-Screen evaluated",
+                    status=_ps_result.get("recommendation", "UNKNOWN"),
+                    payload=_ps_result,
+                    correlation_id=cid,
+                )
+                if _ps_result.get("skip_bureau") and _ps_result.get("confidence", 0) >= 0.85:
+                    _early_result = {
+                        "status": "REVIEW",
+                        "decision": "REVIEW",
+                        "decision_reason": f"AI Pre-Screen: {_ps_result.get('reason', 'high risk history')}",
+                        "decision_source": "ai-prescreen",
+                        "ai_prescreen": _ps_result,
+                        "bureau_skipped": True,
+                    }
+                    execute(
+                        """
+                        INSERT INTO requests
+                        (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,
+                         external_applicant_id,product_type,orchestration_mode,status,correlation_id,result)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        """,
+                        (
+                            request_id, customer_id, iin_encrypted, ssn_encrypted,
+                            json.dumps(applicant_profile), external_applicant_id,
+                            product_type, requested_mode, "REVIEW", cid,
+                            json.dumps(_early_result),
+                        ),
+                    )
+                    track_request_event(
+                        request_id,
+                        "request",
+                        "STATE",
+                        "Request sent to REVIEW by AI Pre-Screen (bureau skipped)",
+                        status="REVIEW",
+                        payload={"reason": _ps_result.get("reason"), "confidence": _ps_result.get("confidence")},
+                        correlation_id=cid,
+                    )
+                    write_client_history(request_id, _early_result, data)
+                    metrics.inc("requests_completed", 'mode="ai-prescreen",status="REVIEW"')
+                    return {"request_id": request_id, "selected_mode": "ai-prescreen", "result": _early_result, "http_error": None}
+    except Exception:
+        pass  # Pre-Screen failure is non-critical — continue normal pipeline
 
     mode = resolve_mode(data)
     track_request_event(

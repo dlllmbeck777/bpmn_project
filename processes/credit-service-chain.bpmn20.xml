@@ -259,7 +259,39 @@ X-Request-Id: ${request_id}</flowable:expression>
         execution.setVariable('decision_request_body', mapper.writeValueAsString(payload))
       ]]></script>
     </scriptTask>
-    <sequenceFlow id="flow_prep_decision_to_call" sourceRef="task_prepare_decision_body" targetRef="task_decision_service"/>
+    <sequenceFlow id="flow_prep_decision_to_call" sourceRef="task_prepare_decision_body" targetRef="task_ai_assess"/>
+
+    <!-- AI Risk Assessment — after prepare decision body, before decision service -->
+    <serviceTask id="task_ai_assess" name="AI Risk Assessment"
+                 flowable:type="http" flowable:exclusive="false">
+      <extensionElements>
+        <flowable:failedJobRetryTimeCycle>R1/PT5S</flowable:failedJobRetryTimeCycle>
+        <flowable:field name="requestMethod"><flowable:string>POST</flowable:string></flowable:field>
+        <flowable:field name="requestUrl"><flowable:expression>${ai_advisor_url}</flowable:expression></flowable:field>
+        <flowable:field name="requestHeaders">
+          <flowable:expression>Content-Type: application/json
+X-Request-Id: ${request_id}</flowable:expression>
+        </flowable:field>
+        <flowable:field name="requestBody">
+          <flowable:expression>{"request_id":"${request_id}","context":{"route_mode":"FLOWABLE","product_type":"${product_type}"}}</flowable:expression>
+        </flowable:field>
+        <flowable:field name="saveResponseParameters"><flowable:string>true</flowable:string></flowable:field>
+        <flowable:field name="resultVariablePrefix"><flowable:string>aiRaw</flowable:string></flowable:field>
+        <flowable:field name="requestTimeout"><flowable:string>15000</flowable:string></flowable:field>
+      </extensionElements>
+    </serviceTask>
+    <boundaryEvent id="err_ai" attachedToRef="task_ai_assess" cancelActivity="true">
+      <errorEventDefinition errorRef="serviceError"/>
+    </boundaryEvent>
+    <scriptTask id="task_ai_degrade" name="AI degrade" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <script><![CDATA[
+        execution.setVariable('aiRawBody', '{"risk_score":50,"risk_level":"MEDIUM","recommendation":"REVIEW","fallback":true}')
+        execution.setVariable('ai_status', 'UNAVAILABLE')
+      ]]></script>
+    </scriptTask>
+    <sequenceFlow id="flow_err_ai" sourceRef="err_ai" targetRef="task_ai_degrade"/>
+    <sequenceFlow id="flow_ai_deg_to_decision" sourceRef="task_ai_degrade" targetRef="task_decision_service"/>
+    <sequenceFlow id="flow_ai_to_decision" sourceRef="task_ai_assess" targetRef="task_decision_service"/>
 
     <serviceTask id="task_decision_service" name="Call Decision Service" flowable:exclusive="false" flowable:type="http">
       <extensionElements>
@@ -408,11 +440,14 @@ X-Request-Id: ${request_id}</flowable:expression>
       <bpmndi:BPMNShape id="shape_plaid_deg" bpmnElement="task_plaid_degrade"><omgdc:Bounds x="1660" y="280" width="120" height="80"/></bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="shape_parse_plaid" bpmnElement="task_parse_plaid"><omgdc:Bounds x="1660" y="158" width="120" height="80"/></bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="shape_prep_decision" bpmnElement="task_prepare_decision_body"><omgdc:Bounds x="1840" y="158" width="160" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_decision" bpmnElement="task_decision_service"><omgdc:Bounds x="2060" y="158" width="140" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_err_decision" bpmnElement="err_decision"><omgdc:Bounds x="2150" y="210" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_decision_deg" bpmnElement="task_decision_degrade"><omgdc:Bounds x="2240" y="280" width="140" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_parse_decision" bpmnElement="task_parse_decision"><omgdc:Bounds x="2240" y="158" width="140" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_end" bpmnElement="endEvent"><omgdc:Bounds x="2440" y="180" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_ai_assess" bpmnElement="task_ai_assess"><omgdc:Bounds x="2060" y="158" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_err_ai" bpmnElement="err_ai"><omgdc:Bounds x="2150" y="210" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_ai_deg" bpmnElement="task_ai_degrade"><omgdc:Bounds x="2240" y="280" width="120" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_decision" bpmnElement="task_decision_service"><omgdc:Bounds x="2260" y="158" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_err_decision" bpmnElement="err_decision"><omgdc:Bounds x="2350" y="210" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_decision_deg" bpmnElement="task_decision_degrade"><omgdc:Bounds x="2440" y="280" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_parse_decision" bpmnElement="task_parse_decision"><omgdc:Bounds x="2440" y="158" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_end" bpmnElement="endEvent"><omgdc:Bounds x="2640" y="180" width="36" height="36"/></bpmndi:BPMNShape>
 
       <bpmndi:BPMNEdge id="edge1" bpmnElement="flow_start_to_init"><omgdi:waypoint x="136" y="198"/><omgdi:waypoint x="180" y="198"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge2" bpmnElement="flow_init_to_iso"><omgdi:waypoint x="300" y="198"/><omgdi:waypoint x="300" y="95"/><omgdi:waypoint x="420" y="95"/></bpmndi:BPMNEdge>
@@ -434,8 +469,11 @@ X-Request-Id: ${request_id}</flowable:expression>
       <bpmndi:BPMNEdge id="edge9" bpmnElement="flow_plaid_to_parse"><omgdi:waypoint x="1600" y="198"/><omgdi:waypoint x="1660" y="198"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge10" bpmnElement="flow_parse_plaid_to_prep_decision"><omgdi:waypoint x="1780" y="198"/><omgdi:waypoint x="1840" y="198"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge11" bpmnElement="flow_prep_decision_to_call"><omgdi:waypoint x="2000" y="198"/><omgdi:waypoint x="2060" y="198"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge12" bpmnElement="flow_decision_to_parse"><omgdi:waypoint x="2200" y="198"/><omgdi:waypoint x="2240" y="198"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge13" bpmnElement="flow_parse_decision_to_end"><omgdi:waypoint x="2380" y="198"/><omgdi:waypoint x="2440" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge11a" bpmnElement="flow_ai_to_decision"><omgdi:waypoint x="2200" y="198"/><omgdi:waypoint x="2260" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge11b" bpmnElement="flow_err_ai"><omgdi:waypoint x="2168" y="246"/><omgdi:waypoint x="2300" y="280"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge11c" bpmnElement="flow_ai_deg_to_decision"><omgdi:waypoint x="2360" y="320"/><omgdi:waypoint x="2330" y="320"/><omgdi:waypoint x="2330" y="238"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge12" bpmnElement="flow_decision_to_parse"><omgdi:waypoint x="2400" y="198"/><omgdi:waypoint x="2440" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge13" bpmnElement="flow_parse_decision_to_end"><omgdi:waypoint x="2580" y="198"/><omgdi:waypoint x="2640" y="198"/></bpmndi:BPMNEdge>
 
       <bpmndi:BPMNEdge id="edge15" bpmnElement="flow_err_iso"><omgdi:waypoint x="468" y="246"/><omgdi:waypoint x="600" y="280"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge16" bpmnElement="flow_iso_deg_to_prep_cs"><omgdi:waypoint x="660" y="320"/><omgdi:waypoint x="790" y="320"/><omgdi:waypoint x="790" y="238"/></bpmndi:BPMNEdge>
@@ -443,8 +481,8 @@ X-Request-Id: ${request_id}</flowable:expression>
       <bpmndi:BPMNEdge id="edge18" bpmnElement="flow_cs_deg_to_prep_plaid"><omgdi:waypoint x="1220" y="320"/><omgdi:waypoint x="1350" y="320"/><omgdi:waypoint x="1350" y="238"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge19" bpmnElement="flow_err_plaid"><omgdi:waypoint x="1588" y="246"/><omgdi:waypoint x="1720" y="280"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge20" bpmnElement="flow_plaid_deg_to_prep_decision"><omgdi:waypoint x="1780" y="320"/><omgdi:waypoint x="1920" y="320"/><omgdi:waypoint x="1920" y="238"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge21" bpmnElement="flow_err_decision"><omgdi:waypoint x="2168" y="246"/><omgdi:waypoint x="2310" y="280"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge22" bpmnElement="flow_decision_deg_to_parse"><omgdi:waypoint x="2380" y="320"/><omgdi:waypoint x="2310" y="320"/><omgdi:waypoint x="2310" y="238"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge21" bpmnElement="flow_err_decision"><omgdi:waypoint x="2368" y="246"/><omgdi:waypoint x="2510" y="280"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge22" bpmnElement="flow_decision_deg_to_parse"><omgdi:waypoint x="2580" y="320"/><omgdi:waypoint x="2510" y="320"/><omgdi:waypoint x="2510" y="238"/></bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
 </definitions>

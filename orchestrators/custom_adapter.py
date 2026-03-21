@@ -2,7 +2,7 @@
 import asyncio
 import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import FastAPI, Request
@@ -370,6 +370,76 @@ async def orchestrate(body: RequestIn, request: Request):
                 payload=parsed_report,
             )
 
+    # AI Advisor — called after parser, before returning to core-api
+    ai_assessment: Dict[str, Any] = {}
+    ai_advisor = await _acfg("/api/v1/services/ai-advisor")
+    ai_advisor_url = ai_advisor.get("base_url", "")
+    ai_advisor_endpoint = ai_advisor.get("endpoint_path", "/api/v1/assess")
+    if ai_advisor_url and ai_advisor.get("enabled", True):
+        applicant = body.applicant or {}
+        dob = applicant.get("dateOfBirth", "")
+        age: Optional[int] = None
+        if dob:
+            try:
+                from datetime import date as _date
+                birth = _date.fromisoformat(str(dob).strip()[:10])
+                today = _date.today()
+                age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
+            except Exception:
+                age = None
+
+        ai_payload = {
+            "request_id": body.request_id,
+            "applicant": {
+                "city": applicant.get("city", ""),
+                "state": applicant.get("state", ""),
+                "zipCode": applicant.get("zipCode", ""),
+                "age": age,
+            },
+            "parsed_report": parsed_report if isinstance(parsed_report, dict) else {},
+            "context": {
+                "route_mode": body.orchestration_mode,
+                "product_type": body.product_type,
+            },
+        }
+
+        await _track(
+            body.request_id,
+            "ai_advisor",
+            "OUT",
+            "Dispatch to AI advisor",
+            cid=cid,
+            service_id="ai-advisor",
+            status="DISPATCHED",
+            payload={"request_id": body.request_id},
+        )
+        try:
+            ai_timeout = ai_advisor.get("timeout_ms", 15000) / 1000
+            async with httpx.AsyncClient(timeout=ai_timeout) as client:
+                ai_resp = await client.post(
+                    f"{ai_advisor_url}{ai_advisor_endpoint}",
+                    json=ai_payload,
+                    headers={"X-Correlation-ID": cid},
+                )
+            if ai_resp.status_code < 400:
+                ai_assessment = ai_resp.json()
+            else:
+                ai_assessment = {"status": "UNAVAILABLE", "error": f"HTTP {ai_resp.status_code}", "fallback": True}
+        except Exception as exc:
+            ai_assessment = {"status": "UNAVAILABLE", "error": str(exc), "fallback": True}
+
+        results["ai-advisor"] = ai_assessment
+        await _track(
+            body.request_id,
+            "ai_advisor",
+            "IN",
+            "AI advisor response",
+            cid=cid,
+            service_id="ai-advisor",
+            status=ai_assessment.get("status", "OK"),
+            payload=ai_assessment,
+        )
+
     return {
         "status": "COMPLETED",
         "adapter": "custom",
@@ -378,4 +448,5 @@ async def orchestrate(body: RequestIn, request: Request):
         "steps": report_inputs,
         "external_reports": external_reports or report_inputs,
         "parsed_report": parsed_report,
+        "ai_assessment": ai_assessment,
     }

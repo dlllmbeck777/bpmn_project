@@ -257,6 +257,45 @@ services:
       retries: 20
       start_period: 180s
 
+  # ── AI Services ───────────────────────────────────────
+  ai-advisor:
+    build: ./ai-advisor
+    container_name: ai-advisor
+    ports:
+      - "8108:8108"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AI_MODEL=${AI_MODEL:-gpt-4o-mini}
+      - AI_TEMPERATURE=${AI_TEMPERATURE:-0.1}
+      - AI_MAX_TOKENS=${AI_MAX_TOKENS:-1000}
+      - AI_FALLBACK_ON_ERROR=true
+    restart: unless-stopped
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8108/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  ai-prescreen:
+    build: ./ai-prescreen
+    container_name: ai-prescreen
+    ports:
+      - "8109:8109"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AI_MODEL=${AI_MODEL:-gpt-4o-mini}
+      - AI_TEMPERATURE=${AI_TEMPERATURE:-0.1}
+      - AI_MAX_TOKENS=${AI_MAX_TOKENS:-500}
+      - AI_FALLBACK_ON_ERROR=true
+    restart: unless-stopped
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8109/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   # ── Admin UI ──────────────────────────────────────────
   admin-ui:
     build: ./admin-ui

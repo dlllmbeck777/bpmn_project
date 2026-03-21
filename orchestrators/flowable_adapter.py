@@ -837,6 +837,7 @@ def _build_flowable_start_context(
     flowable_url: str,
     flowable_connector_urls: Dict[str, str],
     decision_service_url: str,
+    ai_advisor_url: str = "",
     pipeline_steps: Any,
     skip_flags: Dict[str, bool],
     skip_reasons: Dict[str, str],
@@ -855,6 +856,7 @@ def _build_flowable_start_context(
     for service_id, url in flowable_connector_urls.items():
         variables.append({"name": f"{service_id}_url", "value": url})
     variables.append({"name": "decision_service_url", "value": decision_service_url})
+    variables.append({"name": "ai_advisor_url", "value": ai_advisor_url})
     for service_id, skip in skip_flags.items():
         variables.append({"name": f"skip_{service_id}", "value": skip})
     for service_id, reason in skip_reasons.items():
@@ -865,6 +867,7 @@ def _build_flowable_start_context(
         "flowable_url": flowable_url,
         "connector_urls": flowable_connector_urls,
         "decision_service_url": decision_service_url,
+        "ai_advisor_url": ai_advisor_url,
         "skip_flags": skip_flags,
         "skip_policies": skip_policies,
         "pipeline_steps": pipeline_steps,
@@ -963,6 +966,10 @@ async def _orchestrate_once(body: RequestIn, cid: str):
     decision_service_url = ""
     if decision_service.get("base_url"):
         decision_service_url = f"{decision_service.get('base_url')}{decision_service.get('endpoint_path', '/api/v1/decide')}"
+    ai_advisor_service = await _acfg("/api/v1/services/ai-advisor")
+    ai_advisor_url = ""
+    if ai_advisor_service.get("base_url") and ai_advisor_service.get("enabled", True):
+        ai_advisor_url = f"{ai_advisor_service.get('base_url')}{ai_advisor_service.get('endpoint_path', '/api/v1/assess')}"
     pipeline_steps, skip_flags, skip_reasons, skip_policies = await _pipeline_skip_flags(flowable_connector_urls)
     variables, tracker_payload = _build_flowable_start_context(
         body,
@@ -970,6 +977,7 @@ async def _orchestrate_once(body: RequestIn, cid: str):
         flowable_url=flowable_url,
         flowable_connector_urls=flowable_connector_urls,
         decision_service_url=decision_service_url,
+        ai_advisor_url=ai_advisor_url,
         pipeline_steps=pipeline_steps,
         skip_flags=skip_flags,
         skip_reasons=skip_reasons,

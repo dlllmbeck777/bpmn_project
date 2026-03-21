@@ -29,6 +29,7 @@ const T = {
     page_flowable:   'Flowable engine',
     page_audit:      'Audit log',
     page_requests:   'Requests',
+    page_creditops:  'Ops Dashboard',
     page_control:    'Orchestration',
     page_services:   'Services',
     page_users:      'Users & access',
@@ -40,6 +41,7 @@ const T = {
     sub_flowable:    'Inspect and manage Flowable instances, jobs and process definitions',
     sub_audit:       'Configuration change history',
     sub_requests:    'Credit check request lifecycle',
+    sub_creditops:   'Operational analytics — charts, KPIs and request trends',
     sub_control:     'Set routing policy, manage stop factors and pipeline behavior',
     sub_services:    'Manage service registry, URLs and retries',
     sub_users:       'Create users, assign roles, manage sessions',
@@ -51,6 +53,8 @@ const T = {
     theme_light:     'Light',
     logout:          'Log out',
     language:        'Language',
+    expand:          'Expand',
+    collapse:        'Collapse',
   },
 
   ru: {
@@ -65,6 +69,7 @@ const T = {
     page_flowable:   'Flowable engine',
     page_audit:      'Журнал аудита',
     page_requests:   'Заявки',
+    page_creditops:  'Ops Dashboard',
     page_control:    'Оркестрация',
     page_services:   'Сервисы',
     page_users:      'Пользователи',
@@ -75,6 +80,7 @@ const T = {
     sub_flowable:    'Управление экземплярами, задачами и процессами Flowable',
     sub_audit:       'История изменений конфигурации',
     sub_requests:    'Жизненный цикл заявок на кредитную проверку',
+    sub_creditops:   'Операционная аналитика — графики, KPI и тренды заявок',
     sub_control:     'Настройка маршрутизации, стоп-факторов и поведения пайплайна',
     sub_services:    'Управление реестром сервисов, URL и повторными попытками',
     sub_users:       'Создание пользователей, назначение ролей, управление сессиями',
@@ -85,6 +91,8 @@ const T = {
     theme_light:     'Светлая',
     logout:          'Выйти',
     language:        'Язык',
+    expand:          'Развернуть',
+    collapse:        'Свернуть',
   },
 
   uz: {
@@ -99,6 +107,7 @@ const T = {
     page_flowable:   'Flowable tizimi',
     page_audit:      'Audit jurnali',
     page_requests:   'Arizalar',
+    page_creditops:  'Ops Dashboard',
     page_control:    'Orkestratsiya',
     page_services:   'Xizmatlar',
     page_users:      'Foydalanuvchilar',
@@ -109,6 +118,7 @@ const T = {
     sub_flowable:    'Flowable nusxalari, ishlar va jarayonlarini boshqarish',
     sub_audit:       'Konfiguratsiya o\'zgarishlari tarixi',
     sub_requests:    'Kredit tekshiruvi arizasining hayot tsikli',
+    sub_creditops:   'Operatsion tahlil — grafiklar, KPI va ariza trendlari',
     sub_control:     'Yo\'naltirish siyosati, to\'xtash omillari va quvur liniyasini sozlash',
     sub_services:    'Xizmat reestri, URL va qayta urinishlarni boshqarish',
     sub_users:       'Foydalanuvchilar yaratish, rollar belgilash, sessiyalarni boshqarish',
@@ -119,6 +129,8 @@ const T = {
     theme_light:     'Yorqin',
     logout:          'Chiqish',
     language:        'Til',
+    expand:          'Kengaytirish',
+    collapse:        'Yig\'ish',
   },
 }
 

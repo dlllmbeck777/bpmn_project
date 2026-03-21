@@ -297,6 +297,73 @@ MIGRATIONS = [
 ]
 
 
+    (13, """
+        -- Client behavior history for AI Pre-Screen
+        CREATE TABLE IF NOT EXISTS client_history (
+            id SERIAL PRIMARY KEY,
+            client_key TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            event_type TEXT NOT NULL DEFAULT 'APPLICATION',
+            credit_score INTEGER,
+            collection_count INTEGER,
+            decision TEXT,
+            decision_reason TEXT,
+            decision_source TEXT,
+            ai_risk_score INTEGER,
+            ai_recommendation TEXT,
+            product_type TEXT,
+            city TEXT,
+            state TEXT,
+            route_mode TEXT,
+            processing_time_ms INTEGER,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_client_history_key ON client_history(client_key, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_client_history_created ON client_history(created_at DESC);
+
+        INSERT INTO services (id, name, type, base_url, health_path, enabled, timeout_ms, retry_count, endpoint_path, meta)
+        VALUES (
+            'ai-prescreen',
+            'AI Pre-Screen',
+            'processor',
+            'http://ai-prescreen:8109',
+            '/health',
+            TRUE,
+            10000,
+            1,
+            '/api/v1/prescreen',
+            '{"model":"gpt-4o-mini","owner":"ai-prescreen","optional":true,"position":"before_routing"}'::jsonb
+        )
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO services (id, name, type, base_url, health_path, enabled, timeout_ms, retry_count, endpoint_path, meta)
+        VALUES (
+            'ai-advisor',
+            'AI Risk Advisor',
+            'processor',
+            'http://ai-advisor:8108',
+            '/health',
+            TRUE,
+            15000,
+            1,
+            '/api/v1/assess',
+            '{"model":"gpt-4o-mini","owner":"ai-advisor","optional":true}'::jsonb
+        )
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO pipeline_steps (pipeline_name, step_order, service_id, enabled, meta)
+        SELECT 'default', 4, 'ai-advisor', TRUE, '{"optional":true}'::jsonb
+        WHERE NOT EXISTS (
+            SELECT 1 FROM pipeline_steps WHERE pipeline_name='default' AND service_id='ai-advisor'
+        );
+
+        INSERT INTO stop_factors (name, stage, check_type, field_path, operator, threshold, action_on_fail, enabled, priority, meta)
+        SELECT 'AI high risk score', 'decision', 'field_check', 'result.ai_assessment.risk_score', 'gte', '80', 'REVIEW', TRUE, 2, '{"decision_rule":true,"ai_rule":true}'::jsonb
+        WHERE NOT EXISTS (SELECT 1 FROM stop_factors WHERE name='AI high risk score');
+    """),
+]
+
+
 def run_migrations(conn):
     cur = conn.cursor()
     # Ensure schema version table exists
@@ -359,6 +426,8 @@ def seed_defaults(conn):
         ("report-parser", "Report Parser", "processor", "http://processors:8105", "/health", "/api/v1/parse"),
         ("stop-factor", "Stop Factor", "processor", "http://processors:8106", "/health", "/api/v1/check"),
         ("decision-service", "Decision Service", "processor", "http://processors:8107", "/health", "/api/v1/decide"),
+        ("ai-advisor", "AI Risk Advisor", "processor", "http://ai-advisor:8108", "/health", "/api/v1/assess"),
+        ("ai-prescreen", "AI Pre-Screen", "processor", "http://ai-prescreen:8109", "/health", "/api/v1/prescreen"),
     ]
     for s in svcs:
         cur.execute("INSERT INTO services (id,name,type,base_url,health_path,endpoint_path) VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", s)
@@ -394,6 +463,7 @@ def seed_defaults(conn):
         {"pipeline_name": "default", "step_order": 1, "service_id": "isoftpull", "meta": {}},
         {"pipeline_name": "default", "step_order": 2, "service_id": "creditsafe", "meta": {}},
         {"pipeline_name": "default", "step_order": 3, "service_id": "plaid", "meta": {"skip_in_flowable": True}},
+        {"pipeline_name": "default", "step_order": 4, "service_id": "ai-advisor", "meta": {"optional": True}},
     ]
     for step in steps:
         cur.execute("SELECT id FROM pipeline_steps WHERE pipeline_name=%s AND service_id=%s", (step["pipeline_name"], step["service_id"]))
