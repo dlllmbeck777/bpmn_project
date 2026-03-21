@@ -1,135 +1,251 @@
-"""AI Pre-Screen — GPT-4o-mini decision on whether to run bureau pull."""
+"""AI Pre-Screen — GPT-4o-mini decision on whether to run bureau pull.
+
+Production-ready:
+  • exponential-backoff retry  (429 / 500 / 503)
+  • per-service budget check   via core-api before each call
+  • usage logging              (tokens + cost) after each call
+"""
+import asyncio
 import json
+import logging
 import os
 import time
 from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import FastAPI
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, APIStatusError
 from pydantic import BaseModel, Field
 
 from prompts import build_system_prompt, build_user_prompt
 
-AI_MODEL = os.getenv("AI_MODEL", "gpt-4o-mini")
-AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.1"))
-AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "500"))
-AI_FALLBACK_ON_ERROR = os.getenv("AI_FALLBACK_ON_ERROR", "true").lower() in {"1", "true", "yes"}
-CONFIG_URL = os.getenv("CONFIG_SERVICE_URL", "http://core-api:8000")
+# ── Config ────────────────────────────────────────────────────────────────────
+AI_MODEL          = os.getenv("AI_MODEL", "gpt-4o-mini")
+AI_TEMPERATURE    = float(os.getenv("AI_TEMPERATURE", "0.1"))
+AI_MAX_TOKENS     = int(os.getenv("AI_MAX_TOKENS", "500"))
+AI_FALLBACK       = os.getenv("AI_FALLBACK_ON_ERROR", "true").lower() in {"1", "true", "yes"}
+AI_MAX_RETRIES    = int(os.getenv("AI_MAX_RETRIES", "3"))
+AI_RETRY_BASE_S   = float(os.getenv("AI_RETRY_BASE_S", "1.0"))
+CONFIG_URL        = os.getenv("CONFIG_SERVICE_URL", "http://core-api:8000")
+INTERNAL_API_KEY  = os.getenv("INTERNAL_API_KEY", "")
+SERVICE_ID        = "ai-prescreen"
 
-app = FastAPI(title="ai-prescreen", version="1.0.0")
+# gpt-4o-mini pricing (USD per token)
+_COST_IN  = 0.150 / 1_000_000   # $0.150 / 1M input tokens
+_COST_OUT = 0.600 / 1_000_000   # $0.600 / 1M output tokens
+
+log = logging.getLogger(SERVICE_ID)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
+app = FastAPI(title=SERVICE_ID, version="2.0.0")
 _client = AsyncOpenAI()
 
+# ── Meta / system-prompt cache ────────────────────────────────────────────────
 _meta_cache: Dict[str, Any] = {}
 
 
 async def _fetch_meta(ttl: int = 60) -> Dict[str, Any]:
-    cached = _meta_cache.get("ai-prescreen")
+    cached = _meta_cache.get(SERVICE_ID)
     if cached and time.time() < cached[1]:
         return cached[0]
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get(f"{CONFIG_URL}/api/v1/services/ai-prescreen")
-            data = r.json() if r.status_code == 200 else {}
-            meta = data.get("meta") or {}
+        async with httpx.AsyncClient(timeout=3.0) as hx:
+            r = await hx.get(f"{CONFIG_URL}/api/v1/services/{SERVICE_ID}")
+            meta = (r.json().get("meta") or {}) if r.status_code == 200 else {}
     except Exception:
         meta = {}
-    _meta_cache["ai-prescreen"] = (meta, time.time() + ttl)
+    _meta_cache[SERVICE_ID] = (meta, time.time() + ttl)
     return meta
 
 
+# ── Budget check ──────────────────────────────────────────────────────────────
+async def _budget_check() -> tuple[bool, str]:
+    """Returns (allowed, reason). Falls back to allowed=True on errors."""
+    if not INTERNAL_API_KEY:
+        return True, "no internal key configured"
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as hx:
+            r = await hx.get(
+                f"{CONFIG_URL}/api/v1/ai/budget/check/{SERVICE_ID}",
+                headers={"x-internal-api-key": INTERNAL_API_KEY},
+            )
+            if r.status_code == 200:
+                d = r.json()
+                return d.get("allowed", True), d.get("reason", "")
+    except Exception as e:
+        log.warning("budget check failed: %s", e)
+    return True, "budget check unavailable"
+
+
+# ── Usage log ─────────────────────────────────────────────────────────────────
+async def _log_usage(
+    request_id: Optional[str],
+    prompt_tokens: int,
+    completion_tokens: int,
+    status: str = "ok",
+    error_code: Optional[str] = None,
+) -> None:
+    cost = prompt_tokens * _COST_IN + completion_tokens * _COST_OUT
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as hx:
+            await hx.post(
+                f"{CONFIG_URL}/internal/ai/usage",
+                json={
+                    "request_id":        request_id,
+                    "service_id":        SERVICE_ID,
+                    "model":             AI_MODEL,
+                    "prompt_tokens":     prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "cost_usd":          round(cost, 6),
+                    "status":            status,
+                    "error_code":        error_code,
+                },
+                headers={"x-internal-api-key": INTERNAL_API_KEY},
+            )
+    except Exception as e:
+        log.warning("usage log failed: %s", e)
+
+
+# ── OpenAI call with retry ────────────────────────────────────────────────────
+_RETRYABLE_CODES = {429, 500, 502, 503, 504}
+
+
+async def _call_openai(system_prompt: str, user_prompt: str) -> Any:
+    """Call OpenAI with exponential backoff. Raises on non-retryable errors."""
+    last_exc: Exception = RuntimeError("no attempts")
+    for attempt in range(AI_MAX_RETRIES):
+        try:
+            return await _client.chat.completions.create(
+                model=AI_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=AI_TEMPERATURE,
+                max_tokens=AI_MAX_TOKENS,
+            )
+        except APIStatusError as e:
+            last_exc = e
+            if e.status_code not in _RETRYABLE_CODES:
+                raise
+            wait = AI_RETRY_BASE_S * (2 ** attempt)
+            log.warning("OpenAI %s on attempt %d/%d — retrying in %.1fs",
+                        e.status_code, attempt + 1, AI_MAX_RETRIES, wait)
+            await asyncio.sleep(wait)
+        except Exception as e:
+            raise
+    raise last_exc
+
+
+# ── Models ────────────────────────────────────────────────────────────────────
 class ApplicantIn(BaseModel):
-    city: str = ""
-    state: str = ""
-    zipCode: str = ""
-    age: Optional[int] = None
+    city: str = ""; state: str = ""; zipCode: str = ""; age: Optional[int] = None
 
 
 class HistoryIn(BaseModel):
-    history_available: bool = False
-    total_applications: int = 0
-    last_30_days: int = 0
-    last_decision: Optional[str] = None
-    last_credit_score: Optional[int] = None
-    avg_credit_score: Optional[int] = None
-    score_trend: Optional[str] = None
-    rejection_count: int = 0
-    approval_count: int = 0
-    approval_rate: float = 0.0
+    history_available: bool = False; total_applications: int = 0
+    last_30_days: int = 0; last_decision: Optional[str] = None
+    last_credit_score: Optional[int] = None; avg_credit_score: Optional[int] = None
+    score_trend: Optional[str] = None; rejection_count: int = 0
+    approval_count: int = 0; approval_rate: float = 0.0
     rejection_reasons: List[str] = Field(default_factory=list)
-    days_since_last: Optional[int] = None
-    last_ai_risk_score: Optional[int] = None
+    days_since_last: Optional[int] = None; last_ai_risk_score: Optional[int] = None
 
 
 class PrescreenRequest(BaseModel):
     request_id: str
     applicant: ApplicantIn = Field(default_factory=ApplicantIn)
-    history: HistoryIn = Field(default_factory=HistoryIn)
+    history:   HistoryIn   = Field(default_factory=HistoryIn)
     product_type: str = "loan"
 
 
+# ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "ai-prescreen", "model": AI_MODEL}
+    return {"status": "ok", "service": SERVICE_ID, "model": AI_MODEL}
 
 
 @app.post("/api/v1/prescreen")
 async def prescreen(body: PrescreenRequest):
     start = time.time()
 
+    # 1. Budget check
+    allowed, budget_reason = await _budget_check()
+    if not allowed:
+        log.warning("[%s] budget exceeded: %s", body.request_id, budget_reason)
+        asyncio.create_task(_log_usage(body.request_id, 0, 0, "budget_exceeded"))
+        return _fallback(body, start, f"Budget limit reached: {budget_reason}", "budget_exceeded")
+
+    # 2. Fetch meta / system prompt
     meta = await _fetch_meta()
     system_prompt = meta.get("system_prompt") or build_system_prompt()
-    user_prompt = build_user_prompt(
+    user_prompt   = build_user_prompt(
         applicant=body.applicant.model_dump(),
         history=body.history.model_dump(),
         product_type=body.product_type,
     )
 
+    # 3. Call OpenAI with retry
     try:
-        response = await _client.chat.completions.create(
-            model=AI_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=AI_TEMPERATURE,
-            max_tokens=AI_MAX_TOKENS,
-        )
-        ai_result = json.loads(response.choices[0].message.content)
-        flags: List[str] = ai_result.get("flags") or []
-        confidence = float(ai_result.get("confidence", 0.0))
-        skip_bureau = bool(ai_result.get("skip_bureau", False))
-        recommendation = ai_result.get("recommendation", "REVIEW")
+        response   = await _call_openai(system_prompt, user_prompt)
+        ai_result  = json.loads(response.choices[0].message.content)
+        p_tok      = response.usage.prompt_tokens
+        c_tok      = response.usage.completion_tokens
 
-        # Enforce safety: skip_bureau only for DECLINE + high confidence
+        asyncio.create_task(_log_usage(body.request_id, p_tok, c_tok, "ok"))
+        log.info("[%s] prescreen ok  prompt=%d compl=%d cost=$%.5f",
+                 body.request_id, p_tok, c_tok, p_tok * _COST_IN + c_tok * _COST_OUT)
+
+        confidence     = float(ai_result.get("confidence", 0.0))
+        recommendation = ai_result.get("recommendation", "REVIEW")
+        skip_bureau    = bool(ai_result.get("skip_bureau", False))
         if recommendation != "DECLINE" or confidence < 0.85:
             skip_bureau = False
 
         return {
-            "request_id": body.request_id,
-            "skip_bureau": skip_bureau,
-            "confidence": confidence,
-            "reason": ai_result.get("reason", ""),
-            "risk_level": ai_result.get("risk_level", "MEDIUM"),
-            "recommendation": recommendation,
-            "flags": flags,
-            "model": AI_MODEL,
+            "request_id":        body.request_id,
+            "skip_bureau":       skip_bureau,
+            "confidence":        confidence,
+            "reason":            ai_result.get("reason", ""),
+            "risk_level":        ai_result.get("risk_level", "MEDIUM"),
+            "recommendation":    recommendation,
+            "flags":             ai_result.get("flags") or [],
+            "model":             AI_MODEL,
+            "tokens_used":       {"prompt": p_tok, "completion": c_tok},
+            "cost_usd":          round(p_tok * _COST_IN + c_tok * _COST_OUT, 6),
             "processing_time_ms": int((time.time() - start) * 1000),
         }
-    except Exception as exc:
-        if not AI_FALLBACK_ON_ERROR:
+
+    except APIStatusError as e:
+        err_code = str(e.status_code)
+        asyncio.create_task(_log_usage(body.request_id, 0, 0, "fallback", err_code))
+        log.error("[%s] OpenAI error %s: %s", body.request_id, e.status_code, e.message)
+        if not AI_FALLBACK:
             raise
-        # Fallback: don't skip bureau — safest default
-        return {
-            "request_id": body.request_id,
-            "skip_bureau": False,
-            "confidence": 0.0,
-            "reason": f"AI pre-screen error: {exc}. Bureau pull will proceed.",
-            "risk_level": "MEDIUM",
-            "recommendation": "REVIEW",
-            "flags": ["AI pre-screen unavailable"],
-            "model": AI_MODEL,
-            "processing_time_ms": int((time.time() - start) * 1000),
-            "fallback": True,
-        }
+        return _fallback(body, start, f"AI pre-screen error: {e}. Bureau pull will proceed.", err_code)
+
+    except Exception as exc:
+        asyncio.create_task(_log_usage(body.request_id, 0, 0, "fallback", "unknown"))
+        log.error("[%s] unexpected error: %s", body.request_id, exc)
+        if not AI_FALLBACK:
+            raise
+        return _fallback(body, start, f"AI pre-screen error: {exc}. Bureau pull will proceed.")
+
+
+def _fallback(body: PrescreenRequest, start: float, reason: str, error_code: Optional[str] = None) -> dict:
+    return {
+        "request_id":        body.request_id,
+        "skip_bureau":       False,
+        "confidence":        0.0,
+        "reason":            reason,
+        "risk_level":        "MEDIUM",
+        "recommendation":    "REVIEW",
+        "flags":             ["AI pre-screen unavailable"],
+        "model":             AI_MODEL,
+        "tokens_used":       {"prompt": 0, "completion": 0},
+        "cost_usd":          0.0,
+        "processing_time_ms": int((time.time() - start) * 1000),
+        "fallback":          True,
+        "error_code":        error_code,
+    }

@@ -3,7 +3,9 @@ import os
 import time
 import threading
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel
 
 import psycopg2
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
@@ -821,6 +823,206 @@ def record_tracker_event(body: TrackerEventIn, x_internal_api_key: str = Header(
         correlation_id=get_correlation_id(),
     )
     return {"status": "tracked"}
+
+
+# ── AI Usage & Budget ──────────────────────────────────────────────────────────
+
+class AiUsageLogIn(BaseModel):
+    request_id: Optional[str] = None
+    service_id: str
+    model: str = "gpt-4o-mini"
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cost_usd: float = 0.0
+    status: str = "ok"
+    error_code: Optional[str] = None
+
+
+@app.post("/internal/ai/usage", tags=["AI Usage"], status_code=201)
+def log_ai_usage(body: AiUsageLogIn, x_internal_api_key: str = Header(default="")):
+    require_internal_auth(x_internal_api_key)
+    execute(
+        """INSERT INTO ai_usage_log
+           (request_id, service_id, model, prompt_tokens, completion_tokens,
+            total_tokens, cost_usd, status, error_code)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (body.request_id, body.service_id, body.model,
+         body.prompt_tokens, body.completion_tokens,
+         body.prompt_tokens + body.completion_tokens,
+         round(body.cost_usd, 6), body.status, body.error_code),
+    )
+    return {"status": "logged"}
+
+
+@app.get("/api/v1/ai/usage", tags=["AI Usage"])
+def get_ai_usage(
+    period: str = "30d",
+    service_id: Optional[str] = None,
+    x_api_key: str = Header(default=""),
+    x_user_role: str = Header(default=""),
+):
+    """Return aggregated AI usage stats. period: today|7d|30d|all"""
+    require_min_role(x_api_key, x_user_role, ROLE_ANALYST)
+    if period == "today":
+        since = "NOW() - INTERVAL '1 day'"
+    elif period == "7d":
+        since = "NOW() - INTERVAL '7 days'"
+    elif period == "30d":
+        since = "NOW() - INTERVAL '30 days'"
+    else:
+        since = "NOW() - INTERVAL '3650 days'"
+
+    svc_filter = "AND service_id = %s" if service_id else ""
+    params: list = [service_id] if service_id else []
+
+    rows = query(
+        f"""SELECT service_id, model,
+               COUNT(*) AS calls,
+               SUM(prompt_tokens) AS prompt_tokens,
+               SUM(completion_tokens) AS completion_tokens,
+               SUM(total_tokens) AS total_tokens,
+               SUM(cost_usd) AS cost_usd,
+               SUM(CASE WHEN status='fallback' THEN 1 ELSE 0 END) AS fallbacks,
+               SUM(CASE WHEN status='budget_exceeded' THEN 1 ELSE 0 END) AS budget_exceeded
+           FROM ai_usage_log
+           WHERE created_at >= {since} {svc_filter}
+           GROUP BY service_id, model
+           ORDER BY service_id""",
+        params or None,
+    )
+
+    # Daily breakdown
+    daily = query(
+        f"""SELECT DATE(created_at AT TIME ZONE 'UTC') AS day,
+               service_id,
+               COUNT(*) AS calls,
+               SUM(cost_usd) AS cost_usd
+           FROM ai_usage_log
+           WHERE created_at >= {since} {svc_filter}
+           GROUP BY day, service_id
+           ORDER BY day DESC""",
+        params or None,
+    )
+
+    # Recent entries
+    recent = query(
+        f"""SELECT id, request_id, service_id, model,
+               prompt_tokens, completion_tokens, total_tokens, cost_usd,
+               status, error_code, created_at
+           FROM ai_usage_log
+           WHERE created_at >= {since} {svc_filter}
+           ORDER BY created_at DESC LIMIT 100""",
+        params or None,
+    )
+
+    return to_json_ready({
+        "summary": rows,
+        "daily": daily,
+        "recent": recent,
+        "period": period,
+    })
+
+
+@app.get("/api/v1/ai/budget", tags=["AI Usage"])
+def get_ai_budget(x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
+    """Return budget config for all AI services (from services.meta)."""
+    require_min_role(x_api_key, x_user_role, ROLE_ANALYST)
+    rows = query(
+        "SELECT id, name, enabled, meta FROM services WHERE id IN ('ai-prescreen','ai-advisor')"
+    )
+    today_rows = query(
+        """SELECT service_id, SUM(cost_usd) AS cost_usd
+           FROM ai_usage_log
+           WHERE created_at >= DATE_TRUNC('day', NOW())
+           GROUP BY service_id"""
+    )
+    month_rows = query(
+        """SELECT service_id, SUM(cost_usd) AS cost_usd
+           FROM ai_usage_log
+           WHERE created_at >= DATE_TRUNC('month', NOW())
+           GROUP BY service_id"""
+    )
+    today_map  = {r["service_id"]: float(r["cost_usd"] or 0) for r in today_rows}
+    month_map  = {r["service_id"]: float(r["cost_usd"] or 0) for r in month_rows}
+
+    result = []
+    for r in rows:
+        meta = r.get("meta") or {}
+        result.append({
+            "service_id":         r["id"],
+            "name":               r["name"],
+            "enabled":            r["enabled"],
+            "daily_budget_usd":   meta.get("daily_budget_usd"),
+            "monthly_budget_usd": meta.get("monthly_budget_usd"),
+            "budget_enabled":     meta.get("budget_enabled", False),
+            "today_usd":          today_map.get(r["id"], 0.0),
+            "month_usd":          month_map.get(r["id"], 0.0),
+        })
+    return to_json_ready({"items": result})
+
+
+class AiBudgetUpdate(BaseModel):
+    daily_budget_usd:   Optional[float] = None
+    monthly_budget_usd: Optional[float] = None
+    budget_enabled:     bool = True
+
+
+@app.put("/api/v1/ai/budget/{service_id}", tags=["AI Usage"])
+def update_ai_budget(
+    service_id: str,
+    body: AiBudgetUpdate,
+    x_api_key: str = Header(default=""),
+    x_user_role: str = Header(default=""),
+    x_user_name: str = Header(default=""),
+):
+    require_min_role(x_api_key, x_user_role, ROLE_ADMIN)
+    if service_id not in ("ai-prescreen", "ai-advisor"):
+        raise HTTPException(404, "Unknown AI service")
+    patch: Dict[str, Any] = {"budget_enabled": body.budget_enabled}
+    if body.daily_budget_usd is not None:
+        patch["daily_budget_usd"] = body.daily_budget_usd
+    if body.monthly_budget_usd is not None:
+        patch["monthly_budget_usd"] = body.monthly_budget_usd
+    execute(
+        "UPDATE services SET meta = COALESCE(meta,'{}') || %s::jsonb, updated_at=NOW() WHERE id=%s",
+        (json.dumps(patch), service_id),
+    )
+    audit("ai_budget", service_id, "updated", patch, performed_by=x_user_name)
+    config_cache.clear()
+    return {"status": "updated"}
+
+
+@app.get("/api/v1/ai/budget/check/{service_id}", tags=["AI Usage"])
+def check_ai_budget(service_id: str, x_internal_api_key: str = Header(default="")):
+    """Called by AI services before invoking OpenAI. Returns {allowed, reason}."""
+    require_internal_auth(x_internal_api_key)
+    row = query("SELECT meta, enabled FROM services WHERE id=%s", (service_id,), "one")
+    if not row or not row.get("enabled"):
+        return {"allowed": False, "reason": "service disabled"}
+    meta = row.get("meta") or {}
+    if not meta.get("budget_enabled"):
+        return {"allowed": True, "reason": "no budget limit"}
+
+    daily   = meta.get("daily_budget_usd")
+    monthly = meta.get("monthly_budget_usd")
+
+    if daily is not None:
+        today_row = query(
+            "SELECT COALESCE(SUM(cost_usd),0) AS s FROM ai_usage_log WHERE service_id=%s AND created_at>=DATE_TRUNC('day',NOW())",
+            (service_id,), "one",
+        )
+        if float(today_row["s"]) >= float(daily):
+            return {"allowed": False, "reason": f"daily budget ${daily} exceeded (spent ${today_row['s']:.4f})"}
+
+    if monthly is not None:
+        month_row = query(
+            "SELECT COALESCE(SUM(cost_usd),0) AS s FROM ai_usage_log WHERE service_id=%s AND created_at>=DATE_TRUNC('month',NOW())",
+            (service_id,), "one",
+        )
+        if float(month_row["s"]) >= float(monthly):
+            return {"allowed": False, "reason": f"monthly budget ${monthly} exceeded (spent ${month_row['s']:.4f})"}
+
+    return {"allowed": True, "reason": "within budget"}
 
 
 if __name__ == "__main__":

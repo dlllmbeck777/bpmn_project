@@ -22,3 +22,4 @@ infra/nginx/certs/*.crt
 !infra/nginx/certs/README.md
 !.env.example
 !.env.prod.example
+.txt

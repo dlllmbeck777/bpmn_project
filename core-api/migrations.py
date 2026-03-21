@@ -461,6 +461,24 @@ MIGRATIONS = [
         SELECT 'AI high risk score', 'decision', 'field_check', 'result.ai_assessment.risk_score', 'gte', '80', 'REVIEW', TRUE, 2, '{"decision_rule":true,"ai_rule":true}'::jsonb
         WHERE NOT EXISTS (SELECT 1 FROM stop_factors WHERE name='AI high risk score');
     """),
+
+    (14, """
+        CREATE TABLE IF NOT EXISTS ai_usage_log (
+            id          SERIAL PRIMARY KEY,
+            request_id  TEXT,
+            service_id  TEXT NOT NULL,
+            model       TEXT NOT NULL DEFAULT 'gpt-4o-mini',
+            prompt_tokens      INTEGER DEFAULT 0,
+            completion_tokens  INTEGER DEFAULT 0,
+            total_tokens       INTEGER DEFAULT 0,
+            cost_usd    NUMERIC(10,6) DEFAULT 0,
+            status      TEXT DEFAULT 'ok',
+            error_code  TEXT,
+            created_at  TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_usage_service_ts ON ai_usage_log (service_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_ai_usage_ts        ON ai_usage_log (created_at DESC);
+    """),
 ]
 
 
