@@ -292,6 +292,15 @@ async def _acfg(path, ttl=30):
     return value
 
 
+def _parse_bpmn_version(definition_id: str) -> Optional[int]:
+    """Parse version number from Flowable processDefinitionId (format: key:version:uuid)."""
+    parts = definition_id.split(":") if definition_id else []
+    try:
+        return int(parts[1]) if len(parts) >= 3 else None
+    except (ValueError, IndexError):
+        return None
+
+
 def _build_steps(process_variables: Dict[str, Any]):
     process_variables = _canonicalize_flowable_variables(process_variables)
     raw_map = {
@@ -509,9 +518,12 @@ async def _load_completed_variables(flowable_url: str, instance_id: str) -> Opti
     historic = items[0] if items else {}
     if not historic.get("endTime"):
         return None
+    _def_id = historic.get("processDefinitionId", "")
     variables = historic.get("variables") or historic.get("processVariables") or []
     if variables:
-        return _canonicalize_flowable_variables({item["name"]: item.get("value") for item in variables if item.get("name")})
+        result = _canonicalize_flowable_variables({item["name"]: item.get("value") for item in variables if item.get("name")})
+        result["__process_definition_id__"] = _def_id
+        return result
 
     variables_response = await _flowable_request(
         "GET",
@@ -531,7 +543,9 @@ async def _load_completed_variables(flowable_url: str, instance_id: str) -> Opti
             normalized[variable["name"]] = variable.get("value")
         elif isinstance(item, dict) and item.get("name"):
             normalized[item["name"]] = item.get("value")
-    return _canonicalize_flowable_variables(normalized)
+    result = _canonicalize_flowable_variables(normalized)
+    result["__process_definition_id__"] = _def_id
+    return result
 
 
 async def _load_runtime_snapshot(flowable_url: str, instance_id: str) -> Dict[str, Any]:
@@ -669,7 +683,9 @@ async def _build_result_payload(body: "RequestIn", instance_id: str, process_var
         "decision_reason": decision_payload.get("decision_reason"),
         "decision_source": decision_payload.get("decision_source"),
         "matched_rule": decision_payload.get("matched_rule"),
-        "engine": {"engine": "flowable", "started": True, "instance_id": instance_id, "completed": True},
+        "engine": {"engine": "flowable", "started": True, "instance_id": instance_id, "completed": True,
+                   "process_definition_id": process_variables.get("__process_definition_id__", ""),
+                   "bpmn_version": _parse_bpmn_version(process_variables.get("__process_definition_id__", ""))},
         "connector_urls_injected": connector_urls,
         "process_variables": {key: _parse_jsonish(value) for key, value in process_variables.items()},
         "steps": steps,

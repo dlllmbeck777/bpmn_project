@@ -689,6 +689,10 @@ export default function RequestsPage() {
                   <span className="rqd-metric-lbl">Mode</span>
                   <span className="rqd-metric-val">{detail.orchestration_mode||'—'}</span>
                 </div>
+                {detail.result?.engine?.bpmn_version!=null&&<div className="rqd-metric">
+                  <span className="rqd-metric-lbl">BPMN</span>
+                  <span className="rqd-metric-val" style={{fontFamily:'monospace',fontSize:11}}>v{detail.result.engine.bpmn_version}</span>
+                </div>}
                 {aiPreRec&&<div className="rqd-metric">
                   <span className="rqd-metric-lbl">Pre-screen AI</span>
                   <span className="rqd-metric-val" style={{color:aiRecColor(aiPreRec),fontSize:11}}>{String(aiPreRec).toUpperCase()}</span>
