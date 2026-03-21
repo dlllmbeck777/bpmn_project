@@ -451,7 +451,15 @@ X-Request-Id: ${request_id}</flowable:expression>
         execution.setVariable('ai_request_body', mapper.writeValueAsString(aiBody))
       ]]></script>
     </scriptTask>
-    <sequenceFlow id="flow_prep_ai_to_ai_assess" sourceRef="task_prepare_ai_body" targetRef="task_ai_assess"/>
+    <sequenceFlow id="flow_prep_ai_to_gateway" sourceRef="task_prepare_ai_body" targetRef="gateway_ai_enabled"/>
+
+    <exclusiveGateway id="gateway_ai_enabled" name="AI enabled?"/>
+    <sequenceFlow id="flow_ai_enabled" sourceRef="gateway_ai_enabled" targetRef="task_ai_assess">
+      <conditionExpression><![CDATA[${!empty ai_advisor_url}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flow_ai_skip" sourceRef="gateway_ai_enabled" targetRef="endEvent">
+      <conditionExpression><![CDATA[${empty ai_advisor_url}]]></conditionExpression>
+    </sequenceFlow>
 
     <endEvent id="endEvent" name="Completed"/>
   </process>
@@ -486,10 +494,11 @@ X-Request-Id: ${request_id}</flowable:expression>
       <bpmndi:BPMNShape id="shape_decision_deg" bpmnElement="task_decision_degrade"><omgdc:Bounds x="2240" y="280" width="140" height="80"/></bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="shape_parse_decision" bpmnElement="task_parse_decision"><omgdc:Bounds x="2260" y="158" width="140" height="80"/></bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="shape_prep_ai" bpmnElement="task_prepare_ai_body"><omgdc:Bounds x="2460" y="158" width="140" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_ai_assess" bpmnElement="task_ai_assess"><omgdc:Bounds x="2660" y="158" width="140" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gateway_ai" bpmnElement="gateway_ai_enabled"><omgdc:Bounds x="2655" y="173" width="50" height="50"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_ai_assess" bpmnElement="task_ai_assess"><omgdc:Bounds x="2760" y="158" width="140" height="80"/></bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="shape_err_ai" bpmnElement="err_ai"><omgdc:Bounds x="2750" y="210" width="36" height="36"/></bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="shape_ai_deg" bpmnElement="task_ai_degrade"><omgdc:Bounds x="2840" y="280" width="120" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="shape_end" bpmnElement="endEvent"><omgdc:Bounds x="2860" y="180" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_end" bpmnElement="endEvent"><omgdc:Bounds x="2960" y="180" width="36" height="36"/></bpmndi:BPMNShape>
 
       <bpmndi:BPMNEdge id="edge1" bpmnElement="flow_start_to_init"><omgdi:waypoint x="136" y="198"/><omgdi:waypoint x="180" y="198"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge2" bpmnElement="flow_init_to_iso"><omgdi:waypoint x="300" y="198"/><omgdi:waypoint x="300" y="95"/><omgdi:waypoint x="420" y="95"/></bpmndi:BPMNEdge>
@@ -515,10 +524,12 @@ X-Request-Id: ${request_id}</flowable:expression>
       <bpmndi:BPMNEdge id="edge12a" bpmnElement="flow_err_decision"><omgdi:waypoint x="2168" y="246"/><omgdi:waypoint x="2310" y="280"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge12b" bpmnElement="flow_decision_deg_to_parse"><omgdi:waypoint x="2380" y="320"/><omgdi:waypoint x="2330" y="320"/><omgdi:waypoint x="2330" y="238"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge13" bpmnElement="flow_parse_decision_to_prep_ai"><omgdi:waypoint x="2400" y="198"/><omgdi:waypoint x="2460" y="198"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge13a" bpmnElement="flow_prep_ai_to_ai_assess"><omgdi:waypoint x="2600" y="198"/><omgdi:waypoint x="2660" y="198"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge14" bpmnElement="flow_ai_to_end"><omgdi:waypoint x="2800" y="198"/><omgdi:waypoint x="2860" y="198"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge14a" bpmnElement="flow_err_ai"><omgdi:waypoint x="2768" y="246"/><omgdi:waypoint x="2900" y="280"/></bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="edge14b" bpmnElement="flow_ai_deg_to_end"><omgdi:waypoint x="2960" y="320"/><omgdi:waypoint x="2878" y="320"/><omgdi:waypoint x="2878" y="216"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge13a" bpmnElement="flow_prep_ai_to_gateway"><omgdi:waypoint x="2600" y="198"/><omgdi:waypoint x="2655" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge13b" bpmnElement="flow_ai_enabled"><omgdi:waypoint x="2705" y="198"/><omgdi:waypoint x="2760" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge13c" bpmnElement="flow_ai_skip"><omgdi:waypoint x="2680" y="173"/><omgdi:waypoint x="2680" y="130"/><omgdi:waypoint x="2978" y="130"/><omgdi:waypoint x="2978" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge14" bpmnElement="flow_ai_to_end"><omgdi:waypoint x="2900" y="198"/><omgdi:waypoint x="2960" y="198"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge14a" bpmnElement="flow_err_ai"><omgdi:waypoint x="2868" y="246"/><omgdi:waypoint x="3000" y="280"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="edge14b" bpmnElement="flow_ai_deg_to_end"><omgdi:waypoint x="3060" y="320"/><omgdi:waypoint x="2978" y="320"/><omgdi:waypoint x="2978" y="216"/></bpmndi:BPMNEdge>
 
       <bpmndi:BPMNEdge id="edge15" bpmnElement="flow_err_iso"><omgdi:waypoint x="468" y="246"/><omgdi:waypoint x="600" y="280"/></bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="edge16" bpmnElement="flow_iso_deg_to_prep_cs"><omgdi:waypoint x="660" y="320"/><omgdi:waypoint x="790" y="320"/><omgdi:waypoint x="790" y="238"/></bpmndi:BPMNEdge>
