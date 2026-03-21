@@ -294,8 +294,6 @@ MIGRATIONS = [
             updated_at=NOW()
         WHERE name='Max Creditsafe alerts 1';
     """),
-]
-
 
     (13, """
         -- Client behavior history for AI Pre-Screen
