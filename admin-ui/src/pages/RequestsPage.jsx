@@ -860,78 +860,91 @@ export default function RequestsPage() {
                     </div>
                   ) : null
 
+                  const AiCard = ({data, title, textField}) => {
+                    const text = data[textField] || data.narrative || data.reason || data.rationale || ''
+                    const [expanded, setExpanded] = React.useState(false)
+                    const long = text.length > 200
+                    return (
+                      <div className="card" style={{margin:0,borderLeft:`4px solid ${recColor(data.recommendation)}`,paddingLeft:16}}>
+                        {/* Header */}
+                        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+                          <span style={{fontSize:11,fontWeight:700,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:'1px'}}>{title}</span>
+                          <div style={{display:'flex',alignItems:'center',gap:8}}>
+                            {data.model&&<span style={{fontSize:9,color:'var(--text-3)',fontFamily:'monospace',opacity:0.7}}>{data.model}</span>}
+                            {data.cost_usd>0&&<span style={{fontSize:9,color:'var(--text-3)',fontFamily:'monospace'}}>${data.cost_usd.toFixed(5)}</span>}
+                          </div>
+                        </div>
+
+                        {/* Decision badge */}
+                        {data.recommendation&&(
+                          <div style={{display:'flex',alignItems:'center',flexWrap:'wrap',gap:10,marginBottom:14,padding:'8px 14px',borderRadius:6,background:recBg(data.recommendation)}}>
+                            <span style={{fontWeight:800,fontSize:18,color:recColor(data.recommendation),letterSpacing:'1px'}}>{String(data.recommendation).toUpperCase()}</span>
+                            {data.risk_level&&<span style={{fontSize:12,fontWeight:700,color:riskColor(data.risk_level),borderLeft:'1px solid var(--border)',paddingLeft:10}}>Risk: {data.risk_level}</span>}
+                            {data.risk_score!=null&&<span style={{fontSize:12,fontFamily:'monospace',color:'var(--text-2)',borderLeft:'1px solid var(--border)',paddingLeft:10}}>Score: {data.risk_score}</span>}
+                            {data.skip_bureau!=null&&<span style={{fontSize:10,color:'var(--text-3)',borderLeft:'1px solid var(--border)',paddingLeft:10}}>Bureau: {data.skip_bureau?'skipped':'required'}</span>}
+                          </div>
+                        )}
+
+                        {/* Confidence */}
+                        {data.confidence!=null&&(
+                          <div style={{marginBottom:14}}>
+                            <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                              <span style={{fontSize:10,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:'0.5px'}}>Confidence</span>
+                            </div>
+                            <ConfBar value={data.confidence}/>
+                          </div>
+                        )}
+
+                        {/* Main text */}
+                        {text&&(
+                          <div style={{marginBottom:14}}>
+                            <div style={{fontSize:10,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:6}}>
+                              {title.includes('Advisor') ? 'Analysis' : 'Rationale'}
+                            </div>
+                            <div style={{fontSize:13,color:'var(--text-1)',lineHeight:1.7,whiteSpace:'pre-wrap',wordBreak:'break-word'}}>
+                              {long && !expanded ? text.slice(0, 200) + '…' : text}
+                            </div>
+                            {long&&(
+                              <button onClick={()=>setExpanded(v=>!v)} style={{marginTop:6,fontSize:11,color:'var(--accent)',background:'none',border:'none',cursor:'pointer',padding:0}}>
+                                {expanded ? '▲ Show less' : '▼ Show more'}
+                              </button>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Tags */}
+                        {(data.red_flags||[]).length>0&&(
+                          <div style={{marginBottom:10}}>
+                            <div style={{fontSize:10,color:'var(--red)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:4}}>⚠ Red flags</div>
+                            <TagList items={data.red_flags} color="var(--red)"/>
+                          </div>
+                        )}
+                        {(data.flags||[]).length>0&&(
+                          <div style={{marginBottom:10}}>
+                            <div style={{fontSize:10,color:'var(--amber)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:4}}>Flags</div>
+                            <TagList items={data.flags} color="var(--amber)"/>
+                          </div>
+                        )}
+                        {(data.positive_factors||[]).length>0&&(
+                          <div style={{marginBottom:10}}>
+                            <div style={{fontSize:10,color:'var(--green)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:4}}>✓ Positive factors</div>
+                            <TagList items={data.positive_factors} color="var(--green)"/>
+                          </div>
+                        )}
+                        {(data.suggested_conditions||[]).length>0&&(
+                          <div style={{marginBottom:10}}>
+                            <div style={{fontSize:10,color:'var(--accent)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:4}}>Suggested conditions</div>
+                            <TagList items={data.suggested_conditions} color="var(--accent)"/>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  }
+
                   return (
-                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))',gap:14}}>
-                      {aiPre && (
-                        <div className="card" style={{margin:0,borderTop:`3px solid ${recColor(aiPre.recommendation)}`}}>
-                          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
-                            <span style={{fontSize:11,fontWeight:700,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:'0.8px'}}>AI Pre-screen</span>
-                            {aiPre.model&&<span style={{fontSize:9,color:'var(--text-3)',fontFamily:'monospace'}}>{aiPre.model}</span>}
-                          </div>
-                          {aiPre.recommendation && (
-                            <div style={{display:'inline-flex',alignItems:'center',gap:6,padding:'5px 12px',borderRadius:4,background:recBg(aiPre.recommendation),marginBottom:10}}>
-                              <span style={{fontWeight:800,fontSize:14,color:recColor(aiPre.recommendation),letterSpacing:'0.5px'}}>{String(aiPre.recommendation).toUpperCase()}</span>
-                              {aiPre.risk_level&&<span style={{fontSize:10,fontWeight:600,color:riskColor(aiPre.risk_level)}}>· {aiPre.risk_level}</span>}
-                              {aiPre.skip_bureau!=null&&<span style={{fontSize:9,color:'var(--text-3)'}}>· bureau: {aiPre.skip_bureau?'skip':'run'}</span>}
-                            </div>
-                          )}
-                          {aiPre.confidence!=null&&<div style={{marginBottom:10}}><div style={{fontSize:9,color:'var(--text-3)',marginBottom:3}}>CONFIDENCE</div><ConfBar value={aiPre.confidence}/></div>}
-                          {(aiPre.reason||aiPre.rationale)&&(
-                            <div style={{marginBottom:10}}>
-                              <div style={{fontSize:9,color:'var(--text-3)',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.5px'}}>Rationale</div>
-                              <div style={{fontSize:12,color:'var(--text-1)',lineHeight:1.6}}>{aiPre.reason||aiPre.rationale}</div>
-                            </div>
-                          )}
-                          {(aiPre.flags||[]).length>0&&(
-                            <div>
-                              <div style={{fontSize:9,color:'var(--text-3)',marginBottom:2,textTransform:'uppercase',letterSpacing:'0.5px'}}>Flags</div>
-                              <TagList items={aiPre.flags} color="var(--amber)"/>
-                            </div>
-                          )}
-                          {aiPre.cost_usd>0&&<div style={{marginTop:10,fontSize:9,color:'var(--text-3)',fontFamily:'monospace'}}>cost ${aiPre.cost_usd.toFixed(5)} · {aiPre.tokens_used?.prompt+aiPre.tokens_used?.completion} tok</div>}
-                        </div>
-                      )}
-                      {aiAdv && (
-                        <div className="card" style={{margin:0,borderTop:`3px solid ${recColor(aiAdv.recommendation)}`}}>
-                          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
-                            <span style={{fontSize:11,fontWeight:700,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:'0.8px'}}>AI Advisor</span>
-                            {aiAdv.model&&<span style={{fontSize:9,color:'var(--text-3)',fontFamily:'monospace'}}>{aiAdv.model}</span>}
-                          </div>
-                          {aiAdv.recommendation && (
-                            <div style={{display:'inline-flex',alignItems:'center',gap:8,padding:'5px 12px',borderRadius:4,background:recBg(aiAdv.recommendation),marginBottom:10,flexWrap:'wrap'}}>
-                              <span style={{fontWeight:800,fontSize:14,color:recColor(aiAdv.recommendation),letterSpacing:'0.5px'}}>{String(aiAdv.recommendation).toUpperCase()}</span>
-                              {aiAdv.risk_level&&<span style={{fontSize:11,fontWeight:700,color:riskColor(aiAdv.risk_level)}}>· risk: {aiAdv.risk_level}</span>}
-                              {aiAdv.risk_score!=null&&<span style={{fontSize:10,fontFamily:'monospace',color:'var(--text-2)'}}>score {aiAdv.risk_score}</span>}
-                            </div>
-                          )}
-                          {aiAdv.confidence!=null&&<div style={{marginBottom:10}}><div style={{fontSize:9,color:'var(--text-3)',marginBottom:3}}>CONFIDENCE</div><ConfBar value={aiAdv.confidence}/></div>}
-                          {(aiAdv.narrative||aiAdv.rationale)&&(
-                            <div style={{marginBottom:10}}>
-                              <div style={{fontSize:9,color:'var(--text-3)',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.5px'}}>Analysis</div>
-                              <div style={{fontSize:12,color:'var(--text-1)',lineHeight:1.6}}>{aiAdv.narrative||aiAdv.rationale}</div>
-                            </div>
-                          )}
-                          {(aiAdv.red_flags||[]).length>0&&(
-                            <div style={{marginBottom:8}}>
-                              <div style={{fontSize:9,color:'var(--text-3)',marginBottom:2,textTransform:'uppercase',letterSpacing:'0.5px'}}>Red flags</div>
-                              <TagList items={aiAdv.red_flags} color="var(--red)"/>
-                            </div>
-                          )}
-                          {(aiAdv.positive_factors||[]).length>0&&(
-                            <div style={{marginBottom:8}}>
-                              <div style={{fontSize:9,color:'var(--text-3)',marginBottom:2,textTransform:'uppercase',letterSpacing:'0.5px'}}>Positive factors</div>
-                              <TagList items={aiAdv.positive_factors} color="var(--green)"/>
-                            </div>
-                          )}
-                          {(aiAdv.suggested_conditions||[]).length>0&&(
-                            <div style={{marginBottom:8}}>
-                              <div style={{fontSize:9,color:'var(--text-3)',marginBottom:2,textTransform:'uppercase',letterSpacing:'0.5px'}}>Suggested conditions</div>
-                              <TagList items={aiAdv.suggested_conditions} color="var(--accent)"/>
-                            </div>
-                          )}
-                          {aiAdv.cost_usd>0&&<div style={{marginTop:10,fontSize:9,color:'var(--text-3)',fontFamily:'monospace'}}>cost ${aiAdv.cost_usd.toFixed(5)} · {(aiAdv.tokens_used?.prompt||0)+(aiAdv.tokens_used?.completion||0)} tok</div>}
-                        </div>
-                      )}
+                    <div style={{display:'flex',flexDirection:'column',gap:14}}>
+                      {aiPre&&<AiCard data={aiPre} title="AI Pre-screen" textField="reason"/>}
+                      {aiAdv&&<AiCard data={aiAdv} title="AI Advisor" textField="narrative"/>}
                     </div>
                   )
                 })()}
