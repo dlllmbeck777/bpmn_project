@@ -1504,6 +1504,21 @@ async def submit_request_payload(
     if existing:
         raise HTTPException(409, f"request_id '{request_id}' already exists (status: {existing.get('status')})")
 
+    # ── Write-first: persist before any external calls ───────────────────────
+    # Request is durably stored immediately — any downstream failure leaves a
+    # recoverable record that reconciliation can pick up.
+    execute(
+        """
+        INSERT INTO requests
+            (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,
+             external_applicant_id,product_type,orchestration_mode,
+             status,correlation_id,persisted_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'PERSISTED',%s,NOW())
+        """,
+        (request_id, customer_id, iin_encrypted, ssn_encrypted,
+         json.dumps(applicant_profile), external_applicant_id,
+         product_type, requested_mode, cid),
+    )
     track_request_event(
         request_id,
         origin_stage,
@@ -1514,6 +1529,7 @@ async def submit_request_payload(
         correlation_id=cid,
     )
 
+    # ── Applicant backend ────────────────────────────────────────────────────
     if external_applicant_id:
         data["external_applicant_id"] = external_applicant_id
         data.setdefault("payload", {})["external_applicant_id"] = external_applicant_id
@@ -1528,6 +1544,7 @@ async def submit_request_payload(
             correlation_id=cid,
         )
     else:
+        execute("UPDATE requests SET status='APPLICANT_CREATING',updated_at=NOW() WHERE request_id=%s", (request_id,))
         track_request_event(
             request_id,
             "applicant_backend",
@@ -1545,6 +1562,10 @@ async def submit_request_payload(
                 raise HTTPException(502, "credit backend returned applicant without id")
             data["external_applicant_id"] = external_applicant_id
             data.setdefault("payload", {})["external_applicant_id"] = external_applicant_id
+            execute(
+                "UPDATE requests SET status='APPLICANT_CREATED',external_applicant_id=%s,updated_at=NOW() WHERE request_id=%s",
+                (external_applicant_id, request_id),
+            )
             track_request_event(
                 request_id,
                 "applicant_backend",
@@ -1558,23 +1579,8 @@ async def submit_request_payload(
         except HTTPException as exc:
             error_payload = exc.detail if isinstance(exc.detail, dict) else {"error": exc.detail}
             execute(
-                """
-                INSERT INTO requests (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,external_applicant_id,product_type,orchestration_mode,status,correlation_id,error)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """,
-                (
-                    request_id,
-                    customer_id,
-                    iin_encrypted,
-                    ssn_encrypted,
-                    json.dumps(applicant_profile),
-                    None,
-                    product_type,
-                    requested_mode,
-                    "FAILED",
-                    cid,
-                    json.dumps({"service": CREDIT_BACKEND_SERVICE_ID, "detail": error_payload}),
-                ),
+                "UPDATE requests SET status='FAILED',error=%s,updated_at=NOW() WHERE request_id=%s",
+                (json.dumps({"service": CREDIT_BACKEND_SERVICE_ID, "detail": error_payload}), request_id),
             )
             track_request_event(
                 request_id,
@@ -1598,6 +1604,7 @@ async def submit_request_payload(
                 "http_error": f"external applicant creation failed: {error_payload}",
             }
 
+    # ── Pre stop factors ─────────────────────────────────────────────────────
     sf_pre = await run_stop_factor_check("pre", data, cid)
     track_request_event(
         request_id,
@@ -1610,24 +1617,8 @@ async def submit_request_payload(
     )
     if sf_pre["decision"] == "REJECT":
         execute(
-            """
-            INSERT INTO requests (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,external_applicant_id,product_type,orchestration_mode,status,correlation_id,result,post_stop_factor)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """,
-            (
-                request_id,
-                customer_id,
-                iin_encrypted,
-                ssn_encrypted,
-                json.dumps(applicant_profile),
-                external_applicant_id,
-                product_type,
-                requested_mode,
-                "REJECTED",
-                cid,
-                json.dumps({"status": "REJECTED", "reason": sf_pre.get("reason")}),
-                json.dumps(sf_pre),
-            ),
+            "UPDATE requests SET status='REJECTED',result=%s,post_stop_factor=%s,updated_at=NOW() WHERE request_id=%s",
+            (json.dumps({"status": "REJECTED", "reason": sf_pre.get("reason")}), json.dumps(sf_pre), request_id),
         )
         track_request_event(
             request_id,
@@ -1641,7 +1632,7 @@ async def submit_request_payload(
         metrics.inc("requests_rejected")
         return {"request_id": request_id, "selected_mode": "none", "result": {"status": "REJECTED", "reason": sf_pre.get("reason")}, "http_error": None}
 
-    # AI Pre-Screen: decide if bureau pull is warranted (runs before routing/connectors)
+    # ── AI Pre-Screen: decide if bureau pull is warranted ───────────────────
     try:
         _ps_service = to_json_ready(query("SELECT * FROM services WHERE id=%s", ("ai-prescreen",), "one")) or {}
         if _ps_service.get("enabled") and _ps_service.get("base_url"):
@@ -1687,18 +1678,8 @@ async def submit_request_payload(
                         "bureau_skipped": True,
                     }
                     execute(
-                        """
-                        INSERT INTO requests
-                        (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,
-                         external_applicant_id,product_type,orchestration_mode,status,correlation_id,result)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                        """,
-                        (
-                            request_id, customer_id, iin_encrypted, ssn_encrypted,
-                            json.dumps(applicant_profile), external_applicant_id,
-                            product_type, requested_mode, "REVIEW", cid,
-                            json.dumps(_early_result),
-                        ),
+                        "UPDATE requests SET status='REVIEW',result=%s,updated_at=NOW() WHERE request_id=%s",
+                        (json.dumps(_early_result), request_id),
                     )
                     track_request_event(
                         request_id,
@@ -1715,6 +1696,7 @@ async def submit_request_payload(
     except Exception:
         pass  # Pre-Screen failure is non-critical — continue normal pipeline
 
+    # ── Route to orchestrator ────────────────────────────────────────────────
     mode = resolve_mode(data)
     track_request_event(
         request_id,
@@ -1730,14 +1712,15 @@ async def submit_request_payload(
     base_url = service.get("base_url", "")
     endpoint_path = service.get("endpoint_path", "/orchestrate")
     if not base_url:
+        execute(
+            "UPDATE requests SET status='ENGINE_ERROR',error=%s,updated_at=NOW() WHERE request_id=%s",
+            (json.dumps({"error": f"{adapter_id} not configured"}), request_id),
+        )
         raise HTTPException(503, f"{adapter_id} not configured")
 
     execute(
-        """
-        INSERT INTO requests (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,external_applicant_id,product_type,orchestration_mode,status,correlation_id)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        """,
-        (request_id, customer_id, iin_encrypted, ssn_encrypted, json.dumps(applicant_profile), external_applicant_id, product_type, mode, "SUBMITTED", cid),
+        "UPDATE requests SET status='ENGINE_SUBMITTING',orchestration_mode=%s,updated_at=NOW() WHERE request_id=%s",
+        (mode, request_id),
     )
     track_request_event(
         request_id,

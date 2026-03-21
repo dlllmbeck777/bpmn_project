@@ -479,6 +479,18 @@ MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_ai_usage_service_ts ON ai_usage_log (service_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_ai_usage_ts        ON ai_usage_log (created_at DESC);
     """),
+
+    (15, """
+        ALTER TABLE requests ADD COLUMN IF NOT EXISTS persisted_at TIMESTAMPTZ;
+        ALTER TABLE requests ADD COLUMN IF NOT EXISTS recovery_attempts INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE requests ADD COLUMN IF NOT EXISTS last_recovery_at TIMESTAMPTZ;
+
+        -- Back-fill persisted_at for existing rows
+        UPDATE requests SET persisted_at = created_at WHERE persisted_at IS NULL;
+
+        -- Index for recovery queries (requests stuck in intermediate states)
+        CREATE INDEX IF NOT EXISTS idx_requests_status_created ON requests(status, created_at);
+    """),
 ]
 
 

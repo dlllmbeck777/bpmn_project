@@ -145,6 +145,46 @@ async def correlation_middleware(request: Request, call_next):
     return response
 
 
+_RECOVERY_STALE_STATUSES = ("PERSISTED", "APPLICANT_CREATING", "ENGINE_SUBMITTING")
+_RECOVERY_STALE_MINUTES  = 30   # treat requests stuck in intermediate states as stale
+
+
+def _reconcile_stale_requests():
+    """Scan for requests stuck in intermediate states and move them to RECOVERY_PENDING."""
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE requests
+            SET status = 'RECOVERY_PENDING',
+                recovery_attempts = recovery_attempts + 1,
+                last_recovery_at  = NOW(),
+                updated_at        = NOW()
+            WHERE status = ANY(%s)
+              AND updated_at < NOW() - INTERVAL '%s minutes'
+            RETURNING request_id, status
+            """,
+            (_RECOVERY_STALE_STATUSES, _RECOVERY_STALE_MINUTES),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        put_conn(conn)
+        if rows:
+            log.warning("reconcile: marked %d stale request(s) as RECOVERY_PENDING: %s",
+                        len(rows), [r[0] for r in rows])
+    except Exception as exc:
+        log.warning("reconcile worker error: %s", exc)
+
+
+def _reconcile_worker():
+    """Background worker: scan for stuck requests every 5 minutes."""
+    time.sleep(60)  # let service fully start before first run
+    while True:
+        _reconcile_stale_requests()
+        time.sleep(300)  # every 5 minutes
+
+
 def _data_retention_worker():
     """P1-05: Periodically clean old data to prevent unbounded table growth."""
     while True:
@@ -178,6 +218,8 @@ def startup():
     ensure_default_ui_users()
     # P1-05: Start background cleanup thread
     threading.Thread(target=_data_retention_worker, daemon=True, name="data-retention").start()
+    # Durability: start reconcile worker to catch requests stuck in intermediate states
+    threading.Thread(target=_reconcile_worker, daemon=True, name="request-reconcile").start()
     log.info("core-api started (v5.2.0)")
 
 
