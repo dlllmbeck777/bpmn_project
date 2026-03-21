@@ -171,7 +171,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 
 .kv-row{display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--border-subtle);font-size:12px}
 .kv-row:last-child{border-bottom:none}
 .kv-key{color:var(--text-3);font-weight:500}
-.kv-val{font-family:var(--mono);font-size:11px;text-align:right;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kv-val{font-family:var(--mono);font-size:11px;text-align:right;max-width:260px;word-break:break-all;white-space:normal}
 
 .mono{font-family:var(--mono);font-size:12px}
 .text-muted{color:var(--text-3)}.text-sm{font-size:12px}

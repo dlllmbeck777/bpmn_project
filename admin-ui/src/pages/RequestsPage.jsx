@@ -816,7 +816,7 @@ export default function RequestsPage() {
                         rules_evaluated:                   { label: 'Rules evaluated', color: ()=>null },
                         required_reports_available:        { label: 'Required reports',color: v => v===false?'var(--red)':null },
                       }
-                      const SKIP = new Set(['decision','decision_reason','decision_source','matched_rule','parsed_at','provider','iso_status','creditsafe_status','plaid_status'])
+                      const SKIP = new Set(['decision','decision_reason','decision_source','matched_rule','parsed_at','provider','iso_status','creditsafe_status','plaid_status','request_id','all_providers_ok','plaid_considered','plaid_report_ready','plaid_tracking_url','cashflow_stability'])
                       const knownKeys = Object.keys(KNOWN)
                       const extraKeys = Object.keys(summary).filter(k => !KNOWN[k] && !SKIP.has(k))
                       const allKeys = [...knownKeys.filter(k => summary[k]!==undefined), ...extraKeys]
@@ -844,7 +844,7 @@ export default function RequestsPage() {
                             <span className="kv-key">Triggered rule</span>
                             <span className="kv-val" style={{color:rule.action_on_fail==='REJECT'?'var(--red)':'var(--amber)',fontWeight:600,fontSize:11}}>
                               {rule.name}
-                              <span style={{fontWeight:400,color:'var(--text-3)',marginLeft:6,fontSize:10,fontFamily:'monospace'}}>
+                              <span style={{fontWeight:400,color:'var(--text-3)',marginLeft:6,fontSize:10,fontFamily:'monospace',wordBreak:'break-all'}}>
                                 {rule.field_path?.split('.').pop()} {rule.operator} {rule.threshold}
                               </span>
                             </span>
