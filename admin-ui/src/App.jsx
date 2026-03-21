@@ -138,6 +138,20 @@ export default function App() {
         </div>
 
         {visibleSections.map(section => {
+          if (section.group === 'nav_dashboard') {
+            const item = section.items[0]
+            return item ? (
+              <div className="nav-group" key={section.group}>
+                <button
+                  className={`nav-btn nav-btn-solo${current === item.id ? ' active' : ''}`}
+                  onClick={() => setActive(item.id)}
+                >
+                  <item.Icon />
+                  {tr(section.group)}
+                </button>
+              </div>
+            ) : null
+          }
           const collapsed = !!collapsedGroups[section.group]
           return (
             <div className="nav-group" key={section.group}>

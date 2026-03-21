@@ -51,6 +51,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 
 .nav-label-toggle.collapsed{color:var(--text-3)}
 .nav-chevron{font-size:14px;line-height:1;margin-right:2px;font-style:normal;opacity:.7}
 .nav-btn{width:100%;display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:var(--radius);font-size:13px;font-weight:500;color:var(--text-2);transition:all .12s;text-align:left;position:relative}
+.nav-btn-solo{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;padding:4px 10px 8px;color:var(--text-3)}
+.nav-btn-solo:hover{background:transparent;color:var(--text-2)}
+.nav-btn-solo.active{background:transparent;color:var(--blue)}
+.nav-btn-solo.active::before{display:none}
 .nav-btn:hover{background:var(--bg-hover);color:var(--text-1)}
 .nav-btn.active{background:var(--blue-soft);color:var(--blue)}
 .nav-btn.active::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:20px;background:var(--blue);border-radius:0 3px 3px 0}
