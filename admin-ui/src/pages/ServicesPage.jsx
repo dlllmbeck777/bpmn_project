@@ -1,6 +1,108 @@
-import { useEffect, useState } from 'react'
-import { get, post, put, del } from '../lib/api'
+import { useEffect, useState, useCallback } from 'react'
+import { get, post, put, del, getApiBase } from '../lib/api'
 import Modal from '../components/Modal'
+
+const PROVIDERS = ['isoftpull', 'creditsafe', 'plaid']
+const PROVIDER_LABELS = { isoftpull: 'iSoftPull', creditsafe: 'CreditSafe', plaid: 'Plaid' }
+const MODE_COLOR = { random: 'var(--green)', scenario: 'var(--blue)', custom: 'var(--amber)' }
+
+function getMockBase() {
+  return getApiBase().replace(/:\d+$/, ':8110')
+}
+
+function MockBureausStatus({ demoModeEnabled, canEdit }) {
+  const [config, setConfig] = useState(null)
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
+
+  const load = useCallback(async () => {
+    if (!demoModeEnabled) return
+    try {
+      const base = getMockBase()
+      const r = await fetch(`${base}/api/v1/mock/config`)
+      if (r.ok) setConfig((await r.json()).config)
+    } catch (e) { setErr('Cannot reach mock-bureaus') }
+  }, [demoModeEnabled])
+
+  useEffect(() => { load() }, [load])
+
+  const setMode = async (provider, mode) => {
+    setBusy(provider + mode)
+    setErr('')
+    try {
+      const base = getMockBase()
+      const r = await fetch(`${base}/api/v1/mock/config/${provider}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      })
+      if (!r.ok) throw new Error(await r.text())
+      await load()
+    } catch (e) { setErr(e.message) } finally { setBusy('') }
+  }
+
+  const setAllRandom = async () => {
+    setBusy('all')
+    setErr('')
+    for (const p of PROVIDERS) {
+      try {
+        const base = getMockBase()
+        await fetch(`${base}/api/v1/mock/config/${p}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'random' }),
+        })
+      } catch (_) {}
+    }
+    await load()
+    setBusy('')
+  }
+
+  if (!demoModeEnabled) return (
+    <div className="card mb-16">
+      <div className="card-title">Mock bureau scenarios</div>
+      <p className="muted" style={{fontSize:12}}>Enable mock backend above to configure provider scenarios.</p>
+    </div>
+  )
+
+  return (
+    <div className="card mb-16">
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+        <div className="card-title" style={{margin:0}}>Mock bureau scenarios</div>
+        {canEdit && <button className="btn btn-primary btn-sm" onClick={setAllRandom} disabled={!!busy}>{busy==='all'?'Setting…':'All → Random'}</button>}
+      </div>
+      {err && <div className="notice notice-error mb-8" style={{fontSize:11}}>{err}</div>}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
+        {PROVIDERS.map(p => {
+          const mode = config?.[p]?.mode || '—'
+          const scenario = config?.[p]?.scenario || ''
+          const color = MODE_COLOR[mode] || 'var(--text-3)'
+          return (
+            <div key={p} style={{border:'1px solid var(--border)',borderRadius:8,padding:'10px 12px'}}>
+              <div style={{fontSize:10,fontWeight:700,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:0.5,marginBottom:4}}>{PROVIDER_LABELS[p]}</div>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
+                <span style={{width:7,height:7,borderRadius:'50%',background:color,flexShrink:0}}/>
+                <span style={{fontSize:13,fontWeight:700,color,fontFamily:'monospace'}}>{mode}</span>
+                {mode==='scenario'&&scenario&&<span style={{fontSize:10,color:'var(--text-3)',fontFamily:'monospace'}}>{scenario}</span>}
+              </div>
+              {canEdit && (
+                <div style={{display:'flex',gap:4}}>
+                  {['random','scenario'].map(m => (
+                    <button key={m} onClick={()=>setMode(p,m)} disabled={!!busy||mode===m}
+                      className="btn btn-ghost btn-xs" style={{fontSize:10,padding:'2px 8px',opacity:mode===m?0.4:1}}>
+                      {busy===p+m?'…':m}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {config && <div style={{fontSize:10,color:'var(--text-3)',marginTop:8}}>Default scenario: isoftpull pass_775 · creditsafe clean_72 · plaid pending_link</div>}
+    </div>
+  )
+}
 
 const typeColors = { orchestrator: 'badge-blue', connector: 'badge-purple', processor: 'badge-amber', engine: 'badge-teal', external: 'badge-teal' }
 const DEMO_SERVICE_ID = 'credit-backend'
@@ -190,6 +292,8 @@ export default function ServicesPage({ canEdit, canEditPrompts = false }) {
           <div className="kv-row"><span className="kv-key">Live URL stored</span><span className="kv-val">{liveUrlsStored ? 'Yes' : 'No, fallback default will be used on restore'}</span></div>
         </div>
       </div>
+
+      <MockBureausStatus demoModeEnabled={demoModeEnabled} canEdit={canEdit} />
 
       <div className="card mb-16">
         <div className="card-title">Flowable process definition</div>
