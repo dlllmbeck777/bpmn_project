@@ -50,9 +50,27 @@ def _validate_config():
         warnings.append("CORS_ORIGINS is empty or '*' — all origins allowed; restrict for production")
 
     if not os.getenv("GATEWAY_API_KEY"):
-        warnings.append("GATEWAY_API_KEY is empty — gateway API is open without authentication")
+        errors.append("GATEWAY_API_KEY is not set — gateway API is open without authentication")
     if not os.getenv("INTERNAL_API_KEY"):
-        warnings.append("INTERNAL_API_KEY is empty — internal endpoints are open")
+        errors.append("INTERNAL_API_KEY is not set — internal endpoints are open")
+
+    flowable_password = os.getenv("FLOWABLE_PASSWORD", "")
+    if not flowable_password or flowable_password == "test":
+        errors.append("FLOWABLE_PASSWORD is empty or default 'test' — set a secure value")
+    flowable_fallbacks = [p.strip() for p in os.getenv("FLOWABLE_PASSWORD_FALLBACKS", "").split(",") if p.strip()]
+    if "test" in flowable_fallbacks:
+        errors.append("FLOWABLE_PASSWORD_FALLBACKS contains 'test' — remove insecure fallback")
+
+    _INSECURE_LOGIN_DEFAULTS = {("admin", "admin"), ("senior", "senior"), ("analyst", "analyst")}
+    for role, user_var, pass_var in (
+        ("admin",          "ADMIN_LOGIN_USERNAME",           "ADMIN_LOGIN_PASSWORD"),
+        ("senior_analyst", "SENIOR_ANALYST_LOGIN_USERNAME",  "SENIOR_ANALYST_LOGIN_PASSWORD"),
+        ("analyst",        "ANALYST_LOGIN_USERNAME",         "ANALYST_LOGIN_PASSWORD"),
+    ):
+        user = os.getenv(user_var, "")
+        pwd  = os.getenv(pass_var, "")
+        if (user, pwd) in _INSECURE_LOGIN_DEFAULTS:
+            warnings.append(f"{role} UI login uses default credentials ({user}/{pwd}) — change for production")
 
     for w in warnings:
         log.warning(f"CONFIG WARNING: {w}")

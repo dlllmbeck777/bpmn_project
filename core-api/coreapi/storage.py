@@ -20,6 +20,15 @@ TRACKER_SENSITIVE_KEYS = {
     "api_key",
     "internal_api_key",
     "password",
+    "authorization",
+    "cookie",
+    "set-cookie",
+    "x-api-key",
+    "x-internal-api-key",
+    "token",
+    "access_token",
+    "refresh_token",
+    "secret",
 }
 
 
@@ -101,6 +110,10 @@ def tracker_payload(payload: Any):
                 or "api_key" in normalized_key
                 or "email" in normalized_key
                 or "phone" in normalized_key
+                or "token" in normalized_key
+                or "secret" in normalized_key
+                or "authorization" in normalized_key
+                or "cookie" in normalized_key
             ):
                 sanitized[key] = _mask_sensitive(value)
             else:

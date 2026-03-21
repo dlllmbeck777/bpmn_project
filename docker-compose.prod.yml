@@ -60,7 +60,7 @@ services:
       - ANALYST_API_KEY=${ANALYST_API_KEY}
       - INTERNAL_API_KEY=${INTERNAL_API_KEY}
       - FLOWABLE_PASSWORD=${FLOWABLE_PASSWORD}
-      - FLOWABLE_PASSWORD_FALLBACKS=${FLOWABLE_PASSWORD_FALLBACKS:-test}
+      - FLOWABLE_PASSWORD_FALLBACKS=${FLOWABLE_PASSWORD_FALLBACKS}
       - CREDIT_BACKEND_DEFAULT_URL=${CREDIT_BACKEND_DEFAULT_URL:-http://18.119.38.114}
       - CREDIT_BACKEND_TIMEOUT_MS=${CREDIT_BACKEND_TIMEOUT_MS:-15000}
       - ENCRYPT_KEY=${ENCRYPT_KEY}
@@ -100,7 +100,7 @@ services:
     environment:
       - CONFIG_SERVICE_URL=http://core-api:8000
       - FLOWABLE_PASSWORD=${FLOWABLE_PASSWORD}
-      - FLOWABLE_PASSWORD_FALLBACKS=${FLOWABLE_PASSWORD_FALLBACKS:-test}
+      - FLOWABLE_PASSWORD_FALLBACKS=${FLOWABLE_PASSWORD_FALLBACKS}
       - INTERNAL_API_KEY=${INTERNAL_API_KEY}
       - FLOWABLE_AUTO_DEPLOY_BPMN=${FLOWABLE_AUTO_DEPLOY_BPMN:-false}
       - FLOWABLE_WATCH_TIMEOUT_SECONDS=${FLOWABLE_WATCH_TIMEOUT_SECONDS:-90}
@@ -259,6 +259,40 @@ services:
     deploy:
       resources:
         limits: { cpus: '0.25', memory: 128M }
+
+  ai-advisor:
+    ports: !reset []
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AI_MODEL=${AI_MODEL:-gpt-4o-mini}
+      - AI_TEMPERATURE=${AI_TEMPERATURE:-0.1}
+      - AI_MAX_TOKENS=${AI_MAX_TOKENS:-1000}
+      - AI_FALLBACK_ON_ERROR=true
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY}
+      - CONFIG_SERVICE_URL=http://core-api:8000
+    networks: [backend]
+    restart: always
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: '0.5', memory: 256M }
+
+  ai-prescreen:
+    ports: !reset []
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AI_MODEL=${AI_MODEL:-gpt-4o-mini}
+      - AI_TEMPERATURE=${AI_TEMPERATURE:-0.1}
+      - AI_MAX_TOKENS=${AI_MAX_TOKENS:-500}
+      - AI_FALLBACK_ON_ERROR=true
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY}
+      - CONFIG_SERVICE_URL=http://core-api:8000
+    networks: [backend]
+    restart: always
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: '0.5', memory: 256M }
 
   prometheus:
     ports: !reset []

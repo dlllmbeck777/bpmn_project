@@ -49,10 +49,14 @@ async def _fetch_meta(ttl: int = 60) -> Dict[str, Any]:
     if cached and time.time() < cached[1]:
         return cached[0]
     try:
+        headers = {"x-internal-api-key": INTERNAL_API_KEY} if INTERNAL_API_KEY else {}
         async with httpx.AsyncClient(timeout=3.0) as hx:
-            r = await hx.get(f"{CONFIG_URL}/api/v1/services/{SERVICE_ID}")
+            r = await hx.get(f"{CONFIG_URL}/api/v1/services/{SERVICE_ID}", headers=headers)
+            if r.status_code in (401, 403):
+                log.warning("_fetch_meta: auth rejected (%s) — check INTERNAL_API_KEY", r.status_code)
             meta = (r.json().get("meta") or {}) if r.status_code == 200 else {}
-    except Exception:
+    except Exception as e:
+        log.warning("_fetch_meta failed: %s", e)
         meta = {}
     _meta_cache[SERVICE_ID] = (meta, time.time() + ttl)
     return meta
