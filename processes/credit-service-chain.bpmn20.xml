@@ -257,6 +257,46 @@ X-Request-Id: ${request_id}</flowable:expression>
           ],
         ]
         execution.setVariable('decision_request_body', mapper.writeValueAsString(payload))
+
+        // Build ai_request_body with parsed credit data for AI advisor
+        def iso    = payload.steps.isoftpull  ?: [:]
+        def cs     = payload.steps.creditsafe ?: [:]
+        def plaid  = payload.steps.plaid      ?: [:]
+
+        def creditScore = null
+        def csScore = cs?.creditScore
+        if (csScore != null && csScore != -1) creditScore = csScore
+
+        def collectionCount = cs?.rawResponse?.find { it.key == 'collectionCount' }?.value ?: 0
+        def accountsFound   = plaid?.accounts?.size() ?: (plaid?.status == 'COMPLETED' ? 1 : 0)
+        def csAlerts        = cs?.rawResponse?.find { it.key == 'complianceAlertCount' }?.value ?: 0
+        def reportsOk       = (iso?.status == 'COMPLETED' || cs?.status == 'COMPLETED')
+
+        def aiSummary = [
+          credit_score:                         creditScore,
+          collection_count:                     collectionCount,
+          creditsafe_compliance_alert_count:    csAlerts,
+          required_reports_available:           reportsOk,
+          accounts_found:                       accountsFound,
+          cashflow_stability:                   (plaid?.status == 'COMPLETED' ? 'STABLE' : null),
+          iso_status:                           (iso?.status ?: 'UNKNOWN'),
+          creditsafe_status:                    (cs?.status  ?: 'UNKNOWN'),
+          plaid_status:                         (plaid?.status ?: 'UNKNOWN'),
+        ]
+
+        def applicantJson = execution.getVariable('applicant_json')
+        def applicant = [:]
+        if (applicantJson) {
+          try { applicant = mapper.readValue(applicantJson as String, java.util.LinkedHashMap) } catch (Exception ignored) {}
+        }
+
+        def aiBody = [
+          request_id:    execution.getVariable('request_id'),
+          applicant:     [city: applicant?.city ?: '', state: applicant?.state ?: '', zipCode: applicant?.zipCode ?: ''],
+          parsed_report: [summary: aiSummary],
+          context:       [route_mode: 'FLOWABLE', product_type: (execution.getVariable('product_type') ?: 'loan')],
+        ]
+        execution.setVariable('ai_request_body', mapper.writeValueAsString(aiBody))
       ]]></script>
     </scriptTask>
     <sequenceFlow id="flow_prep_decision_to_call" sourceRef="task_prepare_decision_body" targetRef="task_ai_assess"/>
@@ -273,7 +313,7 @@ X-Request-Id: ${request_id}</flowable:expression>
 X-Request-Id: ${request_id}</flowable:expression>
         </flowable:field>
         <flowable:field name="requestBody">
-          <flowable:expression>{"request_id":"${request_id}","context":{"route_mode":"FLOWABLE","product_type":"${product_type}"}}</flowable:expression>
+          <flowable:expression>${ai_request_body}</flowable:expression>
         </flowable:field>
         <flowable:field name="saveResponseParameters"><flowable:string>true</flowable:string></flowable:field>
         <flowable:field name="resultVariablePrefix"><flowable:string>aiRaw</flowable:string></flowable:field>
