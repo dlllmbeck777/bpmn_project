@@ -604,7 +604,8 @@ export default function RequestsPage() {
     .rqd-tab:hover:not(.active) { color:var(--text-1); }
     .rqd-body { flex:1; overflow-y:auto; padding:12px 16px; display:flex; flex-direction:column; gap:8px; }
     /* kv grid */
-    .rqb-kv-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:1px; background:var(--border-1); border-radius:6px; overflow:hidden; }
+    .rqb-kv-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:1px; background:var(--border-1); border-radius:6px; overflow:hidden; }
+    .rqb-kv-grid-fixed { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:1px; background:var(--border-1); border-radius:6px; overflow:hidden; }
     .rqb-kv-cell { background:var(--bg-1); padding:5px 8px; }
     .rqb-kv-k { font-size:8px; font-weight:700; color:var(--text-3); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:1px; }
     .rqb-kv-v { font-size:11px; color:var(--text-1); word-break:break-all; line-height:1.3; }
@@ -640,7 +641,7 @@ export default function RequestsPage() {
 
     return (
       <>
-        <style>{css}</style>
+        <style>{css}{`.page-header{display:none}`}</style>
         {error  && <div className="notice notice-error mb-10" onClick={()=>setError('')}>{error} ✕</div>}
         {notice && <div className="notice mb-10" onClick={()=>setNotice('')}>{notice} ✕</div>}
 
@@ -758,7 +759,7 @@ export default function RequestsPage() {
               {detailTab==='summary' && (<>
                 <div>
                   <div className="rqb-sec-title">Applicant profile</div>
-                  <div className="rqb-kv-grid">
+                  <div className="rqb-kv-grid-fixed">
                     {[
                       ['Name',        applicantName(detail)],
                       ['DOB',         detail.applicant_profile?.dateOfBirth||'—'],
