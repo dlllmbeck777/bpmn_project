@@ -519,10 +519,12 @@ async def _load_completed_variables(flowable_url: str, instance_id: str) -> Opti
     if not historic.get("endTime"):
         return None
     _def_id = historic.get("processDefinitionId", "")
+    _def_version = historic.get("processDefinitionVersion")
     variables = historic.get("variables") or historic.get("processVariables") or []
     if variables:
         result = _canonicalize_flowable_variables({item["name"]: item.get("value") for item in variables if item.get("name")})
         result["__process_definition_id__"] = _def_id
+        result["__process_definition_version__"] = _def_version
         return result
 
     variables_response = await _flowable_request(
@@ -545,6 +547,7 @@ async def _load_completed_variables(flowable_url: str, instance_id: str) -> Opti
             normalized[item["name"]] = item.get("value")
     result = _canonicalize_flowable_variables(normalized)
     result["__process_definition_id__"] = _def_id
+    result["__process_definition_version__"] = _def_version
     return result
 
 
@@ -685,7 +688,7 @@ async def _build_result_payload(body: "RequestIn", instance_id: str, process_var
         "matched_rule": decision_payload.get("matched_rule"),
         "engine": {"engine": "flowable", "started": True, "instance_id": instance_id, "completed": True,
                    "process_definition_id": process_variables.get("__process_definition_id__", ""),
-                   "bpmn_version": _parse_bpmn_version(process_variables.get("__process_definition_id__", ""))},
+                   "bpmn_version": process_variables.get("__process_definition_version__")},
         "connector_urls_injected": connector_urls,
         "process_variables": {key: _parse_jsonish(value) for key, value in process_variables.items()},
         "steps": steps,
