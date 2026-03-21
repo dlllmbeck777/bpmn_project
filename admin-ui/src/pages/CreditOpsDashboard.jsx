@@ -137,7 +137,7 @@ export default function CreditOpsDashboard() {
     setLoading(true);
     setLoadError("");
     try {
-      const d = await get("/api/v1/requests?limit=500");
+      const d = await get("/api/v1/requests?limit=200");
       const items = Array.isArray(d) ? d : (d.items || d.requests || []);
       setData(items.map(mapRequest));
     } catch (e) {
