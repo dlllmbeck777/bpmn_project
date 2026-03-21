@@ -207,13 +207,18 @@ async def assess(body: AssessRequest):
 
         red_flags: List[str] = ai_result.get("red_flags") or []
         cost = round(p_tok * _COST_IN + c_tok * _COST_OUT, 6)
+        raw_conf = ai_result.get("confidence", 0.5)
+        try:
+            confidence = float(raw_conf)
+        except (TypeError, ValueError):
+            confidence = 0.5
         return {
             "request_id":          body.request_id,
             "model":               AI_MODEL,
             "risk_score":          int(ai_result.get("risk_score", 50)),
             "risk_level":          ai_result.get("risk_level", "MEDIUM"),
             "recommendation":      ai_result.get("recommendation", "REVIEW"),
-            "confidence":          float(ai_result.get("confidence", 0.5)),
+            "confidence":          confidence,
             "red_flags":           red_flags,
             "positive_factors":    ai_result.get("positive_factors") or [],
             "narrative":           ai_result.get("narrative", ""),
