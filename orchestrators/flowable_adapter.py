@@ -48,6 +48,7 @@ FLOWABLE_VARIABLE_ALIASES = {
     "csRawBody": ("csRawResponseBody",),
     "plaidRawBody": ("plaidRawResponseBody",),
     "decisionRawBody": ("decisionRawResponseBody",),
+    "aiRawBody": ("aiRawResponseBody",),
 }
 
 
