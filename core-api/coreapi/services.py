@@ -1291,7 +1291,26 @@ async def notify_snp(envelope: Dict[str, Any]):
     return {"forwarded": forwarded, "target": snp_url or "NOT_CONFIGURED"}
 
 
+_TERMINAL_STATUSES = frozenset({"COMPLETED", "REVIEW", "REJECTED", "FAILED"})
+
+
 async def finalize_request(request_id: str, mode: str, result: Dict[str, Any], cid: str, request_data: Optional[Dict[str, Any]] = None):
+    # Idempotency guard: if already finalized, return stored result without side effects.
+    # Protects against duplicate callbacks, concurrent reconcile + callback, network retries.
+    existing = query("SELECT status, result, post_stop_factor, snp_result FROM requests WHERE request_id=%s", (request_id,), "one")
+    if existing and existing.get("status") in _TERMINAL_STATUSES:
+        log.info("finalize_request: %s already in terminal state %s — skipping", request_id, existing["status"])
+        stored_result = existing.get("result") or {}
+        if isinstance(stored_result, str):
+            import json as _json
+            stored_result = _json.loads(stored_result)
+        return {
+            "status":          existing["status"],
+            "result":          stored_result,
+            "post_stop_factor": existing.get("post_stop_factor") or {},
+            "snp_result":       existing.get("snp_result") or {},
+        }
+
     normalized_result = await ensure_parsed_report(request_id, result, cid)
     if mode == "flowable":
         normalized_result = ensure_flowable_decision_payload(normalized_result)
@@ -1504,6 +1523,20 @@ async def submit_request_payload(
     if existing:
         raise HTTPException(409, f"request_id '{request_id}' already exists (status: {existing.get('status')})")
 
+    # ── Idempotency key dedup ────────────────────────────────────────────────
+    idempotency_key = _clean_text(incoming.get("idempotency_key") or incoming.get("client_request_id"))
+    if idempotency_key:
+        dup = query("SELECT request_id, status FROM requests WHERE idempotency_key=%s", (idempotency_key,), "one")
+        if dup:
+            log.info("submit: duplicate idempotency_key=%s → returning existing %s (%s)",
+                     idempotency_key, dup["request_id"], dup["status"])
+            return {
+                "request_id":    dup["request_id"],
+                "selected_mode": "deduplicated",
+                "result":        {"status": dup["status"], "deduplicated": True, "idempotency_key": idempotency_key},
+                "http_error":    None,
+            }
+
     # ── Write-first: persist before any external calls ───────────────────────
     # Request is durably stored immediately — any downstream failure leaves a
     # recoverable record that reconciliation can pick up.
@@ -1512,12 +1545,12 @@ async def submit_request_payload(
         INSERT INTO requests
             (request_id,customer_id,iin_encrypted,ssn_encrypted,applicant_profile,
              external_applicant_id,product_type,orchestration_mode,
-             status,correlation_id,persisted_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'PERSISTED',%s,NOW())
+             status,correlation_id,idempotency_key,persisted_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'PERSISTED',%s,%s,NOW())
         """,
         (request_id, customer_id, iin_encrypted, ssn_encrypted,
          json.dumps(applicant_profile), external_applicant_id,
-         product_type, requested_mode, cid),
+         product_type, requested_mode, cid, idempotency_key),
     )
     track_request_event(
         request_id,

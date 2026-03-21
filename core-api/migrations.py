@@ -491,6 +491,12 @@ MIGRATIONS = [
         -- Index for recovery queries (requests stuck in intermediate states)
         CREATE INDEX IF NOT EXISTS idx_requests_status_created ON requests(status, created_at);
     """),
+
+    (16, """
+        ALTER TABLE requests ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_requests_idempotency_key
+            ON requests(idempotency_key) WHERE idempotency_key IS NOT NULL;
+    """),
 ]
 
 

@@ -5,8 +5,8 @@ import { get, getUserRole, post, del } from '../lib/api'
 const SC = {
   green: ['COMPLETED','APPROVED','OK','PASS'],
   red:   ['FAILED','REJECTED','ENGINE_ERROR','ENGINE_UNREACHABLE','ORPHANED','REJECT','UNAVAILABLE'],
-  amber: ['REVIEW','SUSPENDED','PENDING','RETRIED'],
-  blue:  ['RUNNING','SUBMITTED','STARTED','CLONED'],
+  amber: ['REVIEW','SUSPENDED','PENDING','RETRIED','RECOVERY_PENDING'],
+  blue:  ['RUNNING','SUBMITTED','STARTED','CLONED','PERSISTED','APPLICANT_CREATING','APPLICANT_CREATED','ENGINE_SUBMITTING'],
 }
 function sBadge(s) {
   if (SC.green.includes(s)) return 'badge-green'
@@ -346,7 +346,8 @@ function PayloadList({ events }) {
 }
 
 /* ── Constants ── */
-const FILTERS = ['','COMPLETED','RUNNING','REVIEW','REJECTED','FAILED','ENGINE_ERROR','ENGINE_UNREACHABLE']
+const FILTERS = ['','COMPLETED','RUNNING','REVIEW','REJECTED','FAILED','ENGINE_ERROR','ENGINE_UNREACHABLE','RECOVERY_PENDING']
+const RECOVERY_STATUSES = new Set(['RECOVERY_PENDING','ENGINE_ERROR','ENGINE_UNREACHABLE'])
 const PAGE_SIZE = 30
 const DATE_PRESETS = [
   { id: 'today',     label: 'Today'     },
@@ -517,6 +518,10 @@ export default function RequestsPage() {
   /* ── Auto-refresh list when there are pending/suspended requests ── */
   const pendingCount = useMemo(() =>
     items.filter(r => ['SUSPENDED','PENDING','REVIEW'].includes(r.status)).length
+  , [items])
+
+  const recoveryCount = useMemo(() =>
+    items.filter(r => RECOVERY_STATUSES.has(r.status)).length
   , [items])
 
   useEffect(() => { loadRequests() }, [filter, needsAction, ignoredFilter])
@@ -1102,6 +1107,12 @@ export default function RequestsPage() {
           <option value="all">All</option>
         </select>
         <div style={{display:'flex',gap:6,marginLeft:'auto',alignItems:'center'}}>
+          {recoveryCount > 0 && (
+            <span style={{fontSize:11,padding:'2px 8px',borderRadius:10,background:'var(--red-soft,#fde8e8)',color:'var(--red)',fontWeight:600,cursor:'pointer'}}
+              onClick={()=>setFilter('RECOVERY_PENDING')} title="Требуют восстановления">
+              ⚠ {recoveryCount} recovery
+            </span>
+          )}
           {pendingCount > 0 && (
             <span style={{fontSize:11,padding:'2px 8px',borderRadius:10,background:'var(--amber-soft,#fff3cd)',color:'var(--amber)',fontWeight:600,cursor:'pointer'}}
               onClick={()=>setFilter('SUSPENDED')} title="Ожидают действия">
