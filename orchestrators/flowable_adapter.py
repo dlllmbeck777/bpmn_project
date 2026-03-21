@@ -519,7 +519,16 @@ async def _load_completed_variables(flowable_url: str, instance_id: str) -> Opti
     if not historic.get("endTime"):
         return None
     _def_id = historic.get("processDefinitionId", "")
-    _def_version = historic.get("processDefinitionVersion")
+    _def_version = None
+    if _def_id:
+        try:
+            pd_resp = await _flowable_request(
+                "GET", f"{flowable_url}/repository/process-definitions/{_def_id}", timeout=5.0
+            )
+            if pd_resp.status_code == 200:
+                _def_version = pd_resp.json().get("version")
+        except Exception:
+            pass
     variables = historic.get("variables") or historic.get("processVariables") or []
     if variables:
         result = _canonicalize_flowable_variables({item["name"]: item.get("value") for item in variables if item.get("name")})
