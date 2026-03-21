@@ -631,6 +631,10 @@ export default function RequestsPage() {
     const collections = metricVal(detail?.result, 'collection_count')
     const reason = decisionReason(detail?.result, detail?.status)
     const createdAt = (detail?.created_at||'').slice(0,19).replace('T',' ')
+    const aiPreRec = detail?.result?.ai_prescreen?.recommendation
+    const aiAdvRec = detail?.result?.ai_advisor?.recommendation
+    const aiAdvRisk = detail?.result?.ai_advisor?.risk_level
+    const aiRecColor = (v) => { if (!v) return 'var(--text-3)'; const u=String(v).toUpperCase(); return ['APPROVE','APPROVED','PASS','ACCEPT'].includes(u)?'var(--green)':['REJECT','REJECTED','FAIL','FAILED'].includes(u)?'var(--red)':'var(--amber)' }
 
     return (
       <>
@@ -683,6 +687,16 @@ export default function RequestsPage() {
                   <span className="rqd-metric-lbl">Mode</span>
                   <span className="rqd-metric-val">{detail.orchestration_mode||'—'}</span>
                 </div>
+                {aiPreRec&&<div className="rqd-metric">
+                  <span className="rqd-metric-lbl">Pre-screen AI</span>
+                  <span className="rqd-metric-val" style={{color:aiRecColor(aiPreRec),fontSize:11}}>{String(aiPreRec).toUpperCase()}</span>
+                </div>}
+                {aiAdvRec&&<div className="rqd-metric">
+                  <span className="rqd-metric-lbl">Advisor AI{aiAdvRisk?` · risk`:''}</span>
+                  <span className="rqd-metric-val" style={{color:aiRecColor(aiAdvRec),fontSize:11}}>
+                    {String(aiAdvRec).toUpperCase()}{aiAdvRisk&&<span style={{fontWeight:400,color:aiAdvRisk.toUpperCase()==='HIGH'?'var(--red)':aiAdvRisk.toUpperCase()==='LOW'?'var(--green)':'var(--amber)',fontSize:10,marginLeft:4}}>{aiAdvRisk}</span>}
+                  </span>
+                </div>}
                 <div className="rqd-metric">
                   <span className="rqd-metric-lbl">Events</span>
                   <span className="rqd-metric-val">{tracker.length}</span>
@@ -1022,6 +1036,7 @@ export default function RequestsPage() {
             <tr>
               <th>#</th><th>Request ID</th><th>Applicant</th><th>Mode</th>
               <th>Status</th><th>Class</th><th>Decision</th><th>Score</th>
+              <th>AI Pre</th><th>AI Adv</th>
               <th>⚑</th><th>Time</th><th></th>
             </tr>
           </thead>
@@ -1031,6 +1046,9 @@ export default function RequestsPage() {
             ) : rows.map((r, i) => {
               const decision = r.result?.decision || r.result?.summary?.decision
               const score    = r.result?.summary?.credit_score ?? r.result?.credit_score
+              const aiPre    = r.result?.ai_prescreen?.recommendation
+              const aiAdv    = r.result?.ai_advisor?.recommendation
+              const aiColor  = (v) => { if (!v) return 'var(--text-3)'; const u=String(v).toUpperCase(); return ['APPROVE','APPROVED','PASS','ACCEPT'].includes(u)?'var(--green)':['REJECT','REJECTED','FAIL','FAILED'].includes(u)?'var(--red)':'var(--amber)' }
               return (
                 <tr key={r.request_id} onClick={()=>openDetail(r.request_id)}
                   style={{cursor: detailLoading ? 'wait' : 'pointer'}}>
@@ -1045,6 +1063,8 @@ export default function RequestsPage() {
                   <td>{r.error_class&&<span className={`badge ${r.error_class==='technical'?'badge-red':r.error_class==='integration'?'badge-amber':'badge-green'}`} style={{fontSize:9}}>{r.error_class}</span>}</td>
                   <td>{decision&&<span style={{fontWeight:700,fontSize:10,color:decision==='APPROVED'?'var(--green)':decision==='REJECTED'?'var(--red)':'var(--amber)'}}>{decision}</span>}</td>
                   <td style={{fontFamily:'monospace',fontSize:11}}>{score!==undefined&&score!==null?score:'—'}</td>
+                  <td><span style={{fontSize:9,fontWeight:700,color:aiColor(aiPre)}}>{aiPre||'—'}</span></td>
+                  <td><span style={{fontSize:9,fontWeight:700,color:aiColor(aiAdv)}}>{aiAdv||'—'}</span></td>
                   <td>{r.needs_operator_action&&<span className="rqb-action-dot" title="Needs action"/>}</td>
                   <td style={{fontFamily:'monospace',fontSize:10,color:'var(--text-3)',whiteSpace:'nowrap'}}>{(r.created_at||'').slice(11,19)}</td>
                   <td><button className="btn btn-ghost btn-xs" onClick={e=>{e.stopPropagation();openDetail(r.request_id)}}>↗</button></td>
