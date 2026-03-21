@@ -18,6 +18,77 @@ function withMeta(service) {
   return { ...service, meta: normalizeMeta(service?.meta) }
 }
 
+const AI_PROMPT_SERVICES = ['ai-advisor', 'ai-prescreen']
+
+function PromptCard({ service, canEdit, onSaved }) {
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState(service.meta?.system_prompt || '')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  const handleSave = async () => {
+    setSaving(true)
+    setErr('')
+    try {
+      await put(`/api/v1/services/${service.id}`, {
+        ...service,
+        meta: { ...normalizeMeta(service.meta), system_prompt: draft },
+      })
+      onSaved()
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const hasOverride = !!service.meta?.system_prompt
+
+  return (
+    <div className="prompt-card">
+      <div className="prompt-card-header" onClick={() => setOpen(o => !o)}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span className="mono" style={{ fontWeight: 600 }}>{service.id}</span>
+          {hasOverride
+            ? <span className="badge badge-blue" style={{ fontSize: 10 }}>custom prompt</span>
+            : <span className="badge badge-gray" style={{ fontSize: 10 }}>default (prompts.py)</span>}
+        </div>
+        <span className="nav-chevron" style={{ fontSize: 16, opacity: .6 }}>{open ? '▲' : '▼'}</span>
+      </div>
+
+      {open && (
+        <div className="prompt-card-body">
+          <div className="muted mb-8" style={{ fontSize: 12 }}>
+            Оставь пустым чтобы использовать дефолтный промт из <span className="mono">prompts.py</span>.
+            Изменения применяются в течение 60 сек без перезапуска.
+          </div>
+          <textarea
+            className="prompt-textarea"
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            placeholder={`# Оставь пустым → используется prompts.py\n# Пример:\nYou are a credit risk analyst...\nRULES:\n- Respond only with JSON\n- Be conservative...`}
+            rows={14}
+            disabled={!canEdit}
+          />
+          {err && <div className="notice notice-error mt-8">{err}</div>}
+          {canEdit && (
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+              {hasOverride && (
+                <button className="btn btn-ghost btn-sm" onClick={() => { setDraft('') }}>
+                  Сбросить к дефолту
+                </button>
+              )}
+              <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
+                {saving ? 'Сохраняю...' : 'Сохранить'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ServicesPage({ canEdit }) {
   const [items, setItems] = useState([])
   const [editing, setEditing] = useState(null)
@@ -130,6 +201,21 @@ export default function ServicesPage({ canEdit }) {
           <div className="kv-row"><span className="kv-key">Flowable engine service</span><span className="kv-val mono">{flowableService?.id || 'flowable-rest not configured'}</span></div>
         </div>
       </div>
+
+      {items.filter(s => AI_PROMPT_SERVICES.includes(s.id)).length > 0 && (
+        <div className="card mb-16">
+          <div className="card-title">AI Prompts</div>
+          <div className="muted mb-12">
+            System prompt для каждого AI сервиса. Если поле пустое — используется дефолтный промт из кода (<span className="mono">prompts.py</span>).
+            Кеш обновляется раз в 60 сек.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {items.filter(s => AI_PROMPT_SERVICES.includes(s.id)).map(s => (
+              <PromptCard key={s.id} service={s} canEdit={canEdit} onSaved={load} />
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex-between mb-16">
         <div className="muted">You can change URLs, retries, timeouts, and quickly disable connectors or engines from here.</div>
