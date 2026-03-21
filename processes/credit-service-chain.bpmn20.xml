@@ -294,14 +294,7 @@ X-Request-Id: ${request_id}</flowable:expression>
     </scriptTask>
     <sequenceFlow id="flow_err_ai" sourceRef="err_ai" targetRef="task_ai_degrade"/>
     <sequenceFlow id="flow_ai_deg_to_decision" sourceRef="task_ai_degrade" targetRef="task_decision_service"/>
-    <exclusiveGateway id="gw_ai_status" name="AI response ok?"/>
-    <sequenceFlow id="flow_ai_to_gw" sourceRef="task_ai_assess" targetRef="gw_ai_status"/>
-    <sequenceFlow id="flow_ai_ok" sourceRef="gw_ai_status" targetRef="task_decision_service">
-      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${aiRawStatusCode != null && aiRawStatusCode == 200}]]></conditionExpression>
-    </sequenceFlow>
-    <sequenceFlow id="flow_ai_err_status" sourceRef="gw_ai_status" targetRef="task_ai_degrade">
-      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${aiRawStatusCode == null || aiRawStatusCode != 200}]]></conditionExpression>
-    </sequenceFlow>
+    <sequenceFlow id="flow_ai_to_decision" sourceRef="task_ai_assess" targetRef="task_decision_service"/>
 
     <serviceTask id="task_decision_service" name="Call Decision Service" flowable:exclusive="false" flowable:type="http">
       <extensionElements>
