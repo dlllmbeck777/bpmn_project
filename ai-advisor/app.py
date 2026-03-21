@@ -210,12 +210,14 @@ async def assess(body: AssessRequest):
         raw_conf = ai_result.get("confidence", 0.5)
         try:
             confidence = float(raw_conf)
+            if confidence > 1.0:  # AI returns 0-100 scale, normalize to 0-1
+                confidence = confidence / 100.0
         except (TypeError, ValueError):
             confidence = 0.5
         return {
             "request_id":          body.request_id,
             "model":               AI_MODEL,
-            "risk_score":          int(ai_result.get("risk_score", 50)),
+            "risk_score":          int(ai_result.get("risk_score") or 50),
             "risk_level":          ai_result.get("risk_level", "MEDIUM"),
             "recommendation":      ai_result.get("recommendation", "REVIEW"),
             "confidence":          confidence,

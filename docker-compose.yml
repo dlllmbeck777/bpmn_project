@@ -218,6 +218,7 @@ services:
       - SERVER_FORWARD_HEADERS_STRATEGY=framework
       - FLOWABLE_COMMON_APP_IDM-ADMIN_USER=admin
       - FLOWABLE_COMMON_APP_IDM-ADMIN_PASSWORD=${FLOWABLE_PASSWORD:-test}
+      - FLOWABLE_PASSWORD=${FLOWABLE_PASSWORD:-test}
       - FLOWABLE_ASYNC_EXECUTOR_ACTIVATE=true
       - "JAVA_TOOL_OPTIONS=${FLOWABLE_REST_JAVA_TOOL_OPTIONS:--Xms384m -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+ExitOnOutOfMemoryError}"
     depends_on:
@@ -280,7 +281,7 @@ services:
     restart: unless-stopped
     networks: [backend]
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8108/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8108/health')"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -301,7 +302,7 @@ services:
     restart: unless-stopped
     networks: [backend]
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8109/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8109/health')"]
       interval: 10s
       timeout: 3s
       retries: 5
