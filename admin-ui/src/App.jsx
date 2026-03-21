@@ -50,7 +50,11 @@ export default function App() {
   const [theme, setThemeState] = useState(() => getTheme())
   const [lang, setLangState] = useState(() => getLang())
   const [collapsedGroups, setCollapsedGroups] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('nav_collapsed') || '{}') } catch { return {} }
+    try {
+      const saved = localStorage.getItem('nav_collapsed')
+      if (saved !== null) return JSON.parse(saved)
+    } catch {}
+    return Object.fromEntries(GROUP_ORDER.map(g => [g, true]))
   })
 
   useEffect(() => { window.location.hash = active }, [active])
