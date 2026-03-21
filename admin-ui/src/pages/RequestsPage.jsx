@@ -593,11 +593,11 @@ export default function RequestsPage() {
     .rqd-hdr-top { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
     .rqd-id { font-family:monospace; font-size:14px; font-weight:800; color:var(--text-1); }
     .rqd-decision { font-size:16px; font-weight:900; font-family:monospace; margin-left:4px; }
-    .rqd-metrics { display:flex; gap:0; flex-wrap:wrap; border-top:1px solid var(--border-1); padding-top:8px; }
-    .rqd-metric { display:flex; flex-direction:column; padding:0 16px 0 0; border-right:1px solid var(--border-1); margin-right:16px; margin-bottom:4px; }
+    .rqd-metrics { display:flex; gap:0; flex-wrap:wrap; border-top:1px solid var(--border-1); padding-top:6px; }
+    .rqd-metric { display:flex; flex-direction:column; padding:0 10px 0 0; border-right:1px solid var(--border-1); margin-right:10px; margin-bottom:3px; }
     .rqd-metric:last-child { border-right:none; margin-right:0; }
-    .rqd-metric-lbl { font-size:8px; font-weight:700; color:var(--text-3); text-transform:uppercase; letter-spacing:0.6px; }
-    .rqd-metric-val { font-size:13px; font-weight:700; font-family:monospace; color:var(--text-1); line-height:1.2; }
+    .rqd-metric-lbl { font-size:7px; font-weight:700; color:var(--text-3); text-transform:uppercase; letter-spacing:0.5px; line-height:1.4; }
+    .rqd-metric-val { font-size:12px; font-weight:700; font-family:monospace; color:var(--text-1); line-height:1.2; }
     .rqd-tabs { display:flex; border-bottom:1px solid var(--border-1); background:var(--bg-1); flex-shrink:0; }
     .rqd-tab { padding:8px 14px; font-size:11px; font-weight:600; color:var(--text-3); border:none; border-bottom:2px solid transparent; background:transparent; cursor:pointer; transition:all 0.1s; white-space:nowrap; }
     .rqd-tab.active { color:var(--blue); border-bottom-color:var(--blue); }
@@ -691,16 +691,16 @@ export default function RequestsPage() {
                 </div>
                 {detail.result?.engine?.bpmn_version!=null&&<div className="rqd-metric">
                   <span className="rqd-metric-lbl">BPMN</span>
-                  <span className="rqd-metric-val" style={{fontFamily:'monospace',fontSize:11}}>v{detail.result.engine.bpmn_version}</span>
+                  <span className="rqd-metric-val">v{detail.result.engine.bpmn_version}</span>
                 </div>}
                 {aiPreRec&&<div className="rqd-metric">
                   <span className="rqd-metric-lbl">Pre-screen AI</span>
-                  <span className="rqd-metric-val" style={{color:aiRecColor(aiPreRec),fontSize:11}}>{String(aiPreRec).toUpperCase()}</span>
+                  <span className="rqd-metric-val" style={{color:aiRecColor(aiPreRec)}}>{String(aiPreRec).toUpperCase()}</span>
                 </div>}
                 {aiAdvRec&&<div className="rqd-metric">
-                  <span className="rqd-metric-lbl">Advisor AI{aiAdvRisk?` · risk`:''}</span>
-                  <span className="rqd-metric-val" style={{color:aiRecColor(aiAdvRec),fontSize:11}}>
-                    {String(aiAdvRec).toUpperCase()}{aiAdvRisk&&<span style={{fontWeight:400,color:aiAdvRisk.toUpperCase()==='HIGH'?'var(--red)':aiAdvRisk.toUpperCase()==='LOW'?'var(--green)':'var(--amber)',fontSize:10,marginLeft:4}}>{aiAdvRisk}</span>}
+                  <span className="rqd-metric-lbl">Advisor AI{aiAdvRisk?` · Risk`:''}</span>
+                  <span className="rqd-metric-val" style={{color:aiRecColor(aiAdvRec)}}>
+                    {String(aiAdvRec).toUpperCase()}{aiAdvRisk&&<span style={{fontWeight:500,color:aiAdvRisk.toUpperCase()==='HIGH'?'var(--red)':aiAdvRisk.toUpperCase()==='LOW'?'var(--green)':'var(--amber)',fontSize:10,marginLeft:3}}>{aiAdvRisk.toUpperCase()}</span>}
                   </span>
                 </div>}
                 <div className="rqd-metric">
@@ -709,11 +709,11 @@ export default function RequestsPage() {
                 </div>
                 <div className="rqd-metric">
                   <span className="rqd-metric-lbl">Created</span>
-                  <span className="rqd-metric-val" style={{fontSize:11}}>{createdAt}</span>
+                  <span className="rqd-metric-val" style={{fontSize:10}}>{createdAt}</span>
                 </div>
                 {detail.correlation_id&&<div className="rqd-metric">
                   <span className="rqd-metric-lbl">Correlation</span>
-                  <span className="rqd-metric-val" style={{fontSize:10}}>{detail.correlation_id}</span>
+                  <span className="rqd-metric-val" style={{fontSize:9,letterSpacing:'-0.2px'}}>{detail.correlation_id.slice(0,13)}</span>
                 </div>}
               </div>
             </div>
