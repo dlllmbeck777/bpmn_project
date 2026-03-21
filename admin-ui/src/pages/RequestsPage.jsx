@@ -818,12 +818,20 @@ export default function RequestsPage() {
                   const aiAdv = detail.result?.steps?.['ai-advisor'] || detail.result?.ai_advisor
                     || tracker.find(e=>(e.service_id==='ai-advisor'||e.service_id==='ai_advisor'||e.stage==='ai_assess')&&(e.direction==='IN'||e.direction==='STATE'||e.direction==='RESPONSE'))?.payload
                   if (!aiPre && !aiAdv) return null
+
                   const recColor = (r) => {
                     if (!r) return 'var(--text-3)'
                     const u = String(r).toUpperCase()
                     if (['APPROVE','APPROVED','PASS','ACCEPT'].includes(u)) return 'var(--green)'
                     if (['REJECT','REJECTED','FAIL','FAILED','DECLINE'].includes(u)) return 'var(--red)'
                     return 'var(--amber)'
+                  }
+                  const recBg = (r) => {
+                    if (!r) return 'transparent'
+                    const u = String(r).toUpperCase()
+                    if (['APPROVE','APPROVED','PASS','ACCEPT'].includes(u)) return 'rgba(34,197,94,0.12)'
+                    if (['REJECT','REJECTED','FAIL','FAILED','DECLINE'].includes(u)) return 'rgba(239,68,68,0.12)'
+                    return 'rgba(234,179,8,0.12)'
                   }
                   const riskColor = (r) => {
                     if (!r) return 'var(--text-3)'
@@ -832,41 +840,98 @@ export default function RequestsPage() {
                     if (u === 'HIGH') return 'var(--red)'
                     return 'var(--amber)'
                   }
-                  const fmtFactors = (f) => {
-                    if (!f) return null
-                    if (Array.isArray(f)) return f.join(' · ')
-                    if (typeof f === 'object') return JSON.stringify(f)
-                    return String(f)
-                  }
-                  return (
-                    <div className="card" style={{margin:0}}>
-                      <div className="rqb-sec-title">AI Assessment</div>
-                      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(320px,1fr))',gap:12}}>
-                        {aiPre && (
-                          <div style={{background:'var(--bg-2)',borderRadius:6,padding:'10px 12px'}}>
-                            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
-                              <span style={{fontSize:10,fontWeight:700,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:'0.5px'}}>Pre-screen</span>
-                              {aiPre.recommendation&&<span style={{fontWeight:700,fontSize:11,color:recColor(aiPre.recommendation)}}>{String(aiPre.recommendation).toUpperCase()}</span>}
-                              {aiPre.confidence!=null&&<span style={{fontSize:10,color:'var(--text-3)',fontFamily:'monospace'}}>conf {(Number(aiPre.confidence)*100).toFixed(0)}%</span>}
-                            </div>
-                            {aiPre.rationale&&<div style={{fontSize:11,color:'var(--text-2)',lineHeight:1.5,marginBottom:4}}>{aiPre.rationale}</div>}
-                            {fmtFactors(aiPre.key_factors)&&<div style={{fontSize:10,color:'var(--text-3)',marginTop:4}}><span style={{fontWeight:600}}>Factors: </span>{fmtFactors(aiPre.key_factors)}</div>}
-                          </div>
-                        )}
-                        {aiAdv && (
-                          <div style={{background:'var(--bg-2)',borderRadius:6,padding:'10px 12px'}}>
-                            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,flexWrap:'wrap'}}>
-                              <span style={{fontSize:10,fontWeight:700,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:'0.5px'}}>AI Advisor</span>
-                              {aiAdv.recommendation&&<span style={{fontWeight:700,fontSize:11,color:recColor(aiAdv.recommendation)}}>{String(aiAdv.recommendation).toUpperCase()}</span>}
-                              {aiAdv.risk_level&&<span style={{fontWeight:600,fontSize:11,color:riskColor(aiAdv.risk_level)}}>risk: {aiAdv.risk_level}</span>}
-                              {aiAdv.confidence!=null&&<span style={{fontSize:10,color:'var(--text-3)',fontFamily:'monospace'}}>conf {(Number(aiAdv.confidence)*100).toFixed(0)}%</span>}
-                            </div>
-                            {(aiAdv.narrative||aiAdv.rationale)&&<div style={{fontSize:11,color:'var(--text-2)',lineHeight:1.5,marginBottom:4}}>{aiAdv.narrative||aiAdv.rationale}</div>}
-                            {(aiAdv.red_flags||[]).length>0&&<div style={{fontSize:10,color:'var(--red)',marginTop:4}}><span style={{fontWeight:600}}>Flags: </span>{aiAdv.red_flags.join(', ')}</div>}
-                            {(aiAdv.positive_factors||[]).length>0&&<div style={{fontSize:10,color:'var(--green)',marginTop:4}}><span style={{fontWeight:600}}>Positive: </span>{aiAdv.positive_factors.join(', ')}</div>}
-                          </div>
-                        )}
+                  const ConfBar = ({value}) => {
+                    const pct = Math.round((Number(value)||0)*100)
+                    const c = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--amber)' : 'var(--red)'
+                    return (
+                      <div style={{display:'flex',alignItems:'center',gap:6}}>
+                        <div style={{flex:1,height:4,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
+                          <div style={{width:`${pct}%`,height:'100%',background:c,borderRadius:2,transition:'width 0.3s'}}/>
+                        </div>
+                        <span style={{fontSize:10,fontFamily:'monospace',color:c,minWidth:28}}>{pct}%</span>
                       </div>
+                    )
+                  }
+                  const TagList = ({items, color}) => items && items.length > 0 ? (
+                    <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:6}}>
+                      {items.map((f,i)=>(
+                        <span key={i} style={{fontSize:10,padding:'2px 7px',borderRadius:3,background:`${color}22`,color,border:`1px solid ${color}44`}}>{f}</span>
+                      ))}
+                    </div>
+                  ) : null
+
+                  return (
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))',gap:14}}>
+                      {aiPre && (
+                        <div className="card" style={{margin:0,borderTop:`3px solid ${recColor(aiPre.recommendation)}`}}>
+                          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                            <span style={{fontSize:11,fontWeight:700,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:'0.8px'}}>AI Pre-screen</span>
+                            {aiPre.model&&<span style={{fontSize:9,color:'var(--text-3)',fontFamily:'monospace'}}>{aiPre.model}</span>}
+                          </div>
+                          {aiPre.recommendation && (
+                            <div style={{display:'inline-flex',alignItems:'center',gap:6,padding:'5px 12px',borderRadius:4,background:recBg(aiPre.recommendation),marginBottom:10}}>
+                              <span style={{fontWeight:800,fontSize:14,color:recColor(aiPre.recommendation),letterSpacing:'0.5px'}}>{String(aiPre.recommendation).toUpperCase()}</span>
+                              {aiPre.risk_level&&<span style={{fontSize:10,fontWeight:600,color:riskColor(aiPre.risk_level)}}>· {aiPre.risk_level}</span>}
+                              {aiPre.skip_bureau!=null&&<span style={{fontSize:9,color:'var(--text-3)'}}>· bureau: {aiPre.skip_bureau?'skip':'run'}</span>}
+                            </div>
+                          )}
+                          {aiPre.confidence!=null&&<div style={{marginBottom:10}}><div style={{fontSize:9,color:'var(--text-3)',marginBottom:3}}>CONFIDENCE</div><ConfBar value={aiPre.confidence}/></div>}
+                          {(aiPre.reason||aiPre.rationale)&&(
+                            <div style={{marginBottom:10}}>
+                              <div style={{fontSize:9,color:'var(--text-3)',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.5px'}}>Rationale</div>
+                              <div style={{fontSize:12,color:'var(--text-1)',lineHeight:1.6}}>{aiPre.reason||aiPre.rationale}</div>
+                            </div>
+                          )}
+                          {(aiPre.flags||[]).length>0&&(
+                            <div>
+                              <div style={{fontSize:9,color:'var(--text-3)',marginBottom:2,textTransform:'uppercase',letterSpacing:'0.5px'}}>Flags</div>
+                              <TagList items={aiPre.flags} color="var(--amber)"/>
+                            </div>
+                          )}
+                          {aiPre.cost_usd>0&&<div style={{marginTop:10,fontSize:9,color:'var(--text-3)',fontFamily:'monospace'}}>cost ${aiPre.cost_usd.toFixed(5)} · {aiPre.tokens_used?.prompt+aiPre.tokens_used?.completion} tok</div>}
+                        </div>
+                      )}
+                      {aiAdv && (
+                        <div className="card" style={{margin:0,borderTop:`3px solid ${recColor(aiAdv.recommendation)}`}}>
+                          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                            <span style={{fontSize:11,fontWeight:700,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:'0.8px'}}>AI Advisor</span>
+                            {aiAdv.model&&<span style={{fontSize:9,color:'var(--text-3)',fontFamily:'monospace'}}>{aiAdv.model}</span>}
+                          </div>
+                          {aiAdv.recommendation && (
+                            <div style={{display:'inline-flex',alignItems:'center',gap:8,padding:'5px 12px',borderRadius:4,background:recBg(aiAdv.recommendation),marginBottom:10,flexWrap:'wrap'}}>
+                              <span style={{fontWeight:800,fontSize:14,color:recColor(aiAdv.recommendation),letterSpacing:'0.5px'}}>{String(aiAdv.recommendation).toUpperCase()}</span>
+                              {aiAdv.risk_level&&<span style={{fontSize:11,fontWeight:700,color:riskColor(aiAdv.risk_level)}}>· risk: {aiAdv.risk_level}</span>}
+                              {aiAdv.risk_score!=null&&<span style={{fontSize:10,fontFamily:'monospace',color:'var(--text-2)'}}>score {aiAdv.risk_score}</span>}
+                            </div>
+                          )}
+                          {aiAdv.confidence!=null&&<div style={{marginBottom:10}}><div style={{fontSize:9,color:'var(--text-3)',marginBottom:3}}>CONFIDENCE</div><ConfBar value={aiAdv.confidence}/></div>}
+                          {(aiAdv.narrative||aiAdv.rationale)&&(
+                            <div style={{marginBottom:10}}>
+                              <div style={{fontSize:9,color:'var(--text-3)',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.5px'}}>Analysis</div>
+                              <div style={{fontSize:12,color:'var(--text-1)',lineHeight:1.6}}>{aiAdv.narrative||aiAdv.rationale}</div>
+                            </div>
+                          )}
+                          {(aiAdv.red_flags||[]).length>0&&(
+                            <div style={{marginBottom:8}}>
+                              <div style={{fontSize:9,color:'var(--text-3)',marginBottom:2,textTransform:'uppercase',letterSpacing:'0.5px'}}>Red flags</div>
+                              <TagList items={aiAdv.red_flags} color="var(--red)"/>
+                            </div>
+                          )}
+                          {(aiAdv.positive_factors||[]).length>0&&(
+                            <div style={{marginBottom:8}}>
+                              <div style={{fontSize:9,color:'var(--text-3)',marginBottom:2,textTransform:'uppercase',letterSpacing:'0.5px'}}>Positive factors</div>
+                              <TagList items={aiAdv.positive_factors} color="var(--green)"/>
+                            </div>
+                          )}
+                          {(aiAdv.suggested_conditions||[]).length>0&&(
+                            <div style={{marginBottom:8}}>
+                              <div style={{fontSize:9,color:'var(--text-3)',marginBottom:2,textTransform:'uppercase',letterSpacing:'0.5px'}}>Suggested conditions</div>
+                              <TagList items={aiAdv.suggested_conditions} color="var(--accent)"/>
+                            </div>
+                          )}
+                          {aiAdv.cost_usd>0&&<div style={{marginTop:10,fontSize:9,color:'var(--text-3)',fontFamily:'monospace'}}>cost ${aiAdv.cost_usd.toFixed(5)} · {(aiAdv.tokens_used?.prompt||0)+(aiAdv.tokens_used?.completion||0)} tok</div>}
+                        </div>
+                      )}
                     </div>
                   )
                 })()}
