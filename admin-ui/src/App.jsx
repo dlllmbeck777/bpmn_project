@@ -24,19 +24,19 @@ function hasMinRole(role, min) {
 }
 
 const ALL_PAGES = [
-  { id: 'dashboard', group: 'nav_dashboard', Icon: IconGrid,      minRole: 'analyst' },
-  { id: 'tracker',   group: 'nav_monitoring', Icon: IconActivity,  minRole: 'analyst' },
-  { id: 'flowable',  group: 'nav_monitoring', Icon: IconLayers,    minRole: 'analyst' },
-  { id: 'audit',     group: 'nav_monitoring', Icon: IconClock,     minRole: 'analyst' },
-  { id: 'requests',  group: 'nav_analysis',   Icon: IconClipboard, minRole: 'analyst' },
-  { id: 'creditops', group: 'nav_analysis',   Icon: IconActivity,  minRole: 'analyst' },
-  { id: 'control',   group: 'nav_control',    Icon: IconRoute,     minRole: 'senior_analyst' },
-  { id: 'services',  group: 'nav_control',    Icon: IconSettings,  minRole: 'senior_analyst' },
-  { id: 'users',     group: 'nav_control',    Icon: IconUsers,     minRole: 'admin' },
-  { id: 'settings',  group: 'nav_settings',   Icon: IconGear,      minRole: 'analyst' },
+  { id: 'dashboard', group: 'nav_dashboard',   Icon: IconGrid,      minRole: 'analyst' },
+  { id: 'requests',  group: 'nav_requestops',  Icon: IconClipboard, minRole: 'analyst' },
+  { id: 'tracker',   group: 'nav_requestops',  Icon: IconActivity,  minRole: 'analyst' },
+  { id: 'creditops', group: 'nav_requestops',  Icon: IconActivity,  minRole: 'analyst' },
+  { id: 'flowable',  group: 'nav_control',     Icon: IconLayers,    minRole: 'analyst' },
+  { id: 'control',   group: 'nav_control',     Icon: IconRoute,     minRole: 'senior_analyst' },
+  { id: 'services',  group: 'nav_control',     Icon: IconSettings,  minRole: 'senior_analyst' },
+  { id: 'audit',     group: 'nav_control',     Icon: IconClock,     minRole: 'analyst' },
+  { id: 'settings',  group: 'nav_control',     Icon: IconGear,      minRole: 'analyst' },
+  { id: 'users',     group: 'nav_control',     Icon: IconUsers,     minRole: 'admin' },
 ]
 
-const GROUP_ORDER = ['nav_dashboard','nav_monitoring','nav_analysis','nav_control','nav_settings']
+const GROUP_ORDER = ['nav_dashboard', 'nav_requestops', 'nav_control']
 
 export default function App() {
   const [apiMeta, setApiMeta] = useState(() => ({

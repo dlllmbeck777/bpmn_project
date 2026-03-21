@@ -18,10 +18,8 @@ const T = {
   en: {
     /* nav groups */
     nav_dashboard:   'Dashboard',
-    nav_monitoring:  'Monitoring',
-    nav_analysis:    'Analysis',
+    nav_requestops:  'RequestOps',
     nav_control:     'Control',
-    nav_settings:    'Settings',
 
     /* nav items */
     page_dashboard:  'Dashboard',
@@ -59,10 +57,8 @@ const T = {
 
   ru: {
     nav_dashboard:   'Дашборд',
-    nav_monitoring:  'Мониторинг',
-    nav_analysis:    'Анализ',
+    nav_requestops:  'RequestOps',
     nav_control:     'Контроль',
-    nav_settings:    'Настройки',
 
     page_dashboard:  'Дашборд',
     page_tracker:    'Трекер процессов',
@@ -97,10 +93,8 @@ const T = {
 
   uz: {
     nav_dashboard:   'Boshqaruv',
-    nav_monitoring:  'Monitoring',
-    nav_analysis:    'Tahlil',
+    nav_requestops:  'RequestOps',
     nav_control:     'Nazorat',
-    nav_settings:    'Sozlamalar',
 
     page_dashboard:  'Boshqaruv paneli',
     page_tracker:    'Jarayon kuzatuvchi',
