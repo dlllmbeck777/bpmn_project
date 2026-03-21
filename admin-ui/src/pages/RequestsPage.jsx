@@ -795,25 +795,36 @@ export default function RequestsPage() {
                   <div className="card" style={{margin:0}}>
                     <div className="rqb-sec-title">Decision inputs</div>
                     {(() => {
-                      const raw = (key) => detail.result?.summary?.[key] ?? detail.result?.[key]
-                      const score = raw('credit_score')
-                      const scoreVal = (score === null || score === undefined) ? 0 : Number(score)
-                      const scoreMissing = score === null || score === undefined
-                      const rows = [
-                        { k: 'Credit score', v: String(scoreVal), color: scoreVal === 0 ? 'var(--red)' : scoreVal < 500 ? 'var(--amber)' : 'var(--green)', note: scoreMissing ? 'no data → 0' : null },
-                        { k: 'Collections',  v: metricVal(detail.result,'collection_count'), color: Number(raw('collection_count')) > 0 ? 'var(--red)' : null },
-                        { k: 'CS alerts',    v: metricVal(detail.result,'creditsafe_compliance_alert_count'), color: Number(raw('creditsafe_compliance_alert_count')) > 0 ? 'var(--amber)' : null },
-                        { k: 'Rules evaluated',  v: metricVal(detail.result,'rules_evaluated') },
-                        { k: 'Required reports', v: metricVal(detail.result,'required_reports_available'), color: raw('required_reports_available') === false ? 'var(--red)' : null },
-                      ]
-                      return rows.map(({k,v,color,note}) => (
-                        <div key={k} className="kv-row">
-                          <span className="kv-key">{k}</span>
-                          <span className="kv-val" style={color ? {color, fontWeight:600} : {}}>
-                            {v}{note && <span style={{fontSize:9,color:'var(--text-3)',fontWeight:400,marginLeft:4}}>({note})</span>}
-                          </span>
-                        </div>
-                      ))
+                      const summary = detail.result?.summary || {}
+                      // Known fields: label, color logic, priority order
+                      const KNOWN = {
+                        credit_score:                      { label: 'Credit score',    color: v => v==null?'var(--red)':Number(v)<1?'var(--red)':Number(v)<500?'var(--amber)':'var(--green)', note: v => (v==null||v===0)?'no data':null },
+                        collection_count:                  { label: 'Collections',     color: v => Number(v)>0?'var(--red)':null },
+                        creditsafe_compliance_alert_count: { label: 'CS alerts',       color: v => Number(v)>0?'var(--amber)':null },
+                        rules_evaluated:                   { label: 'Rules evaluated', color: ()=>null },
+                        required_reports_available:        { label: 'Required reports',color: v => v===false?'var(--red)':null },
+                      }
+                      const SKIP = new Set(['decision','decision_reason','decision_source','matched_rule','parsed_at','provider','iso_status','creditsafe_status','plaid_status'])
+                      const knownKeys = Object.keys(KNOWN)
+                      const extraKeys = Object.keys(summary).filter(k => !KNOWN[k] && !SKIP.has(k))
+                      const allKeys = [...knownKeys.filter(k => summary[k]!==undefined), ...extraKeys]
+                      const fmtLabel = k => k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())
+                      const fmtVal   = v => v===null||v===undefined?'—':typeof v==='boolean'?String(v):String(v)
+                      return allKeys.map(k => {
+                        const v = summary[k]
+                        const cfg = KNOWN[k]
+                        const label = cfg?.label || fmtLabel(k)
+                        const color = cfg ? cfg.color(v) : null
+                        const note  = cfg?.note ? cfg.note(v) : null
+                        return (
+                          <div key={k} className="kv-row">
+                            <span className="kv-key">{label}</span>
+                            <span className="kv-val" style={color?{color,fontWeight:600}:{}}>
+                              {fmtVal(v)}{note&&<span style={{fontSize:9,color:'var(--text-3)',fontWeight:400,marginLeft:4}}>({note})</span>}
+                            </span>
+                          </div>
+                        )
+                      })
                     })()}
                   </div>
                 </div>
