@@ -587,7 +587,7 @@ export default function RequestsPage() {
     .rqb-pg { padding:3px 8px; border-radius:4px; border:1px solid var(--border-1); background:var(--bg-1); color:var(--text-3); cursor:pointer; font-size:10px; font-family:monospace; }
     .rqb-pg.active { background:var(--blue); color:#fff; border-color:var(--blue); font-weight:700; }
     /* detail full-page */
-    .rqd-root { display:flex; flex-direction:column; height:calc(100vh - 160px); min-height:500px; }
+    .rqd-root { display:flex; flex-direction:column; height:calc(100vh - 66px); min-height:500px; }
     .rqd-back { display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-shrink:0; }
     .rqd-hdr { background:var(--bg-1); border:1px solid var(--border-1); border-radius:8px; padding:12px 16px; margin-bottom:0; flex-shrink:0; }
     .rqd-hdr-top { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
@@ -641,7 +641,7 @@ export default function RequestsPage() {
 
     return (
       <>
-        <style>{css}{`.page-header{display:none}`}</style>
+        <style>{css}{`.page-header{display:none}.main-content{overflow:hidden!important;padding-bottom:0!important}`}</style>
         {error  && <div className="notice notice-error mb-10" onClick={()=>setError('')}>{error} ✕</div>}
         {notice && <div className="notice mb-10" onClick={()=>setNotice('')}>{notice} ✕</div>}
 
