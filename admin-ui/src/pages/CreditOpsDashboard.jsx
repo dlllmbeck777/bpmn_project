@@ -118,6 +118,7 @@ function KV({ label, children, mono }) {
 /* ─── Main ─── */
 export default function CreditOpsDashboard() {
   const [data, setData]       = useState([]);
+  const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(true);
   const [statusF, setStatusF] = useState("ALL");
   const [modeF, setModeF]     = useState("ALL");
@@ -134,11 +135,14 @@ export default function CreditOpsDashboard() {
 
   const loadRequests = async () => {
     setLoading(true);
+    setLoadError("");
     try {
       const d = await get("/api/v1/requests?limit=500");
-      setData((d.items || []).map(mapRequest));
-    } catch (_) {}
-    finally { setLoading(false); }
+      const items = Array.isArray(d) ? d : (d.items || d.requests || []);
+      setData(items.map(mapRequest));
+    } catch (e) {
+      setLoadError(e.message || "Failed to load");
+    } finally { setLoading(false); }
   };
 
   useEffect(() => { loadRequests(); setMounted(true); }, []);
@@ -214,6 +218,15 @@ export default function CreditOpsDashboard() {
   }, [filtered]);
 
   const tooltipStyle = { background: T.bg3, border: `1px solid ${T.border}`, borderRadius: 8, fontSize: 11, color: T.text1 };
+
+  if (loadError) {
+    return (
+      <div style={{ fontFamily: "'Outfit',system-ui,sans-serif", color: T.red, minHeight: "60vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, borderRadius: 8 }}>
+        <span style={{ fontSize: 14 }}>Failed to load: {loadError}</span>
+        <button onClick={loadRequests} style={{ fontSize: 12, padding: "6px 16px", borderRadius: 6, border: `1px solid ${T.red}`, background: "transparent", color: T.red, cursor: "pointer" }}>Retry</button>
+      </div>
+    );
+  }
 
   if (loading && data.length === 0) {
     return (
