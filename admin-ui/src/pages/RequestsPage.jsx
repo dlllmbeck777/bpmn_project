@@ -814,9 +814,9 @@ export default function RequestsPage() {
                 </div>
                 {(() => {
                   const aiPre = detail.result?.ai_prescreen || detail.result?.steps?.['ai-prescreen']
-                    || tracker.find(e=>(e.service_id==='ai-prescreen')&&(e.direction==='OUT'||e.direction==='RESPONSE'))?.payload
+                    || tracker.find(e=>(e.service_id==='ai_prescreen'||e.service_id==='ai-prescreen'||e.stage==='ai_prescreen')&&(e.direction==='STATE'||e.direction==='OUT'||e.direction==='RESPONSE'))?.payload
                   const aiAdv = detail.result?.steps?.['ai-advisor'] || detail.result?.ai_advisor
-                    || tracker.find(e=>(e.service_id==='ai-advisor')&&(e.direction==='OUT'||e.direction==='RESPONSE'))?.payload
+                    || tracker.find(e=>(e.service_id==='ai-advisor'||e.service_id==='ai_advisor'||e.stage==='ai_assess')&&(e.direction==='IN'||e.direction==='STATE'||e.direction==='RESPONSE'))?.payload
                   if (!aiPre && !aiAdv) return null
                   const recColor = (r) => {
                     if (!r) return 'var(--text-3)'

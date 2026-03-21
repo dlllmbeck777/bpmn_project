@@ -38,9 +38,10 @@ INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 SERVICE_NAME = "flowable-adapter"
 TRACKER_URL = f"{CONFIG_URL}/internal/requests/track"
 FLOWABLE_STEPS = (
-    {"service_id": "isoftpull", "raw_key": "isoRawBody", "status_key": "iso_status", "request_key": None, "skip_key": "skip_isoftpull", "reason_key": "skip_reason_isoftpull"},
-    {"service_id": "creditsafe", "raw_key": "csRawBody", "status_key": "creditsafe_status", "request_key": "creditsafe_request_body", "skip_key": "skip_creditsafe", "reason_key": "skip_reason_creditsafe"},
-    {"service_id": "plaid", "raw_key": "plaidRawBody", "status_key": "plaid_status", "request_key": "plaid_request_body", "skip_key": "skip_plaid", "reason_key": "skip_reason_plaid"},
+    {"service_id": "isoftpull",  "raw_key": "isoRawBody",  "status_key": "iso_status",         "request_key": None,                    "skip_key": "skip_isoftpull",  "reason_key": "skip_reason_isoftpull"},
+    {"service_id": "creditsafe", "raw_key": "csRawBody",   "status_key": "creditsafe_status",   "request_key": "creditsafe_request_body","skip_key": "skip_creditsafe", "reason_key": "skip_reason_creditsafe"},
+    {"service_id": "plaid",      "raw_key": "plaidRawBody","status_key": "plaid_status",        "request_key": "plaid_request_body",    "skip_key": "skip_plaid",      "reason_key": "skip_reason_plaid"},
+    {"service_id": "ai-advisor", "raw_key": "aiRawBody",   "status_key": "ai_status",           "request_key": None,                    "skip_key": None,              "reason_key": None},
 )
 FLOWABLE_VARIABLE_ALIASES = {
     "isoRawBody": ("isoRawResponseBody",),
