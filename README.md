@@ -34,7 +34,8 @@ See `docs/DEPLOYMENT.md` for the full walkthrough.
 
 Database schema documentation (Navicat-style, all tables and columns):
 
-- `docs/DATABASE_SCHEMA_RU.md`
+- `docs/DATABASE_SCHEMA_RU.md` — config-db (platform schema, 16 tables)
+- `docs/FLOWABLE_DATABASE_SCHEMA_RU.md` — flowable-db (Flowable 6.8.0 engine schema)
 
 Russian operational and project documentation:
 
@@ -61,6 +62,7 @@ For request submission load testing, use `k6` with `scripts/stress-test-requests
 Detailed steps are in `docs/STRESS_TEST.md`.
 
 For production Flowable access, use the direct app routes behind nginx:
+
 - UI: `https://YOUR_DOMAIN/flowable-ui/`
 - task: `https://YOUR_DOMAIN/flowable-task/`
 - modeler: `https://YOUR_DOMAIN/flowable-modeler/`
