@@ -810,21 +810,35 @@ export default function RequestsPage() {
                       const allKeys = [...knownKeys.filter(k => summary[k]!==undefined), ...extraKeys]
                       const fmtLabel = k => k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())
                       const fmtVal   = v => v===null||v===undefined?'—':typeof v==='boolean'?String(v):String(v)
-                      return allKeys.map(k => {
-                        const v = summary[k]
-                        const cfg = KNOWN[k]
-                        const label = cfg?.label || fmtLabel(k)
-                        const color = cfg ? cfg.color(v) : null
-                        const note  = cfg?.note ? cfg.note(v) : null
-                        return (
-                          <div key={k} className="kv-row">
-                            <span className="kv-key">{label}</span>
-                            <span className="kv-val" style={color?{color,fontWeight:600}:{}}>
-                              {fmtVal(v)}{note&&<span style={{fontSize:9,color:'var(--text-3)',fontWeight:400,marginLeft:4}}>({note})</span>}
+                      const rule = detail.result?.matched_rule
+                      return [
+                        ...allKeys.map(k => {
+                          const v = summary[k]
+                          const cfg = KNOWN[k]
+                          const label = cfg?.label || fmtLabel(k)
+                          const color = cfg ? cfg.color(v) : null
+                          const note  = cfg?.note ? cfg.note(v) : null
+                          return (
+                            <div key={k} className="kv-row">
+                              <span className="kv-key">{label}</span>
+                              <span className="kv-val" style={color?{color,fontWeight:600}:{}}>
+                                {fmtVal(v)}{note&&<span style={{fontSize:9,color:'var(--text-3)',fontWeight:400,marginLeft:4}}>({note})</span>}
+                              </span>
+                            </div>
+                          )
+                        }),
+                        rule && (
+                          <div key="__rule__" className="kv-row" style={{borderTop:'1px solid var(--border-1)',marginTop:2,paddingTop:4}}>
+                            <span className="kv-key">Triggered rule</span>
+                            <span className="kv-val" style={{color:rule.action_on_fail==='REJECT'?'var(--red)':'var(--amber)',fontWeight:600,fontSize:11}}>
+                              {rule.name}
+                              <span style={{fontWeight:400,color:'var(--text-3)',marginLeft:6,fontSize:10,fontFamily:'monospace'}}>
+                                {rule.field_path?.split('.').pop()} {rule.operator} {rule.threshold}
+                              </span>
                             </span>
                           </div>
                         )
-                      })
+                      ]
                     })()}
                   </div>
                 </div>
