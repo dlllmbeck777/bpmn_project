@@ -134,10 +134,15 @@ def get_client_history(client_key: str, limit: int = 20) -> Dict[str, Any]:
     if not rows:
         return {"total_applications": 0, "history_available": False}
 
-    rows = [to_json_ready(r) for r in rows]
     total = len(rows)
     now = datetime.now(timezone.utc)
-    last_30d = [r for r in rows if r.get("created_at") and (now - r["created_at"]).days <= 30]
+
+    def _as_dt(val):
+        if isinstance(val, datetime):
+            return val.astimezone(timezone.utc) if val.tzinfo else val.replace(tzinfo=timezone.utc)
+        return None
+
+    last_30d = [r for r in rows if _as_dt(r.get("created_at")) and (now - _as_dt(r["created_at"])).days <= 30]
     scores = [r["credit_score"] for r in rows if r.get("credit_score") is not None]
     rejections = [r for r in rows if r.get("decision") == "REJECTED"]
     approvals = [r for r in rows if r.get("decision") == "APPROVED"]
@@ -150,6 +155,7 @@ def get_client_history(client_key: str, limit: int = 20) -> Dict[str, Any]:
             score_trend = "DECLINING"
 
     last = rows[0]
+    last_dt = _as_dt(last.get("created_at"))
     return {
         "history_available": True,
         "total_applications": total,
@@ -162,7 +168,7 @@ def get_client_history(client_key: str, limit: int = 20) -> Dict[str, Any]:
         "approval_count": len(approvals),
         "approval_rate": round(len(approvals) / total, 2) if total > 0 else 0,
         "rejection_reasons": list({r.get("decision_reason", "") for r in rejections if r.get("decision_reason")})[:5],
-        "days_since_last": (now - last["created_at"]).days if last.get("created_at") else None,
+        "days_since_last": (now - last_dt).days if last_dt else None,
         "last_ai_risk_score": last.get("ai_risk_score"),
     }
 
