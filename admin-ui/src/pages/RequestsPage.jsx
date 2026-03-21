@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { get, getUserRole, post } from '../lib/api'
+import { get, getUserRole, post, del } from '../lib/api'
 
 /* ── helpers ── */
 const SC = {
@@ -444,6 +444,18 @@ export default function RequestsPage() {
       setError('')
     } catch(e) { setError(e.message) }
     finally { setBusy('') }
+  }
+
+  const deleteRequest = async () => {
+    if (!detail?.request_id) return
+    if (!window.confirm(`Delete request ${detail.request_id}? This cannot be undone.`)) return
+    setBusy('delete')
+    try {
+      await del(`/api/v1/requests/${detail.request_id}`)
+      await loadRequests()
+      setView('list')
+      setNotice(`Request ${detail.request_id} deleted`)
+    } catch(e){ setError(e.message) } finally { setBusy('') }
   }
 
   const addNote = async () => {
@@ -1033,6 +1045,13 @@ export default function RequestsPage() {
                       <button className="btn btn-ghost btn-sm" disabled={!canOperate||!ops.can_reconcile_flowable||!!busy} onClick={()=>runAction(`/api/v1/flowable/requests/${detail.request_id}/reconcile`,'Reconcile')}>Reconcile Flowable</button>
                     </div>
                   </div>
+                  {userRole==='admin'&&<div className="card" style={{margin:0,borderColor:'var(--red)'}}>
+                    <div className="rqb-sec-title" style={{color:'var(--red)'}}>Danger zone</div>
+                    <p className="text-muted text-sm" style={{marginBottom:8}}>Permanently delete this request and all associated data.</p>
+                    <button className="btn btn-danger btn-sm" disabled={!!busy} onClick={deleteRequest}>
+                      {busy==='delete'?'Deleting…':'Delete request'}
+                    </button>
+                  </div>}
                   <div className="card" style={{margin:0}}>
                     <div className="rqb-sec-title">Add note</div>
                     <div className="form-row"><label>Note</label>

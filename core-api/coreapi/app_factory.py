@@ -725,6 +725,18 @@ async def get_request_detail(request_id: str, x_api_key: str = Header(default=""
     return await get_request_detail_view(request_id)
 
 
+@app.delete("/api/v1/requests/{request_id}", status_code=204, tags=["Requests"])
+def delete_request(request_id: str, x_api_key: str = Header(default=""), x_user_role: str = Header(default=""), x_user_name: str = Header(default="")):
+    require_min_role(x_api_key, x_user_role, ROLE_ADMIN)
+    rows = query("SELECT request_id FROM requests WHERE request_id=%s", (request_id,))
+    if not rows:
+        raise HTTPException(status_code=404, detail="Request not found")
+    execute("DELETE FROM request_tracker_events WHERE request_id=%s", (request_id,))
+    execute("DELETE FROM request_notes WHERE request_id=%s", (request_id,))
+    execute("DELETE FROM requests WHERE request_id=%s", (request_id,))
+    audit("request", request_id, "deleted", {}, performed_by=x_user_name)
+
+
 @app.get("/api/v1/requests/{request_id}/notes", response_model=ListResponse, tags=["Requests"])
 def get_request_notes(request_id: str, x_api_key: str = Header(default=""), x_user_role: str = Header(default="")):
     authorize_request_view(x_api_key, x_user_role)
