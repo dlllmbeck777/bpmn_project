@@ -297,6 +297,7 @@ def _build_steps(process_variables: Dict[str, Any]):
         "isoftpull": ("isoRawBody", "iso_status"),
         "creditsafe": ("csRawBody", "creditsafe_status"),
         "plaid": ("plaidRawBody", "plaid_status"),
+        "ai-advisor": ("aiRawBody", "ai_status"),
     }
     steps = {}
     for service_id, (raw_key, status_key) in raw_map.items():

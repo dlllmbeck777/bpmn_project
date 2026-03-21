@@ -861,8 +861,9 @@ export default function RequestsPage() {
                               {aiAdv.risk_level&&<span style={{fontWeight:600,fontSize:11,color:riskColor(aiAdv.risk_level)}}>risk: {aiAdv.risk_level}</span>}
                               {aiAdv.confidence!=null&&<span style={{fontSize:10,color:'var(--text-3)',fontFamily:'monospace'}}>conf {(Number(aiAdv.confidence)*100).toFixed(0)}%</span>}
                             </div>
-                            {aiAdv.rationale&&<div style={{fontSize:11,color:'var(--text-2)',lineHeight:1.5,marginBottom:4}}>{aiAdv.rationale}</div>}
-                            {fmtFactors(aiAdv.key_factors)&&<div style={{fontSize:10,color:'var(--text-3)',marginTop:4}}><span style={{fontWeight:600}}>Factors: </span>{fmtFactors(aiAdv.key_factors)}</div>}
+                            {(aiAdv.narrative||aiAdv.rationale)&&<div style={{fontSize:11,color:'var(--text-2)',lineHeight:1.5,marginBottom:4}}>{aiAdv.narrative||aiAdv.rationale}</div>}
+                            {(aiAdv.red_flags||[]).length>0&&<div style={{fontSize:10,color:'var(--red)',marginTop:4}}><span style={{fontWeight:600}}>Flags: </span>{aiAdv.red_flags.join(', ')}</div>}
+                            {(aiAdv.positive_factors||[]).length>0&&<div style={{fontSize:10,color:'var(--green)',marginTop:4}}><span style={{fontWeight:600}}>Positive: </span>{aiAdv.positive_factors.join(', ')}</div>}
                           </div>
                         )}
                       </div>
