@@ -31,15 +31,15 @@ function mapRequest(r) {
   };
 }
 
-/* ─── Design tokens ─── */
+/* ─── Design tokens — CSS-variable-aware ─── */
 const T = {
-  bg0: "#04060b", bg1: "#080c14", bg2: "#0d1320", bg3: "#131b2e",
-  border: "#1a2540", borderHover: "#243352",
-  text0: "#f1f5f9", text1: "#cbd5e1", text2: "#8294b0", text3: "#4a5f80",
-  accent: "#2563eb", accentGlow: "rgba(37,99,235,0.15)",
-  green: "#22c55e", greenDim: "#166534", greenGlow: "rgba(34,197,94,0.12)",
-  red: "#ef4444", redDim: "#7f1d1d", redGlow: "rgba(239,68,68,0.12)",
-  amber: "#f59e0b", amberDim: "#78350f", amberGlow: "rgba(245,158,11,0.12)",
+  bg0: "var(--bg-base)", bg1: "var(--bg-card)", bg2: "var(--bg-inset)", bg3: "var(--bg-inset)",
+  border: "var(--border)", borderHover: "var(--border)",
+  text0: "var(--text-1)", text1: "var(--text-1)", text2: "var(--text-2)", text3: "var(--text-3)",
+  accent: "var(--blue)", accentGlow: "rgba(37,99,235,0.15)",
+  green: "#22c55e", greenDim: "rgba(34,197,94,0.12)", greenGlow: "rgba(34,197,94,0.12)",
+  red: "#ef4444", redDim: "rgba(239,68,68,0.12)", redGlow: "rgba(239,68,68,0.12)",
+  amber: "#f59e0b", amberDim: "rgba(245,158,11,0.12)", amberGlow: "rgba(245,158,11,0.12)",
   cyan: "#06b6d4", purple: "#a855f7",
 };
 
@@ -48,10 +48,10 @@ const STATUS_MAP = {
   REJECTED:     { c: T.red,    bg: T.redDim,    glow: T.redGlow,    label: "rejected"     },
   REVIEW:       { c: T.amber,  bg: T.amberDim,  glow: T.amberGlow,  label: "review"       },
   FAILED:       { c: T.red,    bg: T.redDim,    glow: T.redGlow,    label: "failed"       },
-  RUNNING:      { c: T.accent, bg: "#1e3a5f",   glow: T.accentGlow, label: "running"      },
-  ENGINE_ERROR: { c: T.purple, bg: "#3b0764",   glow: "rgba(168,85,247,0.12)", label: "engine error" },
+  RUNNING:      { c: T.accent, bg: "rgba(37,99,235,0.12)",   glow: T.accentGlow, label: "running"      },
+  ENGINE_ERROR: { c: T.purple, bg: "rgba(168,85,247,0.12)", glow: "rgba(168,85,247,0.12)", label: "engine error" },
   ORPHANED:     { c: T.red,    bg: T.redDim,    glow: T.redGlow,    label: "orphaned"     },
-  SUBMITTED:    { c: T.cyan,   bg: "#164e63",   glow: "transparent", label: "submitted"   },
+  SUBMITTED:    { c: T.cyan,   bg: "rgba(6,182,212,0.12)", glow: "transparent", label: "submitted"   },
 };
 
 const ST = ["COMPLETED", "REJECTED", "REVIEW", "FAILED", "RUNNING", "ENGINE_ERROR"];
@@ -74,7 +74,7 @@ function Mode({ mode }) {
   return (
     <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600,
       fontFamily: "'JetBrains Mono',monospace", letterSpacing: 0.5, textTransform: "uppercase",
-      background: f ? "#0c2d5a" : "#2d1054", color: f ? "#60a5fa" : "#c084fc",
+      background: f ? "rgba(37,99,235,0.12)" : "rgba(168,85,247,0.12)", color: f ? "#60a5fa" : "#c084fc",
       border: `1px solid ${f ? "#1d4ed833" : "#7c3aed33"}` }}>
       {mode}
     </span>
@@ -203,9 +203,8 @@ export default function CreditOpsDashboard() {
     : <span style={{ color: T.accent, marginLeft: 2 }}>{sortD === -1 ? "↓" : "↑"}</span>;
 
   const glass = (extra = {}) => ({
-    background: "linear-gradient(135deg, rgba(13,19,32,0.85) 0%, rgba(8,12,20,0.95) 100%)",
-    backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
-    border: `1px solid ${T.border}`, borderRadius: 14, ...extra,
+    background: "var(--bg-card)",
+    border: `1px solid var(--border)`, borderRadius: 14, ...extra,
   });
 
   const kanbanGroups = useMemo(() => {
