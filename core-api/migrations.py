@@ -183,6 +183,108 @@ MIGRATIONS = [
         INSERT INTO services (
             id,name,type,base_url,health_path,enabled,timeout_ms,retry_count,endpoint_path,meta
         )
+        VALUES
+            (
+                'flowable-adapter',
+                'Flowable Adapter',
+                'orchestrator',
+                'http://orchestrators:8011',
+                '/health',
+                TRUE,
+                10000,
+                2,
+                '/orchestrate',
+                '{}'::jsonb
+            ),
+            (
+                'custom-adapter',
+                'Custom Adapter',
+                'orchestrator',
+                'http://orchestrators:8012',
+                '/health',
+                TRUE,
+                10000,
+                2,
+                '/orchestrate',
+                '{}'::jsonb
+            ),
+            (
+                'flowable-rest',
+                'Flowable REST Engine',
+                'engine',
+                'http://flowable-rest:8080/flowable-rest/service',
+                '/actuator/health',
+                TRUE,
+                10000,
+                2,
+                '',
+                '{}'::jsonb
+            ),
+            (
+                'isoftpull',
+                'iSoftPull',
+                'connector',
+                'http://isoftpull:8101',
+                '/health',
+                TRUE,
+                10000,
+                2,
+                '/api/pull',
+                '{}'::jsonb
+            ),
+            (
+                'creditsafe',
+                'Creditsafe',
+                'connector',
+                'http://creditsafe:8102',
+                '/health',
+                TRUE,
+                10000,
+                2,
+                '/api/report',
+                '{}'::jsonb
+            ),
+            (
+                'plaid',
+                'Plaid',
+                'connector',
+                'http://plaid:8103',
+                '/health',
+                TRUE,
+                10000,
+                2,
+                '/api/accounts',
+                '{}'::jsonb
+            ),
+            (
+                'report-parser',
+                'Report Parser',
+                'processor',
+                'http://processors:8105',
+                '/health',
+                TRUE,
+                10000,
+                2,
+                '/api/v1/parse',
+                '{}'::jsonb
+            ),
+            (
+                'stop-factor',
+                'Stop Factor',
+                'processor',
+                'http://processors:8106',
+                '/health',
+                TRUE,
+                10000,
+                2,
+                '/api/v1/check',
+                '{}'::jsonb
+            )
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO services (
+            id,name,type,base_url,health_path,enabled,timeout_ms,retry_count,endpoint_path,meta
+        )
         VALUES (
             'decision-service',
             'Decision Service',

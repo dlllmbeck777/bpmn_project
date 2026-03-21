@@ -225,7 +225,13 @@ services:
     restart: unless-stopped
     networks: [flowable, backend]
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget --user=admin --password=${FLOWABLE_PASSWORD:-test} -q -O /dev/null http://localhost:8080/flowable-rest/actuator/health"]
+      test:
+        [
+          "CMD",
+          "sh",
+          "-c",
+          "AUTH=$$(printf 'admin:%s' \"$$FLOWABLE_PASSWORD\" | base64 | tr -d '\\n'); wget -q -O /dev/null --header=\"Authorization: Basic $$AUTH\" http://localhost:8080/flowable-rest/actuator/health",
+        ]
       interval: 15s
       timeout: 5s
       retries: 20
