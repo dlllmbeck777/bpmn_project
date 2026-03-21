@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import HTTPException
 
-from coreapi.storage import audit, execute, query, to_json_ready, track_request_event, tracker_payload
+from coreapi.storage import audit, execute, execute_returning, execute_returning_one, query, to_json_ready, track_request_event, tracker_payload
 from shared import check_rate_limit, config_cache, decrypt_field, decrypt_sensitive, encrypt_field, encrypt_sensitive, get_correlation_id, get_logger, mask_field, metrics, resilient_post
 
 API_KEY = os.getenv("GATEWAY_API_KEY", "")
@@ -1335,10 +1335,29 @@ async def finalize_request(request_id: str, mode: str, result: Dict[str, Any], c
     elif sf_post.get("decision") == "REVIEW" and final_status == "COMPLETED":
         final_status = "REVIEW"
 
-    execute(
-        "UPDATE requests SET status=%s, result=%s, post_stop_factor=%s, updated_at=NOW() WHERE request_id=%s",
-        (final_status, json.dumps(normalized_result), json.dumps(sf_post), request_id),
+    # Atomic conditional UPDATE: only applies if request is not already in a terminal state.
+    # If another process (reconcile callback, duplicate webhook) already finalized it, RETURNING returns
+    # nothing → won is None → we skip side-effects and return the stored state instead.
+    won = execute_returning_one(
+        """
+        UPDATE requests SET status=%s, result=%s, post_stop_factor=%s, updated_at=NOW()
+        WHERE request_id=%s AND status NOT IN %s
+        RETURNING request_id
+        """,
+        (final_status, json.dumps(normalized_result), json.dumps(sf_post), request_id, tuple(_TERMINAL_STATUSES)),
     )
+    if won is None:
+        existing = query("SELECT status, result, post_stop_factor, snp_result FROM requests WHERE request_id=%s", (request_id,), "one")
+        stored_result = existing.get("result") or {}
+        if isinstance(stored_result, str):
+            stored_result = json.loads(stored_result)
+        log.info("finalize_request: %s — race lost, stored state is %s", request_id, (existing or {}).get("status"))
+        return {
+            "status":           (existing or {}).get("status", final_status),
+            "result":           stored_result,
+            "post_stop_factor": (existing or {}).get("post_stop_factor") or {},
+            "snp_result":       (existing or {}).get("snp_result") or {},
+        }
 
     snp = await notify_snp(
         {

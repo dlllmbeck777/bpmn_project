@@ -79,6 +79,19 @@ def execute_returning(sql: str, params=None):
         put_conn(conn)
 
 
+def execute_returning_one(sql: str, params=None):
+    """Like execute_returning but returns None if no rows matched (safe for conditional UPDATEs)."""
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        row = cur.fetchone()
+        cur.close()
+        return row[0] if row else None
+    finally:
+        put_conn(conn)
+
+
 def to_json_ready(item: Optional[Dict[str, Any]]):
     if not item:
         return item

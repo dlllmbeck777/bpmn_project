@@ -162,10 +162,10 @@ def _reconcile_stale_requests():
                 last_recovery_at  = NOW(),
                 updated_at        = NOW()
             WHERE status = ANY(%s)
-              AND updated_at < NOW() - INTERVAL '%s minutes'
+              AND updated_at < NOW() - (%s * INTERVAL '1 minute')
             RETURNING request_id, status
             """,
-            (_RECOVERY_STALE_STATUSES, _RECOVERY_STALE_MINUTES),
+            (list(_RECOVERY_STALE_STATUSES), _RECOVERY_STALE_MINUTES),
         )
         rows = cur.fetchall()
         cur.close()
