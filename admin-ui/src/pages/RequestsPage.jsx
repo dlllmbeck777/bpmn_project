@@ -602,13 +602,13 @@ export default function RequestsPage() {
     .rqd-tab { padding:8px 14px; font-size:11px; font-weight:600; color:var(--text-3); border:none; border-bottom:2px solid transparent; background:transparent; cursor:pointer; transition:all 0.1s; white-space:nowrap; }
     .rqd-tab.active { color:var(--blue); border-bottom-color:var(--blue); }
     .rqd-tab:hover:not(.active) { color:var(--text-1); }
-    .rqd-body { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; }
+    .rqd-body { flex:1; overflow-y:auto; padding:12px 16px; display:flex; flex-direction:column; gap:8px; }
     /* kv grid */
-    .rqb-kv-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:1px; background:var(--border-1); border-radius:6px; overflow:hidden; }
-    .rqb-kv-cell { background:var(--bg-1); padding:7px 10px; }
-    .rqb-kv-k { font-size:9px; font-weight:700; color:var(--text-3); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px; }
-    .rqb-kv-v { font-size:12px; color:var(--text-1); word-break:break-all; }
-    .rqb-sec-title { font-size:11px; font-weight:700; color:var(--text-1); margin-bottom:8px; padding-bottom:4px; border-bottom:1px solid var(--border-1); }
+    .rqb-kv-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:1px; background:var(--border-1); border-radius:6px; overflow:hidden; }
+    .rqb-kv-cell { background:var(--bg-1); padding:5px 8px; }
+    .rqb-kv-k { font-size:8px; font-weight:700; color:var(--text-3); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:1px; }
+    .rqb-kv-v { font-size:11px; color:var(--text-1); word-break:break-all; line-height:1.3; }
+    .rqb-sec-title { font-size:10px; font-weight:700; color:var(--text-1); margin-bottom:6px; padding-bottom:3px; border-bottom:1px solid var(--border-1); }
     /* node detail */
     .rqb-nd { border:1px solid var(--border-1); border-radius:6px; overflow:hidden; }
     .rqb-nd-hdr { display:flex; align-items:center; justify-content:space-between; padding:7px 12px; background:var(--bg-2); border-bottom:1px solid var(--border-1); }
